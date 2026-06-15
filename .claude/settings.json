@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip --version)",
+      "Bash(mkdir -p docs app scripts && echo \"dirs created\")",
+      "Bash(python -m venv .venv)",
+      "Bash(.venv/Scripts/python.exe -m pip install --upgrade pip -q)",
+      "Bash(.venv/Scripts/python.exe -m pip install -r requirements.txt -q)",
+      "Bash(.venv/Scripts/python.exe -c \"import sqlalchemy, alembic, dotenv; print\\('sqlalchemy', sqlalchemy.__version__\\); print\\('alembic', alembic.__version__\\)\")",
+      "Bash(python -c \"import sqlalchemy; print\\('sqlalchemy', sqlalchemy.__version__\\)\")",
+      "Bash(python -c \"import alembic; print\\('alembic', alembic.__version__\\)\")",
+      "Bash(python -c \"import dotenv; print\\('dotenv ok'\\)\")",
+      "Bash(python -m pip cache list)",
+      "Bash(.venv/Scripts/python.exe -m pip install -r requirements.txt -q --trusted-host pypi.org --trusted-host files.pythonhosted.org --trusted-host pypi.python.org)",
+      "Bash(echo \"EXIT:$?\")",
+      "Bash(.venv/Scripts/python.exe -c \"import sqlalchemy, alembic, dotenv; print\\('SQLAlchemy', sqlalchemy.__version__\\); print\\('Alembic', alembic.__version__\\)\")",
+      "Bash(.venv/Scripts/python.exe -c \"from app import models; from app.db import Base; print\\('tables:', len\\(Base.metadata.tables\\)\\); [print\\(' -', t\\) for t in sorted\\(Base.metadata.tables\\)]\")",
+      "Bash(.venv/Scripts/python.exe -m alembic init alembic)",
+      "Bash(.venv/Scripts/python.exe -m alembic revision --autogenerate -m \"initial schema\")",
+      "Bash(.venv/Scripts/python.exe -c ' *)",
+      "Bash(.venv/Scripts/python.exe scripts/smoke_test.py)",
+      "Bash(rm -f app.db)",
+      "Bash(.venv/Scripts/python.exe -m alembic upgrade head)",
+      "Bash(.venv/Scripts/python.exe -c \"import sqlite3; c=sqlite3.connect\\('app.db'\\); n=[r[0] for r in c.execute\\(\\\\\"select name from sqlite_master where type='table' and name!='alembic_version'\\\\\"\\)]; print\\(len\\(n\\),'domain tables'\\)\")",
+      "Bash(.venv/Scripts/python.exe -m alembic check)",
+      "Bash(.venv/Scripts/python.exe -m alembic downgrade base)"
+    ],
+    "additionalDirectories": [
+      "C:\\Users\\andre\\Job_Apply_Agent"
+    ]
+  }
+}

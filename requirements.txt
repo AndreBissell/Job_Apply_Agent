@@ -1,0 +1,6 @@
+SQLAlchemy>=2.0,<2.1
+alembic>=1.13
+python-dotenv>=1.0
+
+# Postgres driver — uncomment when deploying with a postgresql:// DATABASE_URL.
+# psycopg[binary]>=3.1

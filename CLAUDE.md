@@ -1,0 +1,141 @@
+# CLAUDE.md — Job Application Assistant
+
+> Project context for Claude Code. Read this first every session.
+> **`docs/database-schema.md` is the source of truth for the data model.** If
+> anything here conflicts with that file, the schema doc wins.
+
+## What this project is
+
+A tool that helps a job seeker find suitable roles on Seek and drafts tailored
+cover letters from the user's own profile (qualifications, experience, skills).
+The user reviews and submits every application manually — the tool never
+auto-submits. It starts as a **local single-user app** and is designed to grow
+into a **multi-user hosted** app later.
+
+Full feature plan: `docs/job-application-assistant-plan.md`
+Full DB design: `docs/database-schema.md`
+
+## Tech stack
+
+- **Language:** Python 3.11+
+- **ORM:** SQLAlchemy 2.0 (typed, declarative mapped style)
+- **Migrations:** Alembic
+- **Config:** `python-dotenv` — `app/db.py` loads `.env` so `DATABASE_URL` (and
+  later secrets) can live in a gitignored `.env` file.
+- **DB:** SQLite for local dev, **Postgres-ready** for hosting. The database URL
+  comes from a `DATABASE_URL` env var, defaulting to `sqlite:///app.db`, so the
+  SQLite → Postgres move is a config change, not a code change.
+- Do **not** write SQLite-only SQL or rely on SQLite-specific behaviour. Keep
+  everything portable so a Postgres `DATABASE_URL` works with no code changes.
+
+## Proposed repo layout
+
+```
+job-app-assistant/
+  CLAUDE.md
+  docs/
+    database-schema.md
+    job-application-assistant-plan.md
+  app/
+    __init__.py
+    db.py              # engine + session factory; reads DATABASE_URL
+    models.py          # SQLAlchemy models (split into a models/ package if it grows)
+  alembic/             # migration environment (from `alembic init`)
+  alembic.ini
+  scripts/
+    smoke_test.py      # verifies the schema end-to-end
+  requirements.txt
+  .env.example         # DATABASE_URL=sqlite:///app.db
+  .gitignore           # app.db, .env, __pycache__/, .venv/
+```
+
+## Key schema decisions to respect (do not "improve" these away)
+
+These were deliberate; the schema doc explains the reasoning:
+
+- **`experience_skills` is a pure junction** (composite PK of the two FKs). It has
+  **no `strength`/relevance column** — relevance depends on the job and is judged
+  by the LLM at generation time, not stored.
+- **`matches.score`** (0–100) is the single source of truth. There is **no tier
+  column** — strong/medium/reach buckets are derived at display time.
+- **`job_skills` is NOT foreign-keyed to `skills`.** Job skills are extracted from
+  listings independently and matched to user skills by name at match time.
+- **CV lives at user level** (`user_cvs`), never per-job. **Cover letters** are one
+  row per match (`cover_letters.match_id` unique), holding both `generated_content`
+  and `edited_content` with a `status` of draft/edited/final.
+- Passwords are stored **hashed** (`profiles.password_hash`). Do not implement auth
+  logic in this task — just the column.
+- Uniqueness constraints that must exist: `profiles.email`,
+  `skills (user_id, name)`, `job_listings (source, source_job_id)`,
+  `matches (user_id, job_id)`, `cover_letters.match_id`.
+- FK delete behaviour: `ON DELETE CASCADE` for user-owned and job-owned children;
+  `matches.cv_used_id` is `ON DELETE SET NULL`. See schema doc per-table.
+- **Portability mechanics (don't "fix" these back):** integer PKs use
+  `BigInteger().with_variant(Integer, "sqlite")`; boolean server defaults use
+  `text("false")` / `text("true")` (NOT `0`/`1`, which break on a Postgres
+  `BOOLEAN`, nor `false()`/`true()`, which don't exist in SQLite). ORM
+  relationships set `passive_deletes=True` so deletes rely on DB-level cascade.
+
+---
+
+## ✅ COMPLETED TASK: build the database layer
+
+> **Status: done (2026-06-15).** All acceptance criteria pass — see `PROGRESS.md`
+> for the slim summary. Section kept below for history. Replace with the next task
+> (the scraper) when starting it.
+
+Implement **only** the persistence layer described in `docs/database-schema.md`.
+Nothing else yet (no scraper, no LLM/matching, no cover-letter generation, no UI).
+
+### Steps
+
+1. **Scaffold** the repo layout above. Create `requirements.txt` with at least
+   `sqlalchemy>=2.0` and `alembic`. Add `.gitignore` and `.env.example`.
+2. **`app/db.py`** — create the engine from `DATABASE_URL`
+   (default `sqlite:///app.db`) and a session factory. Enable SQLite foreign-key
+   enforcement (PRAGMA foreign_keys=ON) via an event listener, since SQLite has it
+   off by default and we rely on cascade behaviour.
+3. **`app/models.py`** — implement all **11 tables** exactly as specified in
+   `docs/database-schema.md`, using SQLAlchemy 2.0 typed models: `profiles`,
+   `saved_searches`, `qualifications`, `experiences`, `skills`,
+   `experience_skills`, `user_cvs`, `job_listings`, `job_skills`, `matches`,
+   `cover_letters`. Match every column, type, nullability, default, unique
+   constraint, FK + delete rule, and index from the doc.
+4. **Alembic** — initialise it, point it at the models' metadata, autogenerate the
+   initial migration, and confirm `alembic upgrade head` builds all tables on a
+   fresh SQLite file.
+5. **`scripts/smoke_test.py`** — prove the model works end to end:
+   - Insert a `profile`, a `qualification`, an `experience`, two `skills`, and link
+     both skills to the experience via `experience_skills`.
+   - Add a `user_cv`, a `job_listing` with a couple of `job_skills`, a `match`, and
+     a `cover_letter` for that match.
+   - Run the key query: **"all experiences that demonstrate skill X"** by joining
+     through `experience_skills`. Print the result.
+   - Delete the `profile` and assert its qualifications, experiences, skills, links,
+     CVs, and matches are gone (cascade works). Print pass/fail.
+
+### Acceptance criteria
+
+- `alembic upgrade head` on a fresh `app.db` creates all 11 tables.
+- `python scripts/smoke_test.py` runs clean, prints the evidence-query result, and
+  confirms the cascade delete.
+- No SQLite-only SQL; pointing `DATABASE_URL` at Postgres would work unchanged.
+- Models match `docs/database-schema.md` exactly — flag any ambiguity in the doc
+  rather than guessing silently.
+
+### Out of scope (do NOT build yet)
+
+Scraper, matching/LLM scoring, cover-letter generation, web UI, authentication
+logic. Database layer only.
+
+---
+
+## How to use this file (note for the human)
+
+1. Create the repo, drop this file in the root as `CLAUDE.md`, and put
+   `database-schema.md` + `job-application-assistant-plan.md` in `docs/`.
+2. Open the repo in VS Code with Claude Code and tell it: *"Implement the Current
+   Task section of CLAUDE.md."*
+3. Once the DB layer passes the smoke test, replace the "CURRENT TASK" section with
+   the next task (the scraper) — keep the project context and schema decisions above
+   as permanent memory.
