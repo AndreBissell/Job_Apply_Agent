@@ -129,6 +129,7 @@ def scrape_search(
     session: Session,
     *,
     max_pages: int = MAX_PAGES,
+    navigate=None,
 ) -> list[ScrapedListing]:
     """Walk a saved search's results pages and return the *new* listings.
 
@@ -154,13 +155,22 @@ def scrape_search(
         logger.info("Search '%s' page %d: %s",
                     saved_search.label or saved_search.keywords, page_num, url)
 
-        page.goto(url, wait_until="domcontentloaded")
+        # Navigate to the page. Default: plain goto + wait for a card. With an
+        # injected ``navigate`` (e.g. the interactive, challenge-aware navigator),
+        # a Cloudflare challenge is handled *inside* the hook before returning.
+        if navigate is None:
+            page.goto(url, wait_until="domcontentloaded")
+            try:
+                page.wait_for_selector(selectors.JOB_CARD, timeout=15_000)
+                ready = True
+            except Exception:  # PlaywrightTimeoutError, kept broad to avoid import
+                ready = False
+        else:
+            ready = navigate(page, url, selectors.JOB_CARD, what=f"search page {page_num}")
 
-        # Wait for at least one card to render; absence likely means "no more
-        # results" (we've paged past the end), which is a clean stop, not an error.
-        try:
-            page.wait_for_selector(selectors.JOB_CARD, timeout=15_000)
-        except Exception:  # PlaywrightTimeoutError, kept broad to avoid import
+        # Absence of cards likely means "no more results" (paged past the end),
+        # which is a clean stop, not an error.
+        if not ready:
             logger.info("No job cards on page %d - stopping pagination.", page_num)
             break
 

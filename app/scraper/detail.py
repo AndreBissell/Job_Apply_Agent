@@ -22,7 +22,7 @@ from app.scraper.search import ScrapedListing
 logger = logging.getLogger(__name__)
 
 # Randomised politeness delay between detail-page visits (seconds).
-DEFAULT_DELAY_RANGE = (2.0, 5.0)
+DEFAULT_DELAY_RANGE = (1.87, 5.23)
 
 
 def extract_description(page) -> str | None:
@@ -52,14 +52,27 @@ def extract_description(page) -> str | None:
     return text or None
 
 
-def scrape_detail(page, listing: ScrapedListing) -> ScrapedListing:
-    """Visit one listing's detail page and populate ``raw_description`` in place."""
-    logger.info("Detail %s: %s", listing.source_job_id, listing.url)
-    page.goto(listing.url, wait_until="domcontentloaded")
+def scrape_detail(page, listing: ScrapedListing, *, navigate=None) -> ScrapedListing:
+    """Visit one listing's detail page and populate ``raw_description`` in place.
 
-    try:
-        page.wait_for_selector(selectors.DETAIL_DESCRIPTION, timeout=15_000)
-    except Exception:  # PlaywrightTimeoutError
+    ``navigate`` is the optional challenge-aware hook (see ``scrape_search``); when
+    omitted, navigation is a plain goto + wait for the description container.
+    """
+    logger.info("Detail %s: %s", listing.source_job_id, listing.url)
+    if navigate is None:
+        page.goto(listing.url, wait_until="domcontentloaded")
+        try:
+            page.wait_for_selector(selectors.DETAIL_DESCRIPTION, timeout=15_000)
+            ready = True
+        except Exception:  # PlaywrightTimeoutError
+            ready = False
+    else:
+        ready = navigate(
+            page, listing.url, selectors.DETAIL_DESCRIPTION,
+            what=f"detail page {listing.source_job_id}",
+        )
+
+    if not ready:
         logger.warning(
             "Job %s: description container never appeared - leaving raw_description NULL.",
             listing.source_job_id,
@@ -77,6 +90,7 @@ def scrape_details(
     listings: list[ScrapedListing],
     *,
     delay_range: tuple[float, float] = DEFAULT_DELAY_RANGE,
+    navigate=None,
 ) -> list[ScrapedListing]:
     """Scrape detail pages for ``listings`` (already capped by the orchestrator).
 
@@ -91,7 +105,7 @@ def scrape_details(
             time.sleep(delay)
 
         try:
-            scrape_detail(page, listing)
+            scrape_detail(page, listing, navigate=navigate)
         except Exception:  # noqa: BLE001 - log and continue to the next listing
             logger.exception("Job %s: unexpected error scraping detail page.",
                              listing.source_job_id)

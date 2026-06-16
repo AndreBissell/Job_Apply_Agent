@@ -34,7 +34,19 @@
       "WebFetch(domain:www.seek.com.au)",
       "WebFetch(domain:au.seek.com)",
       "PowerShell(& \".\\\\.venv\\\\Scripts\\\\python.exe\" -m py_compile app/scraper/browser.py scripts/explore_seek.py app/scraper/run.py)",
-      "PowerShell(if \\($?\\) { \"OK - compiles\" })"
+      "PowerShell(if \\($?\\) { \"OK - compiles\" })",
+      "Bash(curl.exe -s -x http://192.168.0.129:8080 https://ipinfo.io/json --max-time 30)",
+      "PowerShell(Write-Output \"=== Process owning port 8080 ===\"; Get-Process -Id 36892 | Select-Object Id,ProcessName,Path | Format-List; Write-Output \"=== Retry proxy test over loopback \\(127.0.0.1\\) ===\"; curl.exe -s -x http://127.0.0.1:8080 https://ipinfo.io/json --max-time 30; Write-Output \"\"; Write-Output \"curl exit code: $LASTEXITCODE\")",
+      "PowerShell($py = if \\(Test-Path \".venv\\\\Scripts\\\\python.exe\"\\) { \".venv\\\\Scripts\\\\python.exe\" } else { \"python\" }; Write-Output \"Using: $py\"; & $py --version; Write-Output \"=== playwright installed? ===\"; & $py -c \"import playwright; print\\('playwright', playwright.__version__\\)\" 2>&1; Write-Output \"=== dotenv loads PROXY_SERVER? ===\"; & $py -c \"import os; from dotenv import load_dotenv; load_dotenv\\(\\); print\\('PROXY_SERVER =', os.environ.get\\('PROXY_SERVER'\\)\\)\" 2>&1)",
+      "PowerShell(.venv\\\\Scripts\\\\python.exe -m pip install playwright 2>&1)",
+      "PowerShell(Write-Output \"=== curl direct to PyPI \\(uses Windows cert store\\) ===\"; curl.exe -sS -o NUL -w \"HTTP %{http_code}`n\" https://pypi.org/simple/playwright/ --max-time 30; Write-Output \"curl exit: $LASTEXITCODE\"; Write-Output \"\"; Write-Output \"=== What cert bundle is pip/certifi using? ===\"; .venv\\\\Scripts\\\\python.exe -c \"import certifi; print\\(certifi.where\\(\\)\\)\" 2>&1; Write-Output \"\"; Write-Output \"=== Is the VPN possibly the cause? Test with curl through proxy too ===\"; curl.exe -sS -o NUL -w \"HTTP %{http_code}`n\" -x http://127.0.0.1:8080 https://pypi.org/simple/playwright/ --max-time 30; Write-Output \"curl\\(proxy\\) exit: $LASTEXITCODE\")",
+      "PowerShell(.venv\\\\Scripts\\\\python.exe -m pip install --proxy http://127.0.0.1:8080 playwright 2>&1)",
+      "PowerShell($env:HTTPS_PROXY = \"http://127.0.0.1:8080\"; $env:HTTP_PROXY = \"http://127.0.0.1:8080\"; .venv\\\\Scripts\\\\python.exe -m playwright install chromium 2>&1 | Select-Object -Last 15)",
+      "PowerShell(.venv\\\\Scripts\\\\python.exe scripts\\\\explore_seek.py 2>&1)",
+      "WebSearch",
+      "PowerShell(Get-ChildItem \"$env:LOCALAPPDATA\\\\ms-playwright\" -Directory | Select-Object Name | Format-Table -AutoSize)",
+      "PowerShell(.venv\\\\Scripts\\\\python.exe -c \"from app.scraper.interactive import make_interactive_navigator, looks_like_challenge, notify_human; from app.scraper.search import scrape_search; from app.scraper.detail import scrape_details; from app.scraper.run import _upsert_listing; import inspect; print\\('navigate param in scrape_search:', 'navigate' in inspect.signature\\(scrape_search\\).parameters\\); print\\('navigate param in scrape_details:', 'navigate' in inspect.signature\\(scrape_details\\).parameters\\); print\\('wiring OK'\\)\" 2>&1)",
+      "Read(//c/Users/andre/.claude/projects/c--Users-andre-Job-Apply-Agent/memory/**)"
     ],
     "additionalDirectories": [
       "C:\\Users\\andre\\Job_Apply_Agent"
