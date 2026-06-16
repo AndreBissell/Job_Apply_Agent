@@ -66,7 +66,9 @@ class Profile(Base):
     dob: Mapped[datetime.date | None] = mapped_column(Date)
     visa_status: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+        DateTime(timezone=True), 
+        nullable=False, 
+        server_default=func.now()
     )
     updated_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True),
@@ -117,7 +119,9 @@ class SavedSearch(Base):
         Boolean, nullable=False, server_default=text("true")
     )
     created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+        DateTime(timezone=True), 
+        nullable=False, 
+        server_default=func.now()
     )
     updated_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True),
@@ -314,6 +318,10 @@ class JobListing(Base):
     title: Mapped[str] = mapped_column(Text, nullable=False)
     company: Mapped[str | None] = mapped_column(Text)
     location: Mapped[str | None] = mapped_column(Text)
+    # Seek's own categorisation, served free on each card (distinct from
+    # job_skills, which are LLM-extracted from raw_description later).
+    classification: Mapped[str | None] = mapped_column(Text)
+    subclassification: Mapped[str | None] = mapped_column(Text)
     work_type: Mapped[str | None] = mapped_column(Text)
     salary: Mapped[str | None] = mapped_column(Text)
     close_date: Mapped[datetime.date | None] = mapped_column(Date)
@@ -340,6 +348,7 @@ class JobListing(Base):
             "source", "source_job_id", name="uq_job_listings_source_source_job_id"
         ),
         Index("idx_job_listings_scraped", "date_scraped"),
+        Index("idx_job_listings_classification", "classification"),  # categorical pre-filter
     )
 
 

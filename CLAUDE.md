@@ -15,6 +15,42 @@ into a **multi-user hosted** app later.
 Full feature plan: `docs/job-application-assistant-plan.md`
 Full DB design: `docs/database-schema.md`
 
+---
+
+## ⛔ NETWORKING POLICY — all SCRAPE-TARGET traffic MUST go through a proxy (NON-NEGOTIABLE)
+
+**The risk being managed is an IP ban.** Any connection to a site we scrape —
+Seek today, any other job board later — exposes the user's real IP to repeated
+automated requests and MUST be routed through the configured proxy. A direct
+connection to a scrape target is a critical failure.
+
+**This does NOT mean every connection needs a proxy.** One-off software/infra
+downloads from services built to serve them — PyPI (`pip install ...`), the
+Playwright Chromium CDN (`playwright install chromium`), package registries,
+docs — carry no ban risk and may go direct. The test is simple: *could repeated
+automated requests from our IP get it flagged or banned by this site?* If yes
+(scrape targets), proxy is mandatory. If no (normal downloads), proxy not needed.
+
+Rules for anyone (human or AI) working in this repo:
+
+1. **Never run the scraper, `explore_seek.py`, or any code that opens a browser /
+   makes an HTTP request to a scrape target (Seek, etc.) unless a proxy is
+   configured.** The scraper is **fail-closed**: `app/scraper/browser.py` raises
+   `ProxyNotConfiguredError` and refuses to launch if `PROXY_SERVER` is not set.
+   Do not weaken this — the browser is the only thing that ever hits a target site.
+2. **`PROXY_SERVER` (and optionally `PROXY_USERNAME` / `PROXY_PASSWORD`) is
+   REQUIRED for any scraping run**, not optional. Set it in the gitignored `.env`.
+3. **Do NOT use `WebFetch` (or any agent-side fetch) against Seek or other scrape
+   targets** — that traffic does not go through the user's proxy. If you need a
+   target-site page (e.g. `au.seek.com/robots.txt`), fetch it **through the
+   proxied browser**, never via a direct/agent-side request.
+4. **When in doubt about whether a host is a scrape target, STOP and ask** before
+   connecting. Do not "just test" against a live target site.
+
+If a proxy is not yet configured, the correct action for any scrape-target
+connection is to **halt and request the proxy details from the user**, not to
+connect directly "just this once".
+
 ## Tech stack
 
 - **Language:** Python 3.11+

@@ -236,6 +236,13 @@ deduplication ("have I already scraped this listing?"). `raw_description` holds
 the full text (the source of truth the LLM writes from); the extracted
 `*_requirements` fields are convenience text for matching.
 
+`classification` / `subclassification` are Seek's **own** coarse categorisation
+(e.g. "Information & Communication Technology" -> "Engineering - Software"),
+served free on every search-result card. They are distinct from `job_skills`:
+the classification is a cheap categorical label (useful as a pre-filter and as a
+UI badge, no LLM needed), whereas `job_skills` are fine-grained skills extracted
+from `raw_description` later. Both are nullable - a card may omit them.
+
 ```sql
 CREATE TABLE job_listings (
     id                          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -245,6 +252,8 @@ CREATE TABLE job_listings (
     title                       TEXT        NOT NULL,
     company                     TEXT,
     location                    TEXT,
+    classification              TEXT,                   -- Seek's coarse category, e.g. 'Information & Communication Technology'
+    subclassification           TEXT,                   -- Seek's sub-category, e.g. 'Engineering - Software'
     work_type                   TEXT,                   -- 'full_time','part_time','casual','contract'
     salary                      TEXT,                   -- free text; often a range or absent
     close_date                  DATE,
@@ -350,6 +359,7 @@ CREATE INDEX idx_skills_user            ON skills(user_id);
 CREATE INDEX idx_experience_skills_skill ON experience_skills(skill_id);   -- "evidence for skill X"
 CREATE INDEX idx_user_cvs_user          ON user_cvs(user_id);
 CREATE INDEX idx_job_listings_scraped   ON job_listings(date_scraped);     -- "today's listings"
+CREATE INDEX idx_job_listings_classification ON job_listings(classification);  -- categorical pre-filter
 CREATE INDEX idx_job_skills_job         ON job_skills(job_id);
 CREATE INDEX idx_job_skills_name        ON job_skills(name);               -- keyword matching
 CREATE INDEX idx_matches_user_score     ON matches(user_id, score DESC);   -- ranked dashboard

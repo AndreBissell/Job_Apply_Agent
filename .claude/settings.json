@@ -23,7 +23,18 @@
       "Bash(.venv/Scripts/python.exe -m alembic upgrade head)",
       "Bash(.venv/Scripts/python.exe -c \"import sqlite3; c=sqlite3.connect\\('app.db'\\); n=[r[0] for r in c.execute\\(\\\\\"select name from sqlite_master where type='table' and name!='alembic_version'\\\\\"\\)]; print\\(len\\(n\\),'domain tables'\\)\")",
       "Bash(.venv/Scripts/python.exe -m alembic check)",
-      "Bash(.venv/Scripts/python.exe -m alembic downgrade base)"
+      "Bash(.venv/Scripts/python.exe -m alembic downgrade base)",
+      "PowerShell(python -m py_compile app/scraper/__init__.py app/scraper/selectors.py app/scraper/browser.py app/scraper/search.py app/scraper/detail.py app/scraper/run.py scripts/explore_seek.py scripts/run_scrape.py scripts/seed_saved_search.py)",
+      "PowerShell(if \\($?\\) { \"OK - all modules compile\" })",
+      "PowerShell(python -c \"import sys; sys.path.insert\\(0,'.'\\); import app.scraper; from app.scraper.run import run_daily_scrape; from app.scraper.selectors import build_search_url; print\\(build_search_url\\(keywords='software engineer', location='Brisbane QLD', work_type=None, page=2\\)\\); print\\('imports OK, playwright not triggered'\\)\")",
+      "PowerShell(& \".\\\\.venv\\\\Scripts\\\\python.exe\" -c \"import sys; sys.path.insert\\(0,'.'\\); import app.scraper; from app.scraper.run import run_daily_scrape; from app.scraper.search import scrape_search; from app.scraper.detail import scrape_details; from app.scraper.selectors import build_search_url; print\\(build_search_url\\(keywords='software engineer', location='Brisbane QLD', work_type='Full Time', page=2\\)\\); print\\('imports OK; playwright stayed lazy'\\)\")",
+      "PowerShell(& \".\\\\.venv\\\\Scripts\\\\python.exe\" -m alembic revision --autogenerate -m \"add classification and subclassification to job_listings\")",
+      "PowerShell(& \".\\\\.venv\\\\Scripts\\\\python.exe\" -c \"import sys; sys.path.insert\\(0,'.'\\); from app.models import JobListing; from app.scraper.run import _upsert_listing; from app.scraper.search import ScrapedListing; cols=[c.name for c in JobListing.__table__.columns]; print\\('classification' in cols, 'subclassification' in cols\\); print\\('idx ok:', any\\(i.name=='idx_job_listings_classification' for i in JobListing.__table__.indexes\\)\\); print\\('OK'\\)\")",
+      "Bash(./.venv/Scripts/python.exe -m playwright install chromium)",
+      "WebFetch(domain:www.seek.com.au)",
+      "WebFetch(domain:au.seek.com)",
+      "PowerShell(& \".\\\\.venv\\\\Scripts\\\\python.exe\" -m py_compile app/scraper/browser.py scripts/explore_seek.py app/scraper/run.py)",
+      "PowerShell(if \\($?\\) { \"OK - compiles\" })"
     ],
     "additionalDirectories": [
       "C:\\Users\\andre\\Job_Apply_Agent"

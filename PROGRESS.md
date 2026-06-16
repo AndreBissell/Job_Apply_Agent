@@ -5,6 +5,61 @@ one block per milestone.
 
 ---
 
+## 2026-06-15 — Seek scraper (Task 2) — code complete, NOT yet run ⏸️
+
+Built the full scraping layer. **No scraping has been executed** (per the standing
+constraint — selectors are unverified against live DOM). Code is structured so that
+Step 0 exploration + a small `--limit 5` live run are the only remaining steps.
+
+**Delivered**
+- `app/scraper/selectors.py` — single source of truth for all Seek selectors
+  (`data-automation` based) and the generic search-URL builder (`keywords`/`where`/
+  `worktype`/`sortmode=ListedDate`). All selectors flagged "verify in Step 0".
+- `app/scraper/browser.py` — `launch_browser()` context manager (headless Chromium,
+  default realistic UA) + `build_proxy_from_env()`. Playwright imported lazily.
+- `app/scraper/search.py` — **Component 1**: walks results pages, parses each card
+  into a `ScrapedListing`, dedupes on `(source='seek', source_job_id)`, early-stops
+  when a page has zero new listings. Does not cap (capping is orchestration's job).
+- `app/scraper/detail.py` — **Component 2**: visits each detail page, extracts the
+  ad body from the description container (noise sections excluded by being outside
+  it), randomised 2–5 s delay *between* visits. Per-page errors logged, not fatal.
+- `app/scraper/run.py` — `run_daily_scrape(max_new_per_search=20, limit=None)`:
+  iterates active saved searches → Component 1 → cap → Component 2 → insert →
+  logged `RunSummary` (new / processed / deferred / inserted / errors). Effective
+  cap = `min(max_new_per_search, limit)`.
+- `scripts/explore_seek.py` — one-shot dev tool: caches a search page + a detail
+  page to `dev_data/` (gitignored) for offline selector work.
+- `scripts/run_scrape.py` — CLI: `--max-new`, `--limit`, `--headed`, `-v`.
+- `scripts/seed_saved_search.py` — idempotent seed: test profile + one saved
+  search (keywords="software engineer", location="Brisbane QLD", work_type=NULL).
+- `requirements.txt` (+`playwright`), `.env.example` (optional `PROXY_*` vars),
+  `.gitignore` (+`dev_data/`).
+
+**Verified (offline only)**
+- All modules byte-compile and import via `.venv`; Playwright stays lazy (not
+  imported until a browser is launched).
+- URL builder produces correct generic URLs incl. worktype code + date sort.
+
+**Schema change (agreed): classification / subclassification**
+- Added nullable `classification` + `subclassification` `Text` columns to
+  `job_listings` (Seek's own free categorisation — cheap pre-filter + UI badge,
+  distinct from LLM-extracted `job_skills`). Now persisted in the upsert.
+- Migration `aa057c74b513` (batch-mode, portable); `alembic upgrade head` +
+  `alembic check` = no drift. `docs/database-schema.md` updated (table, note, and
+  `idx_job_listings_classification` index).
+
+**Remaining before this task is "done"**
+1. `python -m playwright install chromium` (one-time).
+2. Run `scripts/explore_seek.py` once; reconcile `app/scraper/selectors.py` against
+   the cached HTML; check `au.seek.com/robots.txt`.
+3. `python scripts/seed_saved_search.py`, then `python scripts/run_scrape.py
+   --limit 5` to verify end-to-end (and a second run → 0 new = dedup confirmed).
+
+**Next up:** verify selectors via Step 0, then the LLM extraction pass
+(`job_skills` / `*_requirements`).
+
+---
+
 ## 2026-06-15 — Database layer (Task 1) ✅
 
 Built the full persistence layer per `docs/database-schema.md`. Nothing else yet

@@ -16,6 +16,9 @@ __pycache__/
 .venv/
 venv/
 
+# Scraper dev aid: cached real pages for offline selector development.
+dev_data/
+
 # Editor / OS
 .vscode/
 .idea/
