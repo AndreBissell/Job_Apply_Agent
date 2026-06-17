@@ -26,6 +26,15 @@ Full DB design: `docs/database-schema.md`
 > **no automated requests to Seek and needs no proxy.** This policy still binds any
 > *future* code: do NOT add anything that makes a direct/automated request to a scrape
 > target. All Seek data must come from the user's own browser via the extension.
+>
+> **2026-06-17 — owner-approved limited-scan exception (1-hop rule):** the extension
+> may auto-navigate the user's *own signed-in* active tab to job links **that already
+> appear on a page the user opened** — i.e. **max 1 hop, never following links found on
+> the pages it then visits.** The scan is paced (5s between pages) and capped
+> (`MAX_SCAN_PAGES = 3` in `extension/sidebar.js`) to stay a trickle, not a crawl. This
+> is an experiment to confirm the detail-page → `/ingest` → extractor pipeline works;
+> if it draws Cloudflare/anti-bot attention, pull it. The hard line still holds: **no
+> backend/agent-side requests to Seek, and no deeper crawling.**
 
 **The risk being managed is an IP ban.** Any connection to a site we scrape —
 Seek today, any other job board later — exposes the user's real IP to repeated

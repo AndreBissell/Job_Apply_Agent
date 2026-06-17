@@ -22,11 +22,13 @@ from __future__ import annotations
 
 from urllib.parse import urlencode
 
-SEEK_BASE = "https://www.seek.com.au"
+SEEK_BASE = "https://au.seek.com"
 
 # --- Search results page ---------------------------------------------------
-# A single job card. Seek renders each result as an <article data-automation=...>.
-JOB_CARD = '[data-automation="normalJob"]'
+# A single job card. Seek renders each result as an <article>; data-automation
+# varies (normalJob/premiumJob/featured), but data-testid="job-card" is stable.
+# Verified against live DOM 2026-06-17 (au.seek.com).
+JOB_CARD = '[data-testid="job-card"]'
 
 # Per-card fields, queried *within* a card element.
 CARD_TITLE_LINK = 'a[data-automation="jobTitle"]'        # href -> /job/{id}

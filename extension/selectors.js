@@ -6,7 +6,9 @@
 // file together.
 
 const SELECTORS = {
-  JOB_CARD:           '[data-automation="normalJob"]',
+  // Matches normal AND premium/featured cards (data-automation varies:
+  // normalJob/premiumJob — data-testid is stable). Verified vs live DOM 2026-06-17.
+  JOB_CARD:           '[data-testid="job-card"]',
   CARD_TITLE_LINK:    'a[data-automation="jobTitle"]',
   CARD_COMPANY:       '[data-automation="jobCompany"]',
   CARD_LOCATION:      '[data-automation="jobLocation"]',

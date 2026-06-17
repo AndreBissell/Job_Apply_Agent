@@ -5,6 +5,46 @@ one block per milestone.
 
 ---
 
+## 2026-06-17 — Extension: limited "Scan Page" (1-hop, 3-page) detail capture 🧪
+
+**Goal:** confirm the detail-page → `/ingest` → extractor pipeline end to end on a
+few real jobs, without a crawler. Owner-approved exception to the no-automated-Seek
+policy, scoped tight (see CLAUDE.md "1-hop rule").
+
+**What it does:** a **Scan Page** button in the side panel. On a Seek search results
+page the user opened, it reads the job links already on that page, then navigates the
+**active tab** to the first 3 of them — one at a time, **5s apart** — letting the
+existing content script capture each detail page (full description) via `/ingest`.
+It then returns to the search page and refreshes the matches list.
+
+**Why the side panel (not the popup):** the panel survives the active tab navigating;
+a popup is torn down on the first navigation, killing the loop.
+
+**1-hop guarantee:** links come only from `parseSearchPage()` of the page the user
+opened (`COLLECT_LINKS` message); the scan never collects links from the detail pages
+it visits. Caps: `MAX_SCAN_PAGES = 3`, `SCAN_DELAY_MS = 5000` (`extension/sidebar.js`).
+
+**Files touched:** `extension/sidebar.html` (+button/log), `extension/sidebar.js`
+(self-contained scan via `chrome.scripting`), `extension/content_script.js`
+(`collectJobLinks`, au.seek.com paths), `extension/manifest.json` (au.seek.com host +
+broad match), `extension/selectors.js` + `app/scraper/selectors.py` (card selector).
+
+**Live DOM fixes (real Seek differs from assumptions):**
+- Host is **`au.seek.com`**, NOT `www.seek.com.au` — manifest/gate/base-URLs updated.
+- Search URLs are SEO slugs (`/software-engineer-jobs/in-All-Brisbane-QLD`), not `/jobs`.
+- Card container `[data-testid="job-card"]` (was `[data-automation="normalJob"]`, which
+  missed premium/featured). `jobTitle`/`jobCompany`/`jobLocation`/`jobAdDetails` confirmed.
+- The auto-injected content script wasn't injecting reliably, so the scan now injects its
+  own collector/scraper via `chrome.scripting.executeScript` and POSTs to /ingest itself —
+  no dependence on the declarative content script.
+
+**VERIFIED LIVE 2026-06-17 ✅** — first successful real capture. Scan found 31 links,
+visited 3 (5s apart), scraped full descriptions (4095/3343/3079 chars) → 3 rows in
+`job_listings` with `raw_description`. Sidebar shows "No matched jobs" because `/jobs`
+lists *scored* matches and `match.py` is still a stub — listings are stored fine.
+
+---
+
 ## 2026-06-17 — Pivot: Playwright scraper ABANDONED → Chrome extension + API ✅
 
 **Why:** Seek sits behind Cloudflare, which permanently loops the "Just a moment…"

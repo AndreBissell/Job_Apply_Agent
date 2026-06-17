@@ -5,6 +5,7 @@
   "description": "Captures Seek job listings and matches them against your profile.",
   "permissions": ["activeTab", "scripting", "sidePanel", "storage"],
   "host_permissions": [
+    "https://au.seek.com/*",
     "https://www.seek.com.au/*",
     "http://localhost:8000/*",
     "http://127.0.0.1:8000/*"
@@ -14,7 +15,7 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://www.seek.com.au/jobs*", "https://www.seek.com.au/job/*"],
+      "matches": ["https://au.seek.com/*", "https://www.seek.com.au/*"],
       "js": ["selectors.js", "content_script.js"],
       "run_at": "document_idle"
     }

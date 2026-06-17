@@ -53,7 +53,12 @@
       "PowerShell(.venv\\\\Scripts\\\\python.exe -c \"from app.api.main import app; print\\('FastAPI app imports OK; routes:', len\\(app.routes\\)\\)\" 2>&1)",
       "PowerShell(.venv\\\\Scripts\\\\python.exe -m alembic upgrade head 2>&1)",
       "PowerShell(.venv\\\\Scripts\\\\python.exe scripts\\\\seed_saved_search.py 2>&1)",
-      "PowerShell(.venv\\\\Scripts\\\\python.exe -m uvicorn app.api.main:app --host 127.0.0.1 --port 8000)"
+      "PowerShell(.venv\\\\Scripts\\\\python.exe -m uvicorn app.api.main:app --host 127.0.0.1 --port 8000)",
+      "PowerShell(python -m py_compile app/scraper/selectors.py)",
+      "PowerShell(if \\($?\\) { \"selectors.py compiles OK\" })",
+      "PowerShell(node --check extension/sidebar.js)",
+      "PowerShell(if \\($?\\) { \"sidebar.js OK\" })",
+      "Bash(python -c ' *)"
     ],
     "additionalDirectories": [
       "C:\\Users\\andre\\Job_Apply_Agent",

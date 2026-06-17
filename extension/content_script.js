@@ -41,7 +41,7 @@ function parseSearchPage() {
     if (!title) continue;
     listings.push({
       source_job_id: job_id,
-      url: href.startsWith('http') ? href : `https://www.seek.com.au${href}`,
+      url: href.startsWith('http') ? href : `${location.origin}${href}`,
       title,
       company:   textOrNull(card, SELECTORS.CARD_COMPANY),
       location:  textOrNull(card, SELECTORS.CARD_LOCATION),
@@ -86,10 +86,50 @@ async function waitFor(parseFn, readySelector, timeoutMs) {
   return null;
 }
 
+// Every distinct /job/{id} link already on this page, in document order. Selector-
+// independent (just matches the href), so it survives Seek renaming data-automation
+// attributes. The scan only ever follows THESE links (max 1 hop from a page the user
+// opened) — it never collects links from the detail pages it then visits. See the
+// networking policy in CLAUDE.md.
+function collectJobLinks() {
+  const urls = [];
+  const seen = new Set();
+  for (const a of document.querySelectorAll('a[href*="/job/"]')) {
+    const href = a.getAttribute('href') || '';
+    const id = extractJobId(href);
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    urls.push(href.startsWith('http') ? href : location.origin + href);
+  }
+  return urls;
+}
+
+// Hand the side panel the job links on this page (for the limited scan).
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg && msg.type === 'COLLECT_LINKS') {
+    sendResponse({ urls: collectJobLinks() });
+  }
+  // synchronous response; no need to keep the channel open
+});
+
 async function main() {
   const path = window.location.pathname;
 
-  if (path.startsWith('/jobs')) {
+  // Detail page first: a standalone /job/{id} page. Everything else that looks like
+  // a results page (Seek uses SEO slugs like /software-engineer-jobs/in-... as well
+  // as the legacy /jobs path) is treated as a search page.
+  if (path.startsWith('/job/')) {
+    const listings = await waitFor(parseDetailPage, SELECTORS.DETAIL_DESCRIPTION, 8000);
+    if (!listings) {
+      console.warn('[SeekAssistant] No description found — selectors may need updating.');
+      return;
+    }
+    const result = await ingest(listings);
+    if (result) {
+      console.log(`[SeekAssistant] Captured detail for job ${listings[0].source_job_id}.`);
+      chrome.runtime.sendMessage({ type: 'INGEST_DONE', ...result });
+    }
+  } else if (path.includes('-jobs') || path.startsWith('/jobs')) {
     const listings = await waitFor(parseSearchPage, SELECTORS.JOB_CARD, 8000);
     if (!listings) {
       console.warn('[SeekAssistant] No job cards found — selectors may need updating.');
@@ -99,17 +139,6 @@ async function main() {
     if (result) {
       console.log(`[SeekAssistant] Captured ${listings.length} cards,`,
                   `${result.new} new, ${result.updated} updated.`);
-      chrome.runtime.sendMessage({ type: 'INGEST_DONE', ...result });
-    }
-  } else if (path.startsWith('/job/')) {
-    const listings = await waitFor(parseDetailPage, SELECTORS.DETAIL_DESCRIPTION, 8000);
-    if (!listings) {
-      console.warn('[SeekAssistant] No description found — selectors may need updating.');
-      return;
-    }
-    const result = await ingest(listings);
-    if (result) {
-      console.log(`[SeekAssistant] Captured detail for job ${listings[0].source_job_id}.`);
       chrome.runtime.sendMessage({ type: 'INGEST_DONE', ...result });
     }
   }
