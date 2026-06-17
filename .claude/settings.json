@@ -46,10 +46,18 @@
       "WebSearch",
       "PowerShell(Get-ChildItem \"$env:LOCALAPPDATA\\\\ms-playwright\" -Directory | Select-Object Name | Format-Table -AutoSize)",
       "PowerShell(.venv\\\\Scripts\\\\python.exe -c \"from app.scraper.interactive import make_interactive_navigator, looks_like_challenge, notify_human; from app.scraper.search import scrape_search; from app.scraper.detail import scrape_details; from app.scraper.run import _upsert_listing; import inspect; print\\('navigate param in scrape_search:', 'navigate' in inspect.signature\\(scrape_search\\).parameters\\); print\\('navigate param in scrape_details:', 'navigate' in inspect.signature\\(scrape_details\\).parameters\\); print\\('wiring OK'\\)\" 2>&1)",
-      "Read(//c/Users/andre/.claude/projects/c--Users-andre-Job-Apply-Agent/memory/**)"
+      "Read(//c/Users/andre/.claude/projects/c--Users-andre-Job-Apply-Agent/memory/**)",
+      "PowerShell(.venv\\\\Scripts\\\\python.exe -m pip install \"fastapi>=0.110\" \"uvicorn[standard]>=0.29\" \"httpx>=0.27\" 2>&1)",
+      "PowerShell(.venv\\\\Scripts\\\\python.exe -c \"import json; json.load\\(open\\('extension/manifest.json'\\)\\); print\\('manifest.json: valid JSON'\\)\")",
+      "PowerShell(.venv\\\\Scripts\\\\python.exe -m pip install --trusted-host pypi.org --trusted-host files.pythonhosted.org \"fastapi>=0.110\" \"uvicorn[standard]>=0.29\" \"httpx>=0.27\" 2>&1)",
+      "PowerShell(.venv\\\\Scripts\\\\python.exe -c \"from app.api.main import app; print\\('FastAPI app imports OK; routes:', len\\(app.routes\\)\\)\" 2>&1)",
+      "PowerShell(.venv\\\\Scripts\\\\python.exe -m alembic upgrade head 2>&1)",
+      "PowerShell(.venv\\\\Scripts\\\\python.exe scripts\\\\seed_saved_search.py 2>&1)",
+      "PowerShell(.venv\\\\Scripts\\\\python.exe -m uvicorn app.api.main:app --host 127.0.0.1 --port 8000)"
     ],
     "additionalDirectories": [
-      "C:\\Users\\andre\\Job_Apply_Agent"
+      "C:\\Users\\andre\\Job_Apply_Agent",
+      "c:\\Users\\andre\\.claude\\projects\\c--Users-andre-Job-Apply-Agent\\memory"
     ]
   }
 }

@@ -19,6 +19,14 @@ Full DB design: `docs/database-schema.md`
 
 ## ⛔ NETWORKING POLICY — all SCRAPE-TARGET traffic MUST go through a proxy (NON-NEGOTIABLE)
 
+> **2026-06-17 update:** The Playwright scraper is **abandoned** (Cloudflare loops the
+> challenge on any automated browser, even with a proxy and a human solving it — see
+> PROGRESS.md). The active pipeline is a **Chrome extension** that reads Seek pages the
+> user opened in their *own* browser and POSTs them to a local API, so the app makes
+> **no automated requests to Seek and needs no proxy.** This policy still binds any
+> *future* code: do NOT add anything that makes a direct/automated request to a scrape
+> target. All Seek data must come from the user's own browser via the extension.
+
 **The risk being managed is an IP ban.** Any connection to a site we scrape —
 Seek today, any other job board later — exposes the user's real IP to repeated
 automated requests and MUST be routed through the configured proxy. A direct
@@ -111,6 +119,44 @@ These were deliberate; the schema doc explains the reasoning:
   `text("false")` / `text("true")` (NOT `0`/`1`, which break on a Postgres
   `BOOLEAN`, nor `false()`/`true()`, which don't exist in SQLite). ORM
   relationships set `passive_deletes=True` so deletes rely on DB-level cascade.
+
+---
+
+## 🔄 CURRENT TASK: Chrome extension + FastAPI backend (the capture pipeline)
+
+> **Status: backend built + verified (2026-06-17); extension built, pending first live
+> capture.** Replaces the abandoned Playwright scraper (Cloudflare — see the
+> networking-policy note above and PROGRESS.md). Full system overview lives in
+> `README.md`.
+
+**Architecture:** the user browses Seek in their *own* browser; a Manifest-V3 Chrome
+extension (`extension/`) reads the rendered DOM and POSTs listings to a local FastAPI
+backend (`app/api/`), which upserts them into `job_listings` and fires background
+tasks for LLM extraction + matching (currently stubs in `app/llm/`). No automated
+requests to Seek; no proxy needed.
+
+**Key files**
+- `app/api/main.py` — endpoints: `/health`, `/ingest`, `/jobs`, `/jobs/{id}`,
+  `/jobs/{id}/regenerate`, `/profile/{id}` (GET/PUT). `scripts/run_api.py` runs it.
+- `app/llm/extract.py` + `match.py` — STUBS; real LLM work is the next task.
+- `extension/` — `manifest.json`, `selectors.js` (**mirror of
+  `app/scraper/selectors.py` — keep in sync**), `content_script.js`, `background.js`,
+  `popup.{html,js}`, `sidebar.{html,js}`.
+
+**Run/verify:** `pip install -r requirements.txt` (no VPN needed; on this machine add
+`--trusted-host pypi.org --trusted-host files.pythonhosted.org` — AV TLS interception),
+`alembic upgrade head`, `python scripts/seed_saved_search.py` (creates profile 1),
+`python scripts/run_api.py`, then load `extension/` unpacked in Chrome
+(`chrome://extensions`). Backend endpoints are verified; browse Seek to do the first
+live capture. (Test the API with PowerShell `Invoke-RestMethod`, not `curl.exe` — PS
+mangles embedded JSON quotes.) See `README.md` for the full walkthrough.
+
+**`app/scraper/` is retained** for its selector logic (mirrored into the extension)
+and `explore_seek.py`; it is no longer in the active pipeline. Do not re-activate any
+code that makes automated requests to Seek.
+
+**Next task after this:** implement the real `app/llm/extract.py` + `match.py`
+(job-skill/requirement extraction, 0–100 match scoring, cover-letter drafts).
 
 ---
 

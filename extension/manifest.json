@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "Seek Job Assistant",
+  "version": "0.1.0",
+  "description": "Captures Seek job listings and matches them against your profile.",
+  "permissions": ["activeTab", "scripting", "sidePanel", "storage"],
+  "host_permissions": [
+    "https://www.seek.com.au/*",
+    "http://localhost:8000/*",
+    "http://127.0.0.1:8000/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.seek.com.au/jobs*", "https://www.seek.com.au/job/*"],
+      "js": ["selectors.js", "content_script.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "side_panel": {
+    "default_path": "sidebar.html"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Seek Job Assistant"
+  }
+}

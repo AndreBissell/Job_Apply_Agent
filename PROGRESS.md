@@ -5,6 +5,62 @@ one block per milestone.
 
 ---
 
+## 2026-06-17 — Pivot: Playwright scraper ABANDONED → Chrome extension + API ✅
+
+**Why:** Seek sits behind Cloudflare, which permanently loops the "Just a moment…"
+challenge against any Playwright-driven browser — even with the mandatory proxy and
+even when a human solves the challenge by hand (verified live 2026-06-16: the
+automated client is never trusted, so clearance is re-challenged every page). Seek's
+robots.txt also disallows the search (`*?`) and `*/job/` paths for generic agents,
+and there is no free candidate-side Seek API. Pushing past Cloudflare would require
+anti-bot evasion we won't build.
+
+**New architecture (better product, zero detection surface):** the user browses Seek
+in their *own real browser* (passes Cloudflare naturally, real IP — no proxy needed).
+A **Chrome extension** reads the already-rendered DOM and POSTs listings to a **local
+FastAPI backend**, which upserts them and (later) runs LLM extraction + matching.
+
+**Delivered this session**
+- `app/api/main.py` — FastAPI: `GET /health`, `POST /ingest` (upsert + backfill
+  `raw_description` on existing rows; fires background tasks), `GET /jobs`,
+  `GET /jobs/{id}`, `POST /jobs/{id}/regenerate`, `GET/PUT /profile/{id}`. CORS open
+  for local dev; `get_db` session dependency.
+- `app/llm/extract.py` + `match.py` — STUBS (log "TODO: implement") so the
+  ingest → background-task pipeline runs end to end before the LLM work lands.
+- `scripts/run_api.py` — uvicorn on 127.0.0.1:8000 (reload).
+- `extension/` (Manifest V3): `manifest.json`, `selectors.js` (mirror of the Python
+  selectors), `content_script.js` (parses /jobs + /job/ pages, polls for React
+  render, POSTs to backend), `background.js` (badge + message relay), `popup.html/js`
+  (backend health + open sidebar), `sidebar.html/js` (ranked matched-jobs list).
+- `requirements.txt` += fastapi, uvicorn[standard], httpx.
+
+**Kept (not deleted):** `app/scraper/` stays — selector logic is reused by the
+extension (`extension/selectors.js` mirrors `app/scraper/selectors.py`), and
+`explore_seek.py` is still a handy dev tool. The proxy infra (`require_proxy()` etc.)
+is dormant but harmless; the new pipeline never makes automated requests to Seek.
+
+**Out of scope this session:** real LLM extraction/matching, cover-letter generation,
+profile UI, auth, Postgres. Stubs only.
+
+**Verified this session**
+- Deps installed (`fastapi 0.137`, `uvicorn 0.49`, `httpx 0.28`) — needed the
+  `--trusted-host pypi.org --trusted-host files.pythonhosted.org` workaround (AV TLS
+  interception on this machine; unrelated to the now-uninstalled Windscribe).
+- `alembic upgrade head` + `scripts/seed_saved_search.py` → profile id=1 exists.
+- All backend acceptance checks PASS against a live uvicorn:
+  `/health` ok; `/ingest` new=1 then dedup new=0; detail re-ingest backfills
+  `raw_description` (updated=1) then updated=0; `/jobs` `[]`; `/profile/1` ok;
+  `/jobs/{id}` returns full detail / 404 when absent. Background tasks fire on ingest.
+  (Note: send JSON to the API via PowerShell `Invoke-RestMethod`, not `curl.exe` —
+  PS mangles embedded double-quotes.)
+
+**Remaining (handed to the user):** load `extension/` unpacked in Chrome and do the
+first live capture — this is also the first chance to verify the `data-automation`
+selectors against a real Seek DOM (fix `extension/selectors.js` + its Python mirror
+together if a capture returns 0 cards).
+
+---
+
 ## 2026-06-15 — Seek scraper (Task 2) — code complete, NOT yet run ⏸️
 
 Built the full scraping layer. **No scraping has been executed** (per the standing

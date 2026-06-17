@@ -7,5 +7,10 @@ python-dotenv>=1.0
 #   python -m playwright install chromium
 playwright>=1.40
 
+# Local API backend for the Chrome extension (ingest + dashboard endpoints).
+fastapi>=0.110
+uvicorn[standard]>=0.29
+httpx>=0.27  # used by tests / for hitting the API
+
 # Postgres driver — uncomment when deploying with a postgresql:// DATABASE_URL.
 # psycopg[binary]>=3.1

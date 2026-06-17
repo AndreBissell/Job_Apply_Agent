@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    body {
+      font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+      width: 260px;
+      margin: 0;
+      padding: 14px 16px;
+      color: #1c2330;
+    }
+    h1 { font-size: 15px; margin: 0 0 10px; }
+    .status { font-size: 13px; margin: 6px 0; display: flex; align-items: center; gap: 7px; }
+    .dot { width: 9px; height: 9px; border-radius: 50%; background: #aaa; flex: none; }
+    .dot.ok { background: #1aa260; }
+    .dot.bad { background: #d23; }
+    .muted { color: #6b7280; font-size: 12px; }
+    button {
+      margin-top: 12px; width: 100%; padding: 8px 10px; font-size: 13px;
+      border: none; border-radius: 6px; background: #2557a7; color: #fff; cursor: pointer;
+    }
+    button:hover { background: #1d4684; }
+  </style>
+</head>
+<body>
+  <h1>Seek Job Assistant</h1>
+  <div class="status"><span id="dot" class="dot"></span><span id="backend">Checking backend…</span></div>
+  <div class="status muted"><span id="captured">Captured this session: 0</span></div>
+  <button id="openSidebar">Open Sidebar</button>
+  <script src="popup.js"></script>
+</body>
+</html>

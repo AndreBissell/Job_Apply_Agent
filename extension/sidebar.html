@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    body {
+      font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+      margin: 0; padding: 0; color: #1c2330; background: #f7f8fa;
+    }
+    header {
+      padding: 12px 14px; background: #fff; border-bottom: 1px solid #e5e7eb;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    header h1 { font-size: 14px; margin: 0; }
+    button.refresh {
+      font-size: 12px; padding: 5px 9px; border: 1px solid #cbd5e1;
+      border-radius: 6px; background: #fff; cursor: pointer;
+    }
+    #status { font-size: 12px; color: #6b7280; padding: 8px 14px; }
+    ul { list-style: none; margin: 0; padding: 0; }
+    li {
+      background: #fff; border-bottom: 1px solid #eef0f3; padding: 10px 14px;
+      cursor: pointer;
+    }
+    li:hover { background: #f0f4fb; }
+    .row { display: flex; align-items: center; gap: 8px; }
+    .title { font-size: 13px; font-weight: 600; flex: 1; }
+    .score {
+      font-size: 12px; font-weight: 700; color: #fff; background: #2557a7;
+      border-radius: 10px; padding: 2px 8px; flex: none;
+    }
+    .meta { font-size: 12px; color: #6b7280; margin-top: 2px; }
+    .detail { font-size: 12px; color: #374151; margin-top: 6px; white-space: pre-wrap; }
+    a { color: #2557a7; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Matched Jobs</h1>
+    <button class="refresh" id="refresh">Refresh</button>
+  </header>
+  <div id="status">Loading…</div>
+  <ul id="jobs"></ul>
+  <script src="sidebar.js"></script>
+</body>
+</html>
