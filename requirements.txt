@@ -12,5 +12,12 @@ fastapi>=0.110
 uvicorn[standard]>=0.29
 httpx>=0.27  # used by tests / for hitting the API
 
+# LLM layer: Google Gemini (Flash-Lite) via the unified GenAI SDK. All calls go
+# through app/llm/client.py; provider/model/key come from .env (see CLAUDE.md).
+google-genai>=1.0
+# Makes Python's TLS use the OS trust store — needed where AV/corporate proxies
+# do TLS interception (the local CA is in the OS store, not certifi's bundle).
+truststore>=0.9
+
 # Postgres driver — uncomment when deploying with a postgresql:// DATABASE_URL.
 # psycopg[binary]>=3.1

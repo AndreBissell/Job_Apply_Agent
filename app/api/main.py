@@ -10,6 +10,7 @@ Run it with ``python scripts/run_api.py`` (uvicorn on 127.0.0.1:8000).
 
 from __future__ import annotations
 
+import json
 import logging
 from decimal import Decimal
 from typing import Iterator
@@ -21,6 +22,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import SessionLocal
+from app.llm.cover_letter import generate_cover_letter
 from app.llm.extract import extract_job
 from app.llm.match import match_job
 from app.models import (
@@ -97,15 +99,45 @@ def _score_to_number(score: Decimal | None) -> float | None:
     return float(score) if score is not None else None
 
 
-def _process_listing(job_id: int, profile_id: int, has_description: bool) -> None:
-    """Background task: extract + match a freshly ingested/updated listing.
+def _gaps_to_list(gaps: str | None) -> list[str]:
+    """``matches.gaps`` is stored as a JSON string; return it as a list for the API."""
+    if not gaps:
+        return []
+    try:
+        data = json.loads(gaps)
+    except (json.JSONDecodeError, TypeError):
+        return [gaps]
+    return data if isinstance(data, list) else [str(data)]
+
+
+def _process_listing(
+    job_id: int,
+    profile_id: int,
+    has_description: bool,
+    with_cover_letter: bool = False,
+) -> None:
+    """Background task: extract + match (+ optionally cover letter) a listing.
 
     Runs after the response is sent. With only a card (no description yet) there's
     nothing to extract from, so we defer until a detail-page ingest fills it in.
+    ``with_cover_letter=True`` is set by /regenerate so the letter is generated
+    after matching completes — never set by /ingest to avoid burning quota on every
+    scraped listing.
     """
     if has_description:
-        extract_job(job_id)
-        match_job(job_id, profile_id)
+        try:
+            extract_job(job_id)
+        except Exception:  # noqa: BLE001 — a bad extraction must not kill the task
+            logger.exception("extract_job failed for job %s", job_id)
+        try:
+            match_job(job_id, profile_id)
+        except Exception:  # noqa: BLE001
+            logger.exception("match_job failed for job %s", job_id)
+        if with_cover_letter:
+            try:
+                generate_cover_letter(job_id, profile_id, force=True)
+            except Exception:  # noqa: BLE001
+                logger.exception("generate_cover_letter failed for job %s", job_id)
     else:
         logger.info(
             "Job %s stored as card only (no description) — deferring extraction/"
@@ -214,7 +246,7 @@ def list_jobs(
             "url": job.url,
             "score": _score_to_number(match.score),
             "reasoning": match.reasoning,
-            "gaps": match.gaps,
+            "gaps": _gaps_to_list(match.gaps),
             "status": match.status,
             "has_cover_letter": match.cover_letter is not None,
         }
@@ -252,7 +284,7 @@ def get_job(job_id: int, profile_id: int = 1, db: Session = Depends(get_db)) -> 
             {
                 "score": _score_to_number(match.score),
                 "reasoning": match.reasoning,
-                "gaps": match.gaps,
+                "gaps": _gaps_to_list(match.gaps),
                 "status": match.status,
             }
             if match is not None
@@ -276,13 +308,21 @@ def regenerate(
     profile_id: int = 1,
     db: Session = Depends(get_db),
 ) -> dict:
-    """Re-run extraction + matching (+ cover letter) for one job."""
+    """Re-run extraction + matching + cover letter for one job.
+
+    Cover-letter generation only fires if the match score is >= the threshold
+    (75); below that the call is a no-op and no quota is spent.
+    """
     job = db.get(JobListing, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
 
     background_tasks.add_task(
-        _process_listing, job_id, profile_id, job.raw_description is not None
+        _process_listing,
+        job_id,
+        profile_id,
+        job.raw_description is not None,
+        with_cover_letter=True,
     )
     return {"status": "queued"}
 

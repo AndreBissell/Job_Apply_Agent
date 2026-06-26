@@ -5,6 +5,99 @@ one block per milestone.
 
 ---
 
+## 2026-06-23 — LLM matching + scoring (match.py) — DONE, verified live ✅
+
+**Goal:** score each extracted job against profile id=1 into a `matches` row
+(0–100 + reasoning + gaps). Followed the matching plan, which scoped **cover
+letters OUT** of this pass (separate next task) — so nothing writes `cover_letters`.
+
+**Delivered**
+- `app/llm/prefilter.py` — pure-Python, zero-LLM `prefilter(job, profile) ->
+  PrefilterResult`: hard/soft skill match/gap lists, overlap %, `seniority_flag`
+  (senior/lead/etc.), `qual_match` (user qual words vs job qual-requirement text).
+  Context for the LLM, **not** a gate — every extracted job still gets scored.
+- `app/llm/match.py` — `match_job(job_id, profile_id, session=None, force=False)`.
+  Eager-loads profile (skills, quals, experiences+linked skills) + job (job_skills),
+  builds plain-text candidate/job summaries + prefilter signals, calls
+  `complete_json` (Pydantic `MatchScore`, temp 0.1) with a new-grad-fair prompt
+  ("X years" = soft gap, weight quals/projects). Clamps score 0–100, upserts on
+  UNIQUE(user_id, job_id), status `new`, `gaps` stored as a JSON string. Parse
+  failure records a 0-score row rather than vanishing. Skips unextracted jobs and
+  already-scored pairs unless `force`.
+- `scripts/seed_profile.py` — idempotent richer seed for profile 1 (16 skills,
+  1 qualification, 3 experiences with linked skills via `experience_skills`).
+- `scripts/run_matching.py` — `--profile-id/--job-id/--limit/--force/-v`; default =
+  extracted jobs with no match row for the profile; per-job try/except;
+  `DailyQuotaError` stops the batch.
+- API: `GET /jobs` + `/jobs/{id}` now return `gaps` as a list (`_gaps_to_list`,
+  `json.loads`); `/jobs` already joined `matches` and ordered by score desc.
+
+**Verified live 2026-06-23** (all acceptance criteria PASS):
+- All 3 extracted jobs scored: Graduate SWE **85**, AI Engineer **65**, AI Lead **65**
+  — relevant grad role clearly out-scores the senior/lead roles, and the lead role
+  was NOT auto-zeroed (new-grad fairness holds). Reasoning + specific gaps populated.
+- Re-run without `--force` → "no jobs to match", row count stays 3 (idempotent;
+  UNIQUE user_id+job_id holds).
+- `GET /jobs` (TestClient) → 3 rows ordered by score desc, `gaps` as JSON arrays.
+
+**Next task:** cover-letter generation — `complete_text` (temp ~0.7) for
+above-threshold matches → one `cover_letters` draft per match (UNIQUE match_id),
+pulling real evidence by walking `experience_skills`. No new schema needed.
+
+---
+
+## 2026-06-23 — LLM extraction (extract.py) — DONE, verified live ✅
+
+**Goal:** replace the `extract.py` stub with real Gemini extraction of structured
+fields from `job_listings.raw_description` (CLAUDE.md "Current Task").
+
+**Delivered**
+- `app/llm/client.py` — provider abstraction (the ONE place model/provider live).
+  `complete_json(system, user, schema, temp)` + `complete_text(...)`. Reads
+  `LLM_PROVIDER`/`GEMINI_MODEL`/`GEMINI_API_KEY`(or `GOOGLE_API_KEY`)/`LLM_RPM`
+  from env; in-process RPM throttle; 429 backoff (2/4/8, max 3); a *daily*-quota
+  429 raises `DailyQuotaError` to stop a batch. Loads `.env` itself (no import-order
+  dependency). Calls `truststore.inject_into_ssl()` so TLS uses the Windows cert
+  store (AV TLS-interception breaks certifi — same root cause as the pip quirk).
+- `app/llm/extract.py` — `extract_job(job_id, session=None, force=False)`. Pydantic
+  `JobExtraction` schema (hard/soft skills, qualifications[], experience[], seniority
+  enum, key_responsibilities[], summary) drives Gemini structured output. Idempotent:
+  clears prior `job_skills` + extracted fields, dedupes skills, sets `extracted_at`.
+  Skips null-`raw_description` and already-extracted (unless `force`).
+- `scripts/run_extraction.py` — `--limit/--job-id/--force/-v`; per-job try/except;
+  stops cleanly on `DailyQuotaError`; prints processed/succeeded/failed summary.
+- API: `_process_listing` now wraps `extract_job`/`match_job` in try/except so a bad
+  job can't kill the background task.
+- Schema: added `seniority`, `key_responsibilities`, `summary`, `extracted_at` to
+  `job_listings` (migration `f42bcd31e385`, batch-mode; `alembic check` clean).
+  `*_requirements` now hold JSON. `docs/database-schema.md` updated.
+- `requirements.txt` += `google-genai`, `truststore`.
+
+**Self-test tool:** `scripts/check_llm.py` — key present → `list()` → one tiny
+generate; prints PASS or a diagnosed FAIL. Use to validate any key before a batch.
+
+**Verified live 2026-06-23** (all acceptance criteria PASS):
+- `run_extraction.py --job-id 4` extracted the Graduate SWE ad → 5 hard + 11 soft
+  `job_skills`, qualifications/experience JSON (must-have vs nice-to-have split
+  correctly, e.g. Elixir → required:false), `seniority=graduate`, summary,
+  key_responsibilities; `extracted_at` set.
+- Re-run without `--force` → **skipped** (logged, no LLM call); `--force` →
+  re-extracted with **no duplicate rows** (16→17, not 32 — clear-before-insert works).
+- Null-`raw_description` row → **skipped with a warning, no crash**.
+- All 3 real captures extracted: job 2 `lead`, job 3 `mid`, job 4 `graduate`.
+
+**The key blocker, resolved:** the `AQ.Ab8…` keys are short-lived Google AI Studio
+*ephemeral tokens*, and the user's personal Google account had no free-tier Gemini
+quota ("project quota tier unavailable / contact your project administrator"). Fix
+that worked: signed up for the **Google Cloud $300 free-trial** (billing account with
+promo credit) → the project got paid-tier access drawn from the $300 credit. At
+~$0.0003/job this is effectively free. Key lives in `.env` as `GOOGLE_API_KEY`.
+
+**Next task:** real `app/llm/match.py` — 0–100 scoring of job vs profile (reasoning,
+gaps) into `matches`, + cover-letter draft into `cover_letters`.
+
+---
+
 ## 2026-06-17 — Extension: limited "Scan Page" (1-hop, 3-page) detail capture 🧪
 
 **Goal:** confirm the detail-page → `/ingest` → extractor pipeline end to end on a

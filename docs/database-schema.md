@@ -258,14 +258,26 @@ CREATE TABLE job_listings (
     salary                      TEXT,                   -- free text; often a range or absent
     close_date                  DATE,
     start_date                  DATE,                   -- often n/a
-    qualification_requirements  TEXT,                   -- extracted, LLM-consumed
-    experience_requirements     TEXT,                   -- extracted, LLM-consumed
+    qualification_requirements  TEXT,                   -- LLM-extracted, JSON array of {title, field?, required}
+    experience_requirements     TEXT,                   -- LLM-extracted, JSON array of {description, years?, required}
     raw_description             TEXT,                   -- full scraped text (source of truth)
+    seniority                   TEXT,                   -- LLM-extracted: intern|graduate|junior|mid|senior|lead|unknown
+    key_responsibilities        TEXT,                   -- LLM-extracted, JSON array of short phrases
+    summary                     TEXT,                   -- LLM-extracted, 2-3 neutral sentences
+    extracted_at                TIMESTAMPTZ,            -- set when LLM extraction succeeded (NULL = pending)
     date_scraped                TIMESTAMPTZ NOT NULL DEFAULT now(),
     created_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (source, source_job_id)                      -- dedup key
 );
 ```
+
+The LLM-extracted fields (`seniority`, `key_responsibilities`, `summary`,
+`extracted_at`, and the JSON in `*_requirements`) are populated by
+`app/llm/extract.py` from `raw_description`. `extracted_at` is the idempotency
+marker: NULL means "not yet extracted", and the batch runner
+(`scripts/run_extraction.py`) processes only NULL-marked rows unless `--force`.
+The list-valued fields are stored as JSON **text** (portable across SQLite and
+Postgres); fine-grained skills go to `job_skills`, not into these columns.
 
 ---
 

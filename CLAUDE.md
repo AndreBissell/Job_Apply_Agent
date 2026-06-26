@@ -1,232 +1,313 @@
-# CLAUDE.md — Job Application Assistant
+CLAUDE.md — Job Application Assistant
 
-> Project context for Claude Code. Read this first every session.
-> **`docs/database-schema.md` is the source of truth for the data model.** If
-> anything here conflicts with that file, the schema doc wins.
 
-## What this project is
+Project context for Claude Code. Read this first every session.
+docs/database-schema.md is the source of truth for the data model. If
+anything here conflicts with that file, the schema doc wins.
+
+
+
+What this project is
 
 A tool that helps a job seeker find suitable roles on Seek and drafts tailored
 cover letters from the user's own profile (qualifications, experience, skills).
 The user reviews and submits every application manually — the tool never
-auto-submits. It starts as a **local single-user app** and is designed to grow
-into a **multi-user hosted** app later.
+auto-submits. It starts as a local single-user app and is designed to grow
+into a multi-user hosted app later.
 
-Full feature plan: `docs/job-application-assistant-plan.md`
-Full DB design: `docs/database-schema.md`
+Full feature plan: docs/job-application-assistant-plan.md
+Full DB design: docs/database-schema.md
 
----
 
-## ⛔ NETWORKING POLICY — all SCRAPE-TARGET traffic MUST go through a proxy (NON-NEGOTIABLE)
+SEEK ACCESS POLICY — how this app is allowed to touch Seek
 
-> **2026-06-17 update:** The Playwright scraper is **abandoned** (Cloudflare loops the
-> challenge on any automated browser, even with a proxy and a human solving it — see
-> PROGRESS.md). The active pipeline is a **Chrome extension** that reads Seek pages the
-> user opened in their *own* browser and POSTs them to a local API, so the app makes
-> **no automated requests to Seek and needs no proxy.** This policy still binds any
-> *future* code: do NOT add anything that makes a direct/automated request to a scrape
-> target. All Seek data must come from the user's own browser via the extension.
->
-> **2026-06-17 — owner-approved limited-scan exception (1-hop rule):** the extension
-> may auto-navigate the user's *own signed-in* active tab to job links **that already
-> appear on a page the user opened** — i.e. **max 1 hop, never following links found on
-> the pages it then visits.** The scan is paced (5s between pages) and capped
-> (`MAX_SCAN_PAGES = 3` in `extension/sidebar.js`) to stay a trickle, not a crawl. This
-> is an experiment to confirm the detail-page → `/ingest` → extractor pipeline works;
-> if it draws Cloudflare/anti-bot attention, pull it. The hard line still holds: **no
-> backend/agent-side requests to Seek, and no deeper crawling.**
 
-**The risk being managed is an IP ban.** Any connection to a site we scrape —
-Seek today, any other job board later — exposes the user's real IP to repeated
-automated requests and MUST be routed through the configured proxy. A direct
-connection to a scrape target is a critical failure.
+No proxy required (2026-06-17). The Playwright scraper is abandoned
+(Cloudflare loops the challenge on any automated browser — see PROGRESS.md). The
+active pipeline is a Chrome extension running in the user's own signed-in
+browser, on the user's real IP. There are no backend/server-side automated
+requests to Seek, so the old "all scrape-target traffic must go through a proxy"
+rule no longer applies and is removed. The proxy code (require_proxy() etc.) stays
+in the repo dormant and optional — do not delete it, but nothing depends on it.
 
-**This does NOT mean every connection needs a proxy.** One-off software/infra
-downloads from services built to serve them — PyPI (`pip install ...`), the
-Playwright Chromium CDN (`playwright install chromium`), package registries,
-docs — carry no ban risk and may go direct. The test is simple: *could repeated
-automated requests from our IP get it flagged or banned by this site?* If yes
-(scrape targets), proxy is mandatory. If no (normal downloads), proxy not needed.
 
-Rules for anyone (human or AI) working in this repo:
 
-1. **Never run the scraper, `explore_seek.py`, or any code that opens a browser /
-   makes an HTTP request to a scrape target (Seek, etc.) unless a proxy is
-   configured.** The scraper is **fail-closed**: `app/scraper/browser.py` raises
-   `ProxyNotConfiguredError` and refuses to launch if `PROXY_SERVER` is not set.
-   Do not weaken this — the browser is the only thing that ever hits a target site.
-2. **`PROXY_SERVER` (and optionally `PROXY_USERNAME` / `PROXY_PASSWORD`) is
-   REQUIRED for any scraping run**, not optional. Set it in the gitignored `.env`.
-3. **Do NOT use `WebFetch` (or any agent-side fetch) against Seek or other scrape
-   targets** — that traffic does not go through the user's proxy. If you need a
-   target-site page (e.g. `au.seek.com/robots.txt`), fetch it **through the
-   proxied browser**, never via a direct/agent-side request.
-4. **When in doubt about whether a host is a scrape target, STOP and ask** before
-   connecting. Do not "just test" against a live target site.
+What the extension IS allowed to do — the 1-hop rule (standing behaviour):
 
-If a proxy is not yet configured, the correct action for any scrape-target
-connection is to **halt and request the proxy details from the user**, not to
-connect directly "just this once".
 
-## Tech stack
+Read the DOM of any Seek page the user themselves opened.
+Auto-navigate the user's active tab to job links that already appear on a page the
+user opened — i.e. links on the opened search-results page are fair game. This is
+1 hop: the page the user opened → the listings linked from it.
+Paced and capped so it stays a trickle, not a crawl: ≥5s between pages
+(SCAN_DELAY_MS = 5000), and a sane per-scan cap (MAX_SCAN_PAGES, currently 3 —
+raise deliberately if needed, don't remove the cap).
 
-- **Language:** Python 3.11+
-- **ORM:** SQLAlchemy 2.0 (typed, declarative mapped style)
-- **Migrations:** Alembic
-- **Config:** `python-dotenv` — `app/db.py` loads `.env` so `DATABASE_URL` (and
-  later secrets) can live in a gitignored `.env` file.
-- **DB:** SQLite for local dev, **Postgres-ready** for hosting. The database URL
-  comes from a `DATABASE_URL` env var, defaulting to `sqlite:///app.db`, so the
-  SQLite → Postgres move is a config change, not a code change.
-- Do **not** write SQLite-only SQL or rely on SQLite-specific behaviour. Keep
-  everything portable so a Postgres `DATABASE_URL` works with no code changes.
 
-## Proposed repo layout
+The hard line that still holds — no second hop:
 
-```
+
+Never follow links found on the pages the scan itself visited. Links come only
+from a page the user opened (parseSearchPage() / COLLECT_LINKS), never from the
+detail pages the scan navigates to. No recursion, no crawler. One hop, full stop.
+No backend/agent-side requests to Seek. All Seek traffic comes from the user's
+browser. Do NOT use WebFetch or any server-side fetch against Seek; if you ever need
+a Seek page agent-side (e.g. au.seek.com/robots.txt), STOP and ask the user first.
+Keep it paced and capped. If the scan ever draws Cloudflare / anti-bot attention,
+pull it back to user-initiated opens only.
+
+
+Why this is defensible at this volume: it runs in the user's real browser/session
+for their own personal job search, opens a handful of listings the user could have
+clicked themselves, spaced like normal browsing. It is low-volume, non-commercial, and
+the data is used only for the user's own applications. Seek's ToS does prohibit
+automated access in general (clause 9b), so this is a deliberate, owner-accepted
+personal-use trade-off — kept small on purpose. The line that keeps it bounded is the
+no-second-hop rule above; do not cross it.
+
+Normal downloads are unaffected: PyPI (pip install), package registries, docs,
+etc. were never the concern and go direct as usual.
+
+Tech stack
+
+
+Language: Python 3.11+
+ORM: SQLAlchemy 2.0 (typed, declarative mapped style)
+Migrations: Alembic
+API: FastAPI + uvicorn (local backend for the extension)
+LLM: Google Gemini (free tier) — see the LLM Layer section below
+Config: python-dotenv — app/db.py loads .env so DATABASE_URL (and
+later secrets) can live in a gitignored .env file.
+DB: SQLite for local dev, Postgres-ready for hosting. The database URL
+comes from a DATABASE_URL env var, defaulting to sqlite:///app.db, so the
+SQLite → Postgres move is a config change, not a code change.
+Do not write SQLite-only SQL or rely on SQLite-specific behaviour. Keep
+everything portable so a Postgres DATABASE_URL works with no code changes.
+
+
+
+🤖 LLM LAYER
+
+Provider: Google Gemini via Google AI Studio (free tier).
+Project must keep billing DISABLED — enabling billing on a Gemini cloud
+project deletes the free tier entirely and every call becomes billable from the
+first token. If paid is ever needed, use a separate Google Cloud project.
+
+Model (current — EVERYTHING runs on this one): gemini-2.5-flash-lite
+
+
+Used for BOTH job extraction AND cover-letter generation right now.
+Chosen for its high free-tier quota. Daily headroom is fine; the binding
+constraint is a PER-MINUTE short-window limit — see the ⚠️ note below.
+
+⚠️ Free-tier 429s are a PER-MINUTE / short-window rate limit, NOT a daily cap
+(proven by probe 2026-06-23: a 429'd call recovered on retry 65s later). The error
+text is misleading — it reads `limit: 20` with quotaId
+`GenerateRequestsPerDayPerProjectPerModel-FreeTier`, but it carries `retryDelay: ~50s`
+and clears within a minute. So daily headroom is fine; the constraints are: (1) PACE
+calls slowly — even 7.5s spacing (LLM_RPM=8) can trip it in a burst, especially at
+peak hours when capacity dips; (2) BUG in client.py `_is_quota_429`: the "PerDay"
+quotaId substring makes it raise DailyQuotaError, so batches STOP instead of backing
+off + retrying on `retryDelay`. Fix = treat these as retryable, not fatal.
+Always read from the GEMINI_MODEL env var — never hardcode the model name.
+Verify the exact model string against the installed SDK before relying on it;
+Google renames models often (a newer gemini-3.1-flash-lite also exists). If the
+configured name 404s, list available models and use the current free Flash-Lite.
+
+
+Provider abstraction: ALL LLM calls go through app/llm/client.py
+(complete_json for structured extraction; complete_text for prose). The provider
+and model live in exactly ONE place so swapping is a one-file change. Do not call the
+Gemini SDK directly from extract.py / match.py / cover-letter code.
+
+Temperature:
+
+
+Extraction → 0.1 (deterministic, consistent structure).
+Cover letters → higher (~0.7) for natural prose.
+
+
+Rate-limit handling: the binding free-tier limit is PER-MINUTE (see the ⚠️ note
+above) — there is no hourly cap, and daily headroom is fine. On HTTP 429, client.py
+backs off honouring the server's retryDelay (capped ~70s) and retries (max 3), so a
+per-minute trip becomes a brief pause, not a failure. Only a 429 whose retryDelay says
+it won't clear for a long time (> _DAILY_RETRY_SECS = 300s) is treated as a real daily
+exhaustion → DailyQuotaError, which stops a batch cleanly. Classification is by the
+server's retryDelay, NOT by the misleading "PerDay" quotaId substring. Free-tier
+capacity dips below the ceiling at peak hours, so the backoff is load-bearing. Local
+throttle target LLM_RPM=4 (~15s spacing; kept under the tight per-minute ceiling).
+
+Env vars (gitignored .env):
+
+
+GEMINI_API_KEY — from aistudio.google.com
+GEMINI_MODEL=gemini-2.5-flash-lite
+LLM_PROVIDER=gemini
+LLM_RPM=4
+
+
+Data privacy note: free-tier prompts may be used by Google for model training.
+Fine for public job-ad text; just be aware.
+
+Planned (NOT YET — DO NOT IMPLEMENT): cover-letter generation may later move to
+Anthropic Claude Haiku for better prose, while extraction stays on Gemini
+Flash-Lite (per-task provider rather than one global setting). For now, everything
+stays on Gemini Flash-Lite. Do not pre-wire Anthropic calls. The Anthropic API is
+separate from any Claude.ai subscription (billed per-token via console.anthropic.com).
+
+
+Repo layout (actual)
+
 job-app-assistant/
   CLAUDE.md
+  README.md
+  PROGRESS.md
   docs/
     database-schema.md
     job-application-assistant-plan.md
   app/
     __init__.py
     db.py              # engine + session factory; reads DATABASE_URL
-    models.py          # SQLAlchemy models (split into a models/ package if it grows)
-  alembic/             # migration environment (from `alembic init`)
+    models.py          # SQLAlchemy models
+    api/
+      main.py          # FastAPI backend for the extension
+    llm/
+      client.py        # provider abstraction (Gemini now; Claude later) — ONE place
+      extract.py       # job → structured fields (DONE 2026-06-23)
+      prefilter.py     # cheap pre-LLM match signals (DONE 2026-06-23)
+      match.py         # job vs profile → score/reasoning/gaps (DONE 2026-06-23)
+      cover_letter.py  # match → cover-letter draft (DONE 2026-06-27)
+    scraper/           # RETAINED but not in the active pipeline (selector logic reused)
+  extension/           # Manifest V3 Chrome extension
+  alembic/
   alembic.ini
   scripts/
-    smoke_test.py      # verifies the schema end-to-end
+    run_api.py
+    seed_saved_search.py
+    seed_profile.py    # richer profile-1 test data for matching
+    seed_test_jobs.py  # 5 known test jobs (source="test") for scoring validation
+    run_extraction.py  # batch LLM extraction
+    run_matching.py    # batch LLM matching/scoring
+    run_cover_letters.py  # batch cover-letter generation (dev/testing only)
+    check_matching.py  # scoring diagnostic report vs expected bands
+    check_llm.py       # validate the LLM key before a batch
+    smoke_test.py
+    explore_seek.py    # dev-only selector cache tool
   requirements.txt
-  .env.example         # DATABASE_URL=sqlite:///app.db
-  .gitignore           # app.db, .env, __pycache__/, .venv/
-```
+  .env.example
+  .gitignore
 
-## Key schema decisions to respect (do not "improve" these away)
+Key schema decisions to respect (do not "improve" these away)
 
 These were deliberate; the schema doc explains the reasoning:
 
-- **`experience_skills` is a pure junction** (composite PK of the two FKs). It has
-  **no `strength`/relevance column** — relevance depends on the job and is judged
-  by the LLM at generation time, not stored.
-- **`matches.score`** (0–100) is the single source of truth. There is **no tier
-  column** — strong/medium/reach buckets are derived at display time.
-- **`job_skills` is NOT foreign-keyed to `skills`.** Job skills are extracted from
-  listings independently and matched to user skills by name at match time.
-- **CV lives at user level** (`user_cvs`), never per-job. **Cover letters** are one
-  row per match (`cover_letters.match_id` unique), holding both `generated_content`
-  and `edited_content` with a `status` of draft/edited/final.
-- Passwords are stored **hashed** (`profiles.password_hash`). Do not implement auth
-  logic in this task — just the column.
-- Uniqueness constraints that must exist: `profiles.email`,
-  `skills (user_id, name)`, `job_listings (source, source_job_id)`,
-  `matches (user_id, job_id)`, `cover_letters.match_id`.
-- FK delete behaviour: `ON DELETE CASCADE` for user-owned and job-owned children;
-  `matches.cv_used_id` is `ON DELETE SET NULL`. See schema doc per-table.
-- **Portability mechanics (don't "fix" these back):** integer PKs use
-  `BigInteger().with_variant(Integer, "sqlite")`; boolean server defaults use
-  `text("false")` / `text("true")` (NOT `0`/`1`, which break on a Postgres
-  `BOOLEAN`, nor `false()`/`true()`, which don't exist in SQLite). ORM
-  relationships set `passive_deletes=True` so deletes rely on DB-level cascade.
 
----
+experience_skills is a pure junction (composite PK of the two FKs). It has
+no strength/relevance column — relevance depends on the job and is judged
+by the LLM at generation time, not stored.
+matches.score (0–100) is the single source of truth. There is no tier
+column — strong/medium/reach buckets are derived at display time.
+job_skills is NOT foreign-keyed to skills. Job skills are extracted from
+listings independently and matched to user skills by name at match time.
+CV lives at user level (user_cvs), never per-job. Cover letters are one
+row per match (cover_letters.match_id unique), holding both generated_content
+and edited_content with a status of draft/edited/final.
+Passwords are stored hashed (profiles.password_hash). Do not implement auth
+logic in this task — just the column.
+Uniqueness constraints that must exist: profiles.email,
+skills (user_id, name), job_listings (source, source_job_id),
+matches (user_id, job_id), cover_letters.match_id.
+FK delete behaviour: ON DELETE CASCADE for user-owned and job-owned children;
+matches.cv_used_id is ON DELETE SET NULL. See schema doc per-table.
+Portability mechanics (don't "fix" these back): integer PKs use
+BigInteger().with_variant(Integer, "sqlite"); boolean server defaults use
+text("false") / text("true") (NOT 0/1, which break on a Postgres
+BOOLEAN, nor false()/true(), which don't exist in SQLite). ORM
+relationships set passive_deletes=True so deletes rely on DB-level cascade.
 
-## 🔄 CURRENT TASK: Chrome extension + FastAPI backend (the capture pipeline)
 
-> **Status: backend built + verified (2026-06-17); extension built, pending first live
-> capture.** Replaces the abandoned Playwright scraper (Cloudflare — see the
-> networking-policy note above and PROGRESS.md). Full system overview lives in
-> `README.md`.
 
-**Architecture:** the user browses Seek in their *own* browser; a Manifest-V3 Chrome
-extension (`extension/`) reads the rendered DOM and POSTs listings to a local FastAPI
-backend (`app/api/`), which upserts them into `job_listings` and fires background
-tasks for LLM extraction + matching (currently stubs in `app/llm/`). No automated
-requests to Seek; no proxy needed.
+🔄 CURRENT TASK: TBD
 
-**Key files**
-- `app/api/main.py` — endpoints: `/health`, `/ingest`, `/jobs`, `/jobs/{id}`,
-  `/jobs/{id}/regenerate`, `/profile/{id}` (GET/PUT). `scripts/run_api.py` runs it.
-- `app/llm/extract.py` + `match.py` — STUBS; real LLM work is the next task.
-- `extension/` — `manifest.json`, `selectors.js` (**mirror of
-  `app/scraper/selectors.py` — keep in sync**), `content_script.js`, `background.js`,
-  `popup.{html,js}`, `sidebar.{html,js}`.
+Cover-letter generation is done (2026-06-27). Next task not yet defined — see
+docs/job-application-assistant-plan.md for the planned feature list.
 
-**Run/verify:** `pip install -r requirements.txt` (no VPN needed; on this machine add
-`--trusted-host pypi.org --trusted-host files.pythonhosted.org` — AV TLS interception),
-`alembic upgrade head`, `python scripts/seed_saved_search.py` (creates profile 1),
-`python scripts/run_api.py`, then load `extension/` unpacked in Chrome
-(`chrome://extensions`). Backend endpoints are verified; browse Seek to do the first
-live capture. (Test the API with PowerShell `Invoke-RestMethod`, not `curl.exe` — PS
-mangles embedded JSON quotes.) See `README.md` for the full walkthrough.
 
-**`app/scraper/` is retained** for its selector logic (mirrored into the extension)
-and `explore_seek.py`; it is no longer in the active pipeline. Do not re-activate any
-code that makes automated requests to Seek.
+✅ COMPLETED: Cover-letter generation (app/llm/cover_letter.py) — 2026-06-27
 
-**Next task after this:** implement the real `app/llm/extract.py` + `match.py`
-(job-skill/requirement extraction, 0–100 match scoring, cover-letter drafts).
+generate_cover_letter(job_id, profile_id, force) — THRESHOLD=75 quality gate,
+single complete_text call (temp 0.7), self-contained prompt with all profile context
+(quals, experiences + experience_skills evidence map) + job fields + match
+reasoning/gaps. Idempotent upsert on UNIQUE match_id; below threshold = no-op.
+Wired into _process_listing(with_cover_letter=True) so /jobs/{id}/regenerate triggers
+generation after extract+match — /ingest never does. scripts/run_cover_letters.py
+for dev/testing (--force flag, DailyQuotaError-stops-batch).
 
----
 
-## ✅ COMPLETED TASK: build the database layer
+✅ COMPLETED: Matching validation + keyword normalisation (2026-06-23)
 
-> **Status: done (2026-06-15).** All acceptance criteria pass — see `PROGRESS.md`
-> for the slim summary. Section kept below for history. Replace with the next task
-> (the scraper) when starting it.
+5 test jobs seeded (test-001 to test-005). normalise_skill() alias map added to
+prefilter.py. check_matching.py diagnostic script built. Score spread: 90 points
+(12→90 pre-retuning, confirmed ≥40 after). 4/5 bands verified live; test-005
+pending (0/3 hard overlap in unrelated field — expected 0–24 band).
+Transient-503 retry fix added to client.py. DailyQuotaError bug fixed in client.py:
+429s now classified by server retryDelay (>300s = daily stop; else back off + retry).
+Free-tier limit is PER-MINUTE, not per-day — daily headroom is fine; see LLM Layer.
 
-Implement **only** the persistence layer described in `docs/database-schema.md`.
-Nothing else yet (no scraper, no LLM/matching, no cover-letter generation, no UI).
 
-### Steps
+✅ COMPLETED: LLM matching + scoring (app/llm/match.py) — verified live 2026-06-23
 
-1. **Scaffold** the repo layout above. Create `requirements.txt` with at least
-   `sqlalchemy>=2.0` and `alembic`. Add `.gitignore` and `.env.example`.
-2. **`app/db.py`** — create the engine from `DATABASE_URL`
-   (default `sqlite:///app.db`) and a session factory. Enable SQLite foreign-key
-   enforcement (PRAGMA foreign_keys=ON) via an event listener, since SQLite has it
-   off by default and we rely on cascade behaviour.
-3. **`app/models.py`** — implement all **11 tables** exactly as specified in
-   `docs/database-schema.md`, using SQLAlchemy 2.0 typed models: `profiles`,
-   `saved_searches`, `qualifications`, `experiences`, `skills`,
-   `experience_skills`, `user_cvs`, `job_listings`, `job_skills`, `matches`,
-   `cover_letters`. Match every column, type, nullability, default, unique
-   constraint, FK + delete rule, and index from the doc.
-4. **Alembic** — initialise it, point it at the models' metadata, autogenerate the
-   initial migration, and confirm `alembic upgrade head` builds all tables on a
-   fresh SQLite file.
-5. **`scripts/smoke_test.py`** — prove the model works end to end:
-   - Insert a `profile`, a `qualification`, an `experience`, two `skills`, and link
-     both skills to the experience via `experience_skills`.
-   - Add a `user_cv`, a `job_listing` with a couple of `job_skills`, a `match`, and
-     a `cover_letter` for that match.
-   - Run the key query: **"all experiences that demonstrate skill X"** by joining
-     through `experience_skills`. Print the result.
-   - Delete the `profile` and assert its qualifications, experiences, skills, links,
-     CVs, and matches are gone (cascade works). Print pass/fail.
+prefilter.py (pure-Python signals: skill match/gap, overlap %, seniority_flag,
+qual_match — context for the LLM, not a gate), match.py (match_job: eager-loads
+profile+job, builds text summaries, complete_json with a Pydantic MatchScore schema +
+new-grad-fair prompt at temp 0.1, clamps 0–100, idempotent upsert on
+UNIQUE(user_id, job_id), gaps as JSON string, status 'new'), scripts/seed_profile.py
+(richer profile-1 seed) + scripts/run_matching.py. /jobs + /jobs/{id} now return gaps
+as a list. Cover letters were scoped OUT of this task (now the CURRENT TASK above). All
+acceptance criteria pass: 3 real jobs scored (Graduate SWE 85 > AI Lead/Engineer 65 —
+new-grad fairness holds), idempotent, /jobs ranks by score. See PROGRESS.md (2026-06-23).
 
-### Acceptance criteria
 
-- `alembic upgrade head` on a fresh `app.db` creates all 11 tables.
-- `python scripts/smoke_test.py` runs clean, prints the evidence-query result, and
-  confirms the cascade delete.
-- No SQLite-only SQL; pointing `DATABASE_URL` at Postgres would work unchanged.
-- Models match `docs/database-schema.md` exactly — flag any ambiguity in the doc
-  rather than guessing silently.
+✅ COMPLETED: LLM extraction (app/llm/extract.py) — verified live 2026-06-23
 
-### Out of scope (do NOT build yet)
+Real Gemini extraction via the new app/llm/client.py provider abstraction
+(complete_json/complete_text; RPM throttle, 429 backoff, DailyQuotaError, truststore
+TLS fix), extract.py (Pydantic-schema'd structured output → job_skills + JSON
+requirements + seniority/summary/key_responsibilities/extracted_at, idempotent),
+scripts/run_extraction.py + scripts/check_llm.py. Schema columns added via migration
+f42bcd31e385. All acceptance criteria pass; 3 real jobs extracted. KEY NOTE: Gemini
+access needed the Google Cloud $300 free-trial (the plain free tier was unavailable on
+the user's account; AQ.* keys are ephemeral). See PROGRESS.md (2026-06-23).
 
-Scraper, matching/LLM scoring, cover-letter generation, web UI, authentication
-logic. Database layer only.
 
----
+✅ COMPLETED: Chrome extension + FastAPI capture pipeline (2026-06-17)
 
-## How to use this file (note for the human)
+Backend (app/api/main.py: /health, /ingest, /jobs, /jobs/{id},
+/jobs/{id}/regenerate, /profile/{id}) built and verified against live uvicorn.
+Manifest-V3 extension (extension/) captures real Seek DOM → /ingest → job_listings
+(first live capture confirmed: 3 detail pages, full descriptions stored). app/llm/*
+were stubs at that point. See PROGRESS.md for the full slim summary, including the
+live-DOM selector fixes (host is au.seek.com; card is [data-testid="job-card"];
+search URLs are SEO slugs) and the 1-hop scan (now standing behaviour — see the Seek
+Access Policy above: links on a page the user opened are fair game, ≥5s apart, capped,
+never a second hop).
 
-1. Create the repo, drop this file in the root as `CLAUDE.md`, and put
-   `database-schema.md` + `job-application-assistant-plan.md` in `docs/`.
-2. Open the repo in VS Code with Claude Code and tell it: *"Implement the Current
-   Task section of CLAUDE.md."*
-3. Once the DB layer passes the smoke test, replace the "CURRENT TASK" section with
-   the next task (the scraper) — keep the project context and schema decisions above
-   as permanent memory.
+✅ COMPLETED: database layer (2026-06-15)
+
+All 11 tables (SQLAlchemy 2.0, portable), Alembic initial migration, smoke test
+(evidence query + cascade delete) passing. See PROGRESS.md.
+
+
+How to use this file (note for the human)
+
+
+Tell Claude Code: "Implement the Current Task section of CLAUDE.md."
+When a task is done, demote it to a one-line ✅ COMPLETED entry here and add the slim
+block to PROGRESS.md; promote the "Next task" into a new CURRENT TASK section.
+Keep the project context, networking policy, LLM layer, and schema decisions above as
+permanent memory.
+
+
+Environment note (this machine): pip is behind a TLS-intercepting cert — installs
+need --trusted-host pypi.org --trusted-host files.pythonhosted.org. Test the API with
+PowerShell Invoke-RestMethod, not curl.exe (PS mangles embedded JSON quotes).

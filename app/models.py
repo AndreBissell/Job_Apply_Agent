@@ -329,6 +329,15 @@ class JobListing(Base):
     qualification_requirements: Mapped[str | None] = mapped_column(Text)
     experience_requirements: Mapped[str | None] = mapped_column(Text)
     raw_description: Mapped[str | None] = mapped_column(Text)
+    # LLM-extracted fields (populated by app/llm/extract.py). seniority is a single
+    # token; key_responsibilities is a JSON array of short phrases; summary is prose.
+    # extracted_at marks a successful extraction (NULL = not yet / needs (re)extracting).
+    seniority: Mapped[str | None] = mapped_column(Text)
+    key_responsibilities: Mapped[str | None] = mapped_column(Text)
+    summary: Mapped[str | None] = mapped_column(Text)
+    extracted_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
     date_scraped: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
