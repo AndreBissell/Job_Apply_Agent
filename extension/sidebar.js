@@ -285,27 +285,50 @@ async function scanPage() {
       scanLog('Open a Seek search results page in this tab first, then click Scan Page.');
       return;
     }
-    const originalUrl = tab.url;
-
     let allUrls;
     try { allUrls = await injectFn(tab.id, pageCollectJobLinks); }
     catch (e) { scanLog(`Could not read the page: ${e.message}`); return; }
 
     allUrls = allUrls || [];
-    const urls = allUrls.slice(0, MAX_SCAN_PAGES);
-    if (!urls.length) { scanLog('No job links found on this page.'); return; }
-    scanLog(`Found ${allUrls.length} link(s); scanning ${urls.length} (5s apart)…`);
+    if (!allUrls.length) { scanLog('No job links found on this page.'); return; }
+
+    // Filter out URLs whose source_job_id is already in the database.
+    let knownIds = new Set();
+    try {
+      const r = await fetch(`${BACKEND}/jobs/known-ids`);
+      if (r.ok) knownIds = new Set((await r.json()).source_ids);
+    } catch { /* backend down — proceed without filtering */ }
+
+    function extractJobId(url) {
+      const m = url.match(/\/job\/(\d+)/);
+      return m ? m[1] : null;
+    }
+
+    const newUrls = allUrls.filter(u => !knownIds.has(extractJobId(u)));
+    const skipped = allUrls.length - newUrls.length;
+    const urls = newUrls.slice(0, MAX_SCAN_PAGES);
+
+    if (skipped) scanLog(`Skipped ${skipped} already-captured job(s).`);
+    if (!urls.length) { scanLog('All jobs on this page already captured.'); return; }
+    scanLog(`Found ${newUrls.length} new link(s); scanning ${urls.length} (5s apart)…`);
 
     for (let i = 0; i < urls.length; i++) {
       const label = `(${i + 1}/${urls.length})`;
       scanLog(`${label} opening job page…`);
-      const loaded = waitForTabComplete(tab.id, 15000);
-      await chrome.tabs.update(tab.id, { url: urls[i] });
-      await loaded;
+      let bgTab;
+      try {
+        bgTab = await chrome.tabs.create({ url: urls[i], active: false });
+        await waitForTabComplete(bgTab.id, 15000);
+      } catch (e) {
+        scanLog(`${label} could not open tab: ${e.message}`);
+        if (bgTab) await chrome.tabs.remove(bgTab.id).catch(() => {});
+        continue;
+      }
 
       let payload = null;
-      try { payload = await injectFn(tab.id, pageScrapeDetail); }
+      try { payload = await injectFn(bgTab.id, pageScrapeDetail); }
       catch (e) { scanLog(`${label} could not scrape: ${e.message}`); }
+      finally { await chrome.tabs.remove(bgTab.id).catch(() => {}); }
 
       if (payload?.source_job_id) {
         const ok = await ingestListing(payload);
@@ -317,7 +340,6 @@ async function scanPage() {
       if (i < urls.length - 1) await sleep(SCAN_DELAY_MS);
     }
 
-    await chrome.tabs.update(tab.id, { url: originalUrl });
     scanLog('Scan complete — refreshing matches…');
     loadJobs();
   } finally {

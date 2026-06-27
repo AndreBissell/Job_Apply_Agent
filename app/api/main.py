@@ -127,6 +127,28 @@ async def _processing_idle_loop() -> None:
                     await asyncio.sleep(180)
                 continue  # check for more pending jobs before cover letters
 
+            # ── Phase 1b: extracted but not yet matched ───────────────────────
+            unmatched_id: int | None = None
+            with SessionLocal() as db:
+                job = db.scalar(
+                    select(JobListing)
+                    .where(JobListing.extracted_at.isnot(None))
+                    .where(~JobListing.matches.any())
+                    .order_by(JobListing.date_scraped.asc())
+                    .limit(1)
+                )
+                if job:
+                    unmatched_id = job.id
+
+            if unmatched_id is not None:
+                logger.info("Idle: match job %s (already extracted)", unmatched_id)
+                await loop.run_in_executor(
+                    _bg_executor,
+                    functools.partial(match_job, unmatched_id, 1),
+                )
+                await asyncio.sleep(_IDLE_INTERVAL_S)
+                continue
+
             # ── Phase 2: cover letters ────────────────────────────────────────
             cl_job_id: int | None = None
             cl_user_id: int | None = None
@@ -344,6 +366,13 @@ def ingest(
 
     db.commit()
     return {"received": received, "new": new, "updated": updated}
+
+
+@app.get("/jobs/known-ids")
+def known_job_ids(db: Session = Depends(get_db)) -> dict:
+    """Return all source_job_ids already in the database so the extension can skip re-scraping."""
+    ids = db.scalars(select(JobListing.source_job_id)).all()
+    return {"source_ids": ids}
 
 
 @app.get("/jobs")
