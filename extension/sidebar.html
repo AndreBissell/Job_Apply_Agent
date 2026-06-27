@@ -3,49 +3,200 @@
 <head>
   <meta charset="UTF-8" />
   <style>
+    *, *::before, *::after { box-sizing: border-box; }
     body {
       font-family: -apple-system, Segoe UI, Roboto, sans-serif;
       margin: 0; padding: 0; color: #1c2330; background: #f7f8fa;
+      font-size: 13px;
     }
+
+    /* Header */
     header {
-      padding: 12px 14px; background: #fff; border-bottom: 1px solid #e5e7eb;
+      padding: 10px 14px; background: #fff; border-bottom: 1px solid #e5e7eb;
       display: flex; align-items: center; justify-content: space-between;
+      position: sticky; top: 0; z-index: 10;
     }
     header h1 { font-size: 14px; margin: 0; }
-    button.refresh {
-      font-size: 12px; padding: 5px 9px; border: 1px solid #cbd5e1;
-      border-radius: 6px; background: #fff; cursor: pointer;
+    #hdr-jobs-btns { display: flex; gap: 6px; }
+
+    /* Tabs */
+    nav#tabs {
+      display: flex; background: #fff; border-bottom: 2px solid #e5e7eb;
+      position: sticky; top: 41px; z-index: 9;
     }
-    #status { font-size: 12px; color: #6b7280; padding: 8px 14px; }
-    ul { list-style: none; margin: 0; padding: 0; }
-    li {
+    nav#tabs button {
+      flex: 1; padding: 8px 0; border: none; background: none;
+      font-size: 13px; font-weight: 500; color: #6b7280; cursor: pointer;
+      border-bottom: 2px solid transparent; margin-bottom: -2px;
+    }
+    nav#tabs button.active { color: #2557a7; border-bottom-color: #2557a7; }
+    nav#tabs button:hover:not(.active) { color: #374151; }
+
+    /* Shared button styles */
+    .btn {
+      font-size: 12px; padding: 5px 9px; border: 1px solid #cbd5e1;
+      border-radius: 6px; background: #fff; cursor: pointer; color: #374151;
+    }
+    .btn:hover { background: #f3f4f6; }
+    .btn:disabled { opacity: 0.5; cursor: default; }
+    .btn-primary { background: #2557a7; color: #fff; border-color: #2557a7; }
+    .btn-primary:hover:not(:disabled) { background: #1d4684; border-color: #1d4684; }
+    .btn-sm { font-size: 11px; padding: 3px 7px; }
+
+    /* ── Jobs tab ─────────────────────────────────────────── */
+    #scanlog { font-size: 12px; color: #374151; padding: 0 14px; }
+    #job-status { font-size: 12px; color: #6b7280; padding: 8px 14px; }
+    ul#job-list { list-style: none; margin: 0; padding: 0; }
+    ul#job-list li {
       background: #fff; border-bottom: 1px solid #eef0f3; padding: 10px 14px;
       cursor: pointer;
     }
-    li:hover { background: #f0f4fb; }
-    .row { display: flex; align-items: center; gap: 8px; }
-    .title { font-size: 13px; font-weight: 600; flex: 1; }
+    ul#job-list li:hover { background: #f0f4fb; }
+    .job-row { display: flex; align-items: center; gap: 8px; }
+    .job-title { font-size: 13px; font-weight: 600; flex: 1; }
     .score {
       font-size: 12px; font-weight: 700; color: #fff; background: #2557a7;
       border-radius: 10px; padding: 2px 8px; flex: none;
     }
-    .meta { font-size: 12px; color: #6b7280; margin-top: 2px; }
-    .detail { font-size: 12px; color: #374151; margin-top: 6px; white-space: pre-wrap; }
+    .job-meta { font-size: 12px; color: #6b7280; margin-top: 2px; }
+    .job-detail { font-size: 12px; color: #374151; margin-top: 6px; white-space: pre-wrap; }
     a { color: #2557a7; text-decoration: none; }
     a:hover { text-decoration: underline; }
+
+    /* ── Profile tab ──────────────────────────────────────── */
+    #profile-section { padding: 12px 14px 24px; }
+
+    #profile-msg {
+      font-size: 12px; padding: 6px 10px; border-radius: 6px;
+      margin-bottom: 10px; display: none;
+    }
+    #profile-msg.ok  { background: #d1fae5; color: #065f46; display: block; }
+    #profile-msg.err { background: #fee2e2; color: #991b1b; display: block; }
+
+    .p-section { margin-bottom: 18px; }
+    .p-section-hdr {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    .p-section h2 {
+      font-size: 11px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.06em; color: #9ca3af; margin: 0;
+    }
+
+    .field {
+      display: block; margin-bottom: 8px;
+    }
+    .field > span {
+      display: block; font-size: 11px; font-weight: 600; color: #6b7280;
+      margin-bottom: 3px; text-transform: uppercase; letter-spacing: 0.04em;
+    }
+    .field > input,
+    .field > select,
+    .field > textarea {
+      width: 100%; padding: 6px 8px; border: 1px solid #d1d5db;
+      border-radius: 5px; font-size: 13px; color: #1c2330; background: #fff;
+      font-family: inherit; appearance: auto;
+    }
+    .field > input:focus,
+    .field > select:focus,
+    .field > textarea:focus {
+      outline: none; border-color: #2557a7; box-shadow: 0 0 0 2px #dbeafe;
+    }
+    .field > textarea { resize: vertical; min-height: 60px; }
+
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+    .entry-card {
+      background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;
+      padding: 10px 10px 10px 10px; margin-bottom: 8px; position: relative;
+    }
+    .entry-card .remove-btn {
+      position: absolute; top: 6px; right: 6px;
+      background: none; border: none; font-size: 18px; line-height: 1;
+      color: #9ca3af; cursor: pointer; padding: 0 3px;
+    }
+    .entry-card .remove-btn:hover { color: #ef4444; }
+
+    .check-row {
+      display: flex; align-items: center; gap: 6px; margin-bottom: 8px;
+    }
+    .check-row input[type="checkbox"] { width: auto; margin: 0; }
+    .check-row label { font-size: 12px; color: #374151; margin: 0; cursor: pointer; }
+
+    #save-profile-btn { width: 100%; padding: 9px; }
   </style>
 </head>
 <body>
   <header>
-    <h1>Matched Jobs</h1>
-    <div style="display:flex; gap:6px;">
-      <button class="refresh" id="scan">Scan Page</button>
-      <button class="refresh" id="refresh">Refresh</button>
+    <h1>Seek Job Assistant</h1>
+    <div id="hdr-jobs-btns">
+      <button class="btn" id="scan-btn">Scan Page</button>
+      <button class="btn" id="refresh-btn">Refresh</button>
     </div>
   </header>
-  <div id="scanlog" style="font-size:12px; color:#374151; padding:0 14px;"></div>
-  <div id="status">Loading…</div>
-  <ul id="jobs"></ul>
+
+  <nav id="tabs">
+    <button class="tab active" data-tab="jobs">Jobs</button>
+    <button class="tab" data-tab="profile">Profile</button>
+  </nav>
+
+  <!-- ── Jobs tab ─────────────────────────────────────── -->
+  <div id="jobs-section">
+    <div id="scanlog"></div>
+    <div id="job-status">Loading…</div>
+    <ul id="job-list"></ul>
+  </div>
+
+  <!-- ── Profile tab ──────────────────────────────────── -->
+  <div id="profile-section" hidden>
+    <div id="profile-msg"></div>
+
+    <!-- Basic Info -->
+    <div class="p-section">
+      <div class="p-section-hdr"><h2>Basic Info</h2></div>
+      <label class="field"><span>Name</span><input id="p-name" type="text" placeholder="Your full name"></label>
+      <label class="field"><span>Email</span><input id="p-email" type="email" placeholder="you@example.com"></label>
+      <div class="two-col">
+        <label class="field"><span>Phone</span><input id="p-phone" type="text" placeholder="+61 400 000 000"></label>
+        <label class="field"><span>Location</span><input id="p-location" type="text" placeholder="City, State"></label>
+      </div>
+      <label class="field"><span>Summary</span><textarea id="p-summary" placeholder="Brief professional summary…"></textarea></label>
+      <div class="two-col">
+        <label class="field"><span>Target Role</span><input id="p-target-role" type="text" placeholder="e.g. Software Engineer"></label>
+        <label class="field"><span>Target Location</span><input id="p-target-location" type="text" placeholder="e.g. Melbourne"></label>
+      </div>
+    </div>
+
+    <!-- Qualifications -->
+    <div class="p-section">
+      <div class="p-section-hdr">
+        <h2>Qualifications</h2>
+        <button class="btn btn-sm" id="add-qual-btn">+ Add</button>
+      </div>
+      <div id="quals-list"></div>
+    </div>
+
+    <!-- Experience -->
+    <div class="p-section">
+      <div class="p-section-hdr">
+        <h2>Experience</h2>
+        <button class="btn btn-sm" id="add-exp-btn">+ Add</button>
+      </div>
+      <div id="exps-list"></div>
+    </div>
+
+    <!-- Skills -->
+    <div class="p-section">
+      <div class="p-section-hdr"><h2>Skills</h2></div>
+      <label class="field">
+        <span>One skill per line</span>
+        <textarea id="p-skills" placeholder="Python&#10;SQL&#10;React…" style="min-height:80px;"></textarea>
+      </label>
+    </div>
+
+    <button class="btn btn-primary" id="save-profile-btn">Save Profile</button>
+  </div>
+
   <script src="sidebar.js"></script>
 </body>
 </html>
