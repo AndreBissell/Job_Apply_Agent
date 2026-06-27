@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>My Profile — Job Application Assistant</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+      margin: 0; padding: 0;
+      color: #1c2330; background: #f7f8fa;
+      font-size: 14px;
+    }
+    header {
+      background: #fff; border-bottom: 1px solid #e5e7eb;
+      padding: 12px 20px;
+      display: flex; align-items: center; justify-content: space-between;
+      position: sticky; top: 0; z-index: 10;
+    }
+    header h1 { margin: 0; font-size: 15px; font-weight: 700; }
+    main { max-width: 800px; margin: 0 auto; padding: 20px 16px; }
+    section { margin-bottom: 22px; }
+    .section-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    h2 {
+      font-size: 11px; font-weight: 700; margin: 0;
+      text-transform: uppercase; letter-spacing: 0.06em; color: #6b7280;
+    }
+    .card {
+      background: #fff; border: 1px solid #e5e7eb; border-radius: 7px;
+      padding: 14px; margin-bottom: 8px; position: relative;
+    }
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .form-grid .full { grid-column: 1 / -1; }
+    label { display: block; font-size: 11px; color: #6b7280; margin-bottom: 3px; }
+    input[type=text], input[type=email], input[type=tel], input[type=month],
+    textarea, select {
+      width: 100%; padding: 7px 9px;
+      border: 1px solid #d1d5db; border-radius: 5px;
+      font-size: 13px; font-family: inherit; color: #1c2330; background: #fff;
+    }
+    input:focus, textarea:focus, select:focus {
+      outline: none; border-color: #2557a7; box-shadow: 0 0 0 2px #dbeafe;
+    }
+    textarea { resize: vertical; min-height: 76px; }
+    .remove-btn {
+      position: absolute; top: 8px; right: 8px;
+      background: none; border: none; color: #9ca3af;
+      cursor: pointer; font-size: 17px; line-height: 1; padding: 2px 5px;
+    }
+    .remove-btn:hover { color: #dc2626; }
+    .add-btn {
+      font-size: 12px; padding: 5px 10px;
+      border: 1px solid #2557a7; border-radius: 5px;
+      background: #fff; color: #2557a7; cursor: pointer;
+    }
+    .add-btn:hover { background: #eff6ff; }
+    .save-btn {
+      padding: 8px 18px; background: #2557a7; color: #fff;
+      border: none; border-radius: 6px; font-size: 13px; cursor: pointer;
+    }
+    .save-btn:hover { background: #1d4684; }
+    .save-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+    .pills { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; min-height: 6px; }
+    .pill {
+      display: inline-flex; align-items: center; gap: 4px;
+      background: #dbeafe; color: #1e3a8a;
+      border-radius: 10px; padding: 3px 9px; font-size: 12px;
+    }
+    .pill button {
+      background: none; border: none; color: #3b82f6;
+      cursor: pointer; font-size: 13px; line-height: 1; padding: 0;
+    }
+    .pill button:hover { color: #dc2626; }
+    .skill-input-row { display: flex; gap: 6px; }
+    .skill-input-row input { flex: 1; }
+    .banner {
+      padding: 10px 14px; border-radius: 6px; margin-bottom: 14px;
+      font-size: 13px; display: none;
+    }
+    .banner.ok { display: block; background: #d1fae5; color: #065f46; }
+    .banner.err { display: block; background: #fee2e2; color: #991b1b; }
+    .checkbox-row { display: flex; align-items: center; gap: 7px; }
+    .checkbox-row input[type=checkbox] { width: auto; margin: 0; }
+    .checkbox-row label { margin: 0; font-size: 13px; color: #374151; cursor: pointer; }
+    .subsection-label {
+      font-size: 11px; font-weight: 600; color: #6b7280;
+      text-transform: uppercase; letter-spacing: 0.05em;
+      margin: 10px 0 6px;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Job Application Assistant — My Profile</h1>
+  <button class="save-btn" onclick="saveAll()">Save All</button>
+</header>
+
+<main>
+  <div id="banner" class="banner"></div>
+
+  <!-- Personal Details -->
+  <section>
+    <div class="section-header"><h2>Personal Details</h2></div>
+    <div class="card">
+      <div class="form-grid">
+        <div>
+          <label for="p-name">Name</label>
+          <input type="text" id="p-name" placeholder="Your full name">
+        </div>
+        <div>
+          <label for="p-email">Email</label>
+          <input type="email" id="p-email" placeholder="you@example.com">
+        </div>
+        <div>
+          <label for="p-phone">Phone</label>
+          <input type="tel" id="p-phone" placeholder="e.g. 0412 345 678">
+        </div>
+        <div>
+          <label for="p-location">Location</label>
+          <input type="text" id="p-location" placeholder="e.g. Brisbane, QLD">
+        </div>
+        <div>
+          <label for="p-target-role">Target Role</label>
+          <input type="text" id="p-target-role" placeholder="e.g. Software Engineer">
+        </div>
+        <div>
+          <label for="p-target-location">Target Location</label>
+          <input type="text" id="p-target-location" placeholder="e.g. Brisbane, QLD">
+        </div>
+        <div class="full">
+          <label for="p-summary">Professional Summary</label>
+          <textarea id="p-summary" rows="4"
+            placeholder="Brief overview of your background and goals…"></textarea>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Qualifications -->
+  <section>
+    <div class="section-header">
+      <h2>Qualifications</h2>
+      <button class="add-btn" onclick="addQual()">+ Add</button>
+    </div>
+    <div id="quals"></div>
+  </section>
+
+  <!-- Work Experience -->
+  <section>
+    <div class="section-header">
+      <h2>Work Experience</h2>
+      <button class="add-btn" onclick="addExp()">+ Add</button>
+    </div>
+    <div id="exps"></div>
+  </section>
+
+  <!-- Skills -->
+  <section>
+    <div class="section-header"><h2>Skills</h2></div>
+    <div class="card">
+      <div id="skills-pills" class="pills"></div>
+      <div class="skill-input-row">
+        <input type="text" id="skill-input" placeholder="Add skill (e.g. Python)…"
+               onkeydown="if(event.key==='Enter'){addGlobalSkill();event.preventDefault();}">
+        <button class="add-btn" onclick="addGlobalSkill()">+ Add</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+const API = 'http://localhost:8000';
+let _uid = 0;
+let globalSkills = [];
+
+// ---- Utility ----
+
+function esc(s) {
+  if (s == null) return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function uid() { return ++_uid; }
+
+function showBanner(msg, type) {
+  const b = document.getElementById('banner');
+  b.className = 'banner ' + type;
+  b.textContent = msg;
+  if (type === 'ok') setTimeout(() => { b.className = 'banner'; }, 4000);
+}
+
+// ---- Global skills ----
+
+function renderGlobalSkills() {
+  const c = document.getElementById('skills-pills');
+  c.innerHTML = '';
+  globalSkills.forEach(s => {
+    const pill = document.createElement('span');
+    pill.className = 'pill';
+    pill.dataset.skill = s;
+    pill.innerHTML = esc(s) + ' <button onclick="removeGlobalSkill(this.parentElement)">×</button>';
+    c.appendChild(pill);
+  });
+}
+
+function addGlobalSkill() {
+  const inp = document.getElementById('skill-input');
+  const val = inp.value.trim();
+  if (!val || globalSkills.includes(val)) { inp.value = ''; return; }
+  globalSkills.push(val);
+  inp.value = '';
+  renderGlobalSkills();
+}
+
+function removeGlobalSkill(pill) {
+  const name = pill.dataset.skill;
+  globalSkills = globalSkills.filter(s => s !== name);
+  renderGlobalSkills();
+}
+
+// ---- Experience skill pills (per-card) ----
+
+function addExpSkillPill(container, name) {
+  const pill = document.createElement('span');
+  pill.className = 'pill';
+  pill.dataset.skill = name;
+  pill.innerHTML = esc(name) + ' <button onclick="this.closest(\'.pill\').remove()">×</button>';
+  container.appendChild(pill);
+}
+
+function addExpSkill(inputEl) {
+  const val = inputEl.value.trim();
+  if (!val) return;
+  const card = inputEl.closest('.exp-card');
+  const pillsContainer = card.querySelector('.exp-skill-pills');
+  const existing = [...pillsContainer.querySelectorAll('.pill')].map(p => p.dataset.skill);
+  if (!existing.includes(val)) addExpSkillPill(pillsContainer, val);
+  inputEl.value = '';
+}
+
+// ---- Qualification cards ----
+
+function addQual(q) {
+  q = q || {};
+  const container = document.getElementById('quals');
+  const card = document.createElement('div');
+  card.className = 'card qual-card';
+
+  const typeOptions = ['degree', 'diploma', 'certificate', 'license']
+    .map(v => `<option value="${v}" ${(q.qualification_type||'degree')===v?'selected':''}>${
+      v.charAt(0).toUpperCase()+v.slice(1)
+    }</option>`).join('');
+
+  const statusOptions = [['completed','Completed'],['in_progress','In Progress'],['expected','Expected']]
+    .map(([v,l]) => `<option value="${v}" ${(q.status||'completed')===v?'selected':''}>${l}</option>`).join('');
+
+  card.innerHTML = `
+    <button class="remove-btn" onclick="this.closest('.qual-card').remove()" title="Remove">×</button>
+    <div class="form-grid">
+      <div>
+        <label>Type</label>
+        <select name="qualification_type">${typeOptions}</select>
+      </div>
+      <div>
+        <label>Status</label>
+        <select name="status">${statusOptions}</select>
+      </div>
+      <div class="full">
+        <label>Degree / Certificate Title</label>
+        <input type="text" name="title" value="${esc(q.title)}"
+               placeholder="e.g. Bachelor of Software Engineering">
+      </div>
+      <div>
+        <label>Institution</label>
+        <input type="text" name="institution" value="${esc(q.institution)}"
+               placeholder="e.g. University of Queensland">
+      </div>
+      <div>
+        <label>Field of Study</label>
+        <input type="text" name="field_of_study" value="${esc(q.field_of_study)}"
+               placeholder="e.g. Software Engineering">
+      </div>
+      <div>
+        <label>Start Date</label>
+        <input type="month" name="start_date" value="${esc(q.start_date)}">
+      </div>
+      <div>
+        <label>End Date / Expected</label>
+        <input type="month" name="end_date" value="${esc(q.end_date)}">
+      </div>
+      <div>
+        <label>Grade / Result</label>
+        <input type="text" name="grade" value="${esc(q.grade)}"
+               placeholder="e.g. GPA 6.5/7, Distinction">
+      </div>
+    </div>
+  `;
+  container.appendChild(card);
+}
+
+// ---- Experience cards ----
+
+function addExp(e) {
+  e = e || {};
+  const container = document.getElementById('exps');
+  const card = document.createElement('div');
+  card.className = 'card exp-card';
+  const cbId = 'cur-' + uid();
+
+  const typeOptions = [
+    ['job','Job'], ['internship','Internship'],
+    ['university_project','University Project'], ['personal_project','Personal Project'],
+    ['volunteer','Volunteer']
+  ].map(([v,l]) => `<option value="${v}" ${(e.experience_type||'job')===v?'selected':''}>${l}</option>`).join('');
+
+  card.innerHTML = `
+    <button class="remove-btn" onclick="this.closest('.exp-card').remove()" title="Remove">×</button>
+    <div class="form-grid">
+      <div>
+        <label>Type</label>
+        <select name="experience_type">${typeOptions}</select>
+      </div>
+      <div>
+        <label>Employer / Organisation</label>
+        <input type="text" name="organization" value="${esc(e.organization)}"
+               placeholder="e.g. Acme Corp">
+      </div>
+      <div class="full">
+        <label>Job Title</label>
+        <input type="text" name="title" value="${esc(e.title)}"
+               placeholder="e.g. Junior Software Developer">
+      </div>
+      <div>
+        <label>Start Date</label>
+        <input type="month" name="start_date" value="${esc(e.start_date)}">
+      </div>
+      <div>
+        <label>End Date</label>
+        <input type="month" name="end_date" value="${e.is_current ? '' : esc(e.end_date)}">
+      </div>
+      <div class="full">
+        <div class="checkbox-row">
+          <input type="checkbox" name="is_current" id="${cbId}" ${e.is_current?'checked':''}>
+          <label for="${cbId}">Current role</label>
+        </div>
+      </div>
+      <div class="full">
+        <label>Description</label>
+        <textarea name="description" rows="3"
+          placeholder="Key contributions and responsibilities…">${esc(e.description)}</textarea>
+      </div>
+      <div class="full">
+        <div class="subsection-label">Skills Used in This Role</div>
+        <div class="exp-skill-pills pills"></div>
+        <div class="skill-input-row">
+          <input type="text" class="exp-skill-input"
+                 placeholder="Add skill used here…"
+                 onkeydown="if(event.key==='Enter'){addExpSkill(this);event.preventDefault();}">
+          <button class="add-btn" onclick="addExpSkill(this.previousElementSibling)">+ Add</button>
+        </div>
+      </div>
+    </div>
+  `;
+  container.appendChild(card);
+
+  if (e.skills && e.skills.length) {
+    const pillsContainer = card.querySelector('.exp-skill-pills');
+    e.skills.forEach(s => addExpSkillPill(pillsContainer, s));
+  }
+}
+
+// ---- Load ----
+
+async function load() {
+  try {
+    const res = await fetch(API + '/profile-ui/data');
+    if (res.status === 404) return;
+    if (!res.ok) { showBanner('Load failed: ' + res.statusText, 'err'); return; }
+    const data = await res.json();
+
+    const p = data.profile || {};
+    document.getElementById('p-name').value = p.name || '';
+    document.getElementById('p-email').value = p.email || '';
+    document.getElementById('p-phone').value = p.phone || '';
+    document.getElementById('p-location').value = p.location || '';
+    document.getElementById('p-target-role').value = p.target_role || '';
+    document.getElementById('p-target-location').value = p.target_location || '';
+    document.getElementById('p-summary').value = p.summary || '';
+
+    (data.qualifications || []).forEach(q => addQual(q));
+    (data.experiences || []).forEach(e => addExp(e));
+
+    globalSkills = data.skills || [];
+    renderGlobalSkills();
+  } catch (err) {
+    showBanner('Failed to load profile: ' + err.message, 'err');
+  }
+}
+
+// ---- Collect & Save ----
+
+function collectState() {
+  const profile = {
+    name: document.getElementById('p-name').value.trim(),
+    email: document.getElementById('p-email').value.trim(),
+    phone: document.getElementById('p-phone').value.trim() || null,
+    location: document.getElementById('p-location').value.trim() || null,
+    target_role: document.getElementById('p-target-role').value.trim() || null,
+    target_location: document.getElementById('p-target-location').value.trim() || null,
+    summary: document.getElementById('p-summary').value.trim() || null,
+  };
+
+  const qualifications = [...document.querySelectorAll('.qual-card')].map(card => ({
+    qualification_type: card.querySelector('[name=qualification_type]').value,
+    title: card.querySelector('[name=title]').value.trim(),
+    institution: card.querySelector('[name=institution]').value.trim() || null,
+    field_of_study: card.querySelector('[name=field_of_study]').value.trim() || null,
+    grade: card.querySelector('[name=grade]').value.trim() || null,
+    start_date: card.querySelector('[name=start_date]').value || null,
+    end_date: card.querySelector('[name=end_date]').value || null,
+    status: card.querySelector('[name=status]').value,
+  })).filter(q => q.title);
+
+  const experiences = [...document.querySelectorAll('.exp-card')].map(card => {
+    const isCurrent = card.querySelector('[name=is_current]').checked;
+    const expSkills = [...card.querySelectorAll('.exp-skill-pills .pill')]
+      .map(p => p.dataset.skill).filter(Boolean);
+    return {
+      experience_type: card.querySelector('[name=experience_type]').value,
+      title: card.querySelector('[name=title]').value.trim(),
+      organization: card.querySelector('[name=organization]').value.trim() || null,
+      start_date: card.querySelector('[name=start_date]').value || null,
+      end_date: isCurrent ? null : (card.querySelector('[name=end_date]').value || null),
+      is_current: isCurrent,
+      description: card.querySelector('[name=description]').value.trim() || null,
+      skills: expSkills,
+    };
+  }).filter(e => e.title);
+
+  return { profile, qualifications, experiences, skills: globalSkills };
+}
+
+async function saveAll() {
+  const btn = document.querySelector('.save-btn');
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+  try {
+    const payload = collectState();
+    if (!payload.profile.name || !payload.profile.email) {
+      showBanner('Name and email are required.', 'err');
+      return;
+    }
+    const res = await fetch(API + '/profile-ui/data', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || res.statusText);
+    }
+    showBanner('Profile saved successfully.', 'ok');
+  } catch (err) {
+    showBanner('Save failed: ' + err.message, 'err');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Save All';
+  }
+}
+
+load();
+</script>
+</body>
+</html>

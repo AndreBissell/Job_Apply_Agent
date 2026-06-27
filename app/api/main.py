@@ -13,14 +13,17 @@ from __future__ import annotations
 import json
 import logging
 from decimal import Decimal
+from pathlib import Path
 from typing import Iterator
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.api.profile_ui import router as profile_ui_router
 from app.db import SessionLocal
 from app.llm.cover_letter import generate_cover_letter
 from app.llm.extract import extract_job
@@ -53,6 +56,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(profile_ui_router)
+
+_static_dir = Path(__file__).parent.parent / "static"
+app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
 
 
 # ---------------------------------------------------------------------------

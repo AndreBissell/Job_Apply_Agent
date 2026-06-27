@@ -1,0 +1,85 @@
+{
+  "profile": {
+    "name": "Liam Chen",
+    "email": "liam.chen.dev@example.com",
+    "phone": "0412 345 678",
+    "location": "Brisbane, QLD",
+    "summary": "Recent software engineering graduate with three years of combined internship and part-time experience in Python backend development, data pipelines, and REST API design. Passionate about building clean, maintainable systems and eager to contribute to a collaborative engineering team.",
+    "target_role": "Software Engineer",
+    "target_location": "Brisbane, QLD"
+  },
+  "qualifications": [
+    {
+      "qualification_type": "degree",
+      "title": "Bachelor of Engineering (Honours) — Software Engineering",
+      "institution": "University of Queensland",
+      "field_of_study": "Software Engineering",
+      "grade": "GPA 6.2 / 7.0",
+      "start_date": "2021-02",
+      "end_date": "2024-11",
+      "status": "completed"
+    },
+    {
+      "qualification_type": "certificate",
+      "title": "AWS Certified Cloud Practitioner",
+      "institution": "Amazon Web Services",
+      "field_of_study": null,
+      "grade": null,
+      "start_date": null,
+      "end_date": "2024-08",
+      "status": "completed"
+    }
+  ],
+  "experiences": [
+    {
+      "experience_type": "internship",
+      "title": "Software Engineering Intern",
+      "organization": "Atlassian",
+      "start_date": "2024-01",
+      "end_date": "2024-06",
+      "is_current": false,
+      "description": "Worked within the Bitbucket Pipelines team to improve CI/CD performance metrics. Implemented a caching layer for pipeline artefacts using Python and AWS S3, reducing average build times by 22%. Contributed to code reviews and participated in Agile sprint ceremonies.",
+      "skills": ["Python", "AWS S3", "CI/CD", "Git", "Agile", "Code Review"]
+    },
+    {
+      "experience_type": "job",
+      "title": "Junior Data Analyst",
+      "organization": "Queensland Health",
+      "start_date": "2022-07",
+      "end_date": "2023-12",
+      "is_current": false,
+      "description": "Maintained and extended a suite of Power BI dashboards tracking hospital bed occupancy and patient wait times across 12 facilities. Wrote SQL queries against a PostgreSQL data warehouse and built Python scripts to automate weekly report generation, saving approximately 4 hours per week of manual work.",
+      "skills": ["Python", "SQL", "PostgreSQL", "Power BI", "Data Analysis", "Excel"]
+    },
+    {
+      "experience_type": "university_project",
+      "title": "Final Year Capstone — Smart Campus App",
+      "organization": "University of Queensland",
+      "start_date": "2024-02",
+      "end_date": "2024-10",
+      "is_current": false,
+      "description": "Led a team of four to design and build a full-stack web application allowing students to locate and book quiet study rooms in real time. Backend built with FastAPI and SQLAlchemy on PostgreSQL; frontend with React and TypeScript; containerised with Docker and deployed to a university-managed server.",
+      "skills": ["Python", "FastAPI", "SQLAlchemy", "React", "TypeScript", "Docker", "PostgreSQL", "Git", "Agile"]
+    }
+  ],
+  "skills": [
+    "Python",
+    "SQL",
+    "PostgreSQL",
+    "FastAPI",
+    "SQLAlchemy",
+    "React",
+    "TypeScript",
+    "JavaScript",
+    "Git",
+    "Docker",
+    "AWS S3",
+    "Power BI",
+    "Data Analysis",
+    "Excel",
+    "CI/CD",
+    "Agile",
+    "Code Review",
+    "REST APIs"
+  ]
+}

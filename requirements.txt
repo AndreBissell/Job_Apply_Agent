@@ -10,7 +10,9 @@ playwright>=1.40
 # Local API backend for the Chrome extension (ingest + dashboard endpoints).
 fastapi>=0.110
 uvicorn[standard]>=0.29
+aiofiles>=23.0   # required by FastAPI StaticFiles
 httpx>=0.27  # used by tests / for hitting the API
+pytest>=8.0  # test runner
 
 # LLM layer: Google Gemini (Flash-Lite) via the unified GenAI SDK. All calls go
 # through app/llm/client.py; provider/model/key come from .env (see CLAUDE.md).

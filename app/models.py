@@ -65,6 +65,11 @@ class Profile(Base):
     )
     dob: Mapped[datetime.date | None] = mapped_column(Date)
     visa_status: Mapped[str | None] = mapped_column(Text)
+    phone: Mapped[str | None] = mapped_column(Text)
+    location: Mapped[str | None] = mapped_column(Text)
+    summary: Mapped[str | None] = mapped_column(Text)
+    target_role: Mapped[str | None] = mapped_column(Text)
+    target_location: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), 
         nullable=False, 

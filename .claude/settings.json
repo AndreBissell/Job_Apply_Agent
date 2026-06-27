@@ -77,7 +77,18 @@
       "PowerShell(& .\\\\.venv\\\\Scripts\\\\python.exe scripts\\\\check_matching.py)",
       "Skill(claude-api)",
       "Skill(claude-api:*)",
-      "Bash(./.venv/Scripts/python.exe -)"
+      "Bash(./.venv/Scripts/python.exe -)",
+      "PowerShell(cd c:\\\\Users\\\\andre\\\\Job_Apply_Agent; python -c \"from alembic.config import main; main\\(\\)\" -- upgrade head 2>&1; \\(Get-Command alembic -ErrorAction SilentlyContinue\\).Source)",
+      "Bash(python -c \"import alembic; print\\(alembic.__file__\\)\")",
+      "Bash(python -c \"import sys; print\\(sys.executable\\)\")",
+      "Bash(python scripts/smoke_test.py)",
+      "Bash(where python3 *)",
+      "Bash(where python *)",
+      "Bash(py -3 -c \"import sqlalchemy; print\\(sqlalchemy.__file__\\)\")",
+      "PowerShell(cd c:\\\\Users\\\\andre\\\\Job_Apply_Agent; $scripts = python scripts/run_api.py --help 2>&1 | Select-Object -First 2; Write-Host $scripts; $pypath = \\(Get-Command python\\).Source; Write-Host \"Python: $pypath\")",
+      "PowerShell(& \"c:\\\\Users\\\\andre\\\\Job_Apply_Agent\\\\.venv\\\\Scripts\\\\python.exe\" -c \"import pytest; print\\(pytest.__version__\\)\" 2>&1)",
+      "PowerShell(& \"c:\\\\Users\\\\andre\\\\Job_Apply_Agent\\\\.venv\\\\Scripts\\\\pip.exe\" install \"pytest>=8.0\" \"pytest-asyncio>=0.23\" --trusted-host pypi.org --trusted-host files.pythonhosted.org -q 2>&1)",
+      "PowerShell(& \"c:\\\\Users\\\\andre\\\\Job_Apply_Agent\\\\.venv\\\\Scripts\\\\python.exe\" -c \"import pytest; print\\(pytest.__version__\\)\")"
     ],
     "additionalDirectories": [
       "C:\\Users\\andre\\Job_Apply_Agent",
