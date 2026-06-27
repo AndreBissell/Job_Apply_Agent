@@ -10,14 +10,19 @@ Run it with ``python scripts/run_api.py`` (uvicorn on 127.0.0.1:8000).
 
 from __future__ import annotations
 
+import asyncio
+import functools
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
 from decimal import Decimal
 from pathlib import Path
 from typing import Iterator
 
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -25,6 +30,7 @@ from sqlalchemy.orm import Session
 
 from app.api.profile_ui import router as profile_ui_router
 from app.db import SessionLocal
+from app.llm.cover_letter import THRESHOLD as COVER_LETTER_THRESHOLD
 from app.llm.cover_letter import generate_cover_letter
 from app.llm.extract import extract_job
 from app.llm.match import match_job
@@ -43,7 +49,131 @@ logger = logging.getLogger(__name__)
 
 SOURCE = "seek"
 
-app = FastAPI(title="Seek Job Assistant", version="0.1.0")
+# One worker thread so LLM calls don't block the event loop.
+_bg_executor = ThreadPoolExecutor(max_workers=1)
+
+# Seconds to wait between idle cover-letter generations (respect per-minute quota).
+_IDLE_INTERVAL_S = 20
+
+# ---------------------------------------------------------------------------
+# SSE event broadcasting
+# ---------------------------------------------------------------------------
+_sse_clients: list[asyncio.Queue] = []
+_event_loop: asyncio.AbstractEventLoop | None = None
+
+
+async def _broadcast(event: str, data: dict) -> None:
+    """Push an SSE event to all connected sidebar clients."""
+    if not _sse_clients:
+        return
+    msg = f"event: {event}\ndata: {json.dumps(data)}\n\n"
+    for q in list(_sse_clients):
+        try:
+            q.put_nowait(msg)
+        except asyncio.QueueFull:
+            pass
+
+
+def broadcast_from_thread(event: str, data: dict) -> None:
+    """Thread-safe wrapper — call from sync background tasks."""
+    if _event_loop is None:
+        return
+    asyncio.run_coroutine_threadsafe(_broadcast(event, data), _event_loop)
+
+
+async def _processing_idle_loop() -> None:
+    """Single idle loop handling all LLM work, serialised through _bg_executor.
+
+    Phase 1 — extract+match any job that has a description but hasn't been
+    extracted yet (jobs land here straight from /ingest, no burst).
+    Phase 2 — generate cover letters for high-scored matches that don't have one.
+
+    Only one LLM call chain runs at a time; the client's RPM throttle adds
+    per-call spacing on top, so we never burst the Gemini free-tier limit.
+    """
+    await asyncio.sleep(15)  # let startup settle before first query
+    while True:
+        try:
+            loop = asyncio.get_running_loop()
+
+            # ── Phase 1: pending extraction+matching ──────────────────────────
+            pending_id: int | None = None
+            with SessionLocal() as db:
+                job = db.scalar(
+                    select(JobListing)
+                    .where(JobListing.raw_description.isnot(None))
+                    .where(JobListing.extracted_at.is_(None))
+                    .order_by(JobListing.date_scraped.asc())
+                    .limit(1)
+                )
+                if job:
+                    pending_id = job.id
+
+            if pending_id is not None:
+                logger.info("Idle: extract+match job %s", pending_id)
+                await loop.run_in_executor(
+                    _bg_executor,
+                    functools.partial(_process_listing, pending_id, 1, True),
+                )
+                # If extraction failed (Gemini still rate-limited), extracted_at stays
+                # NULL and we'd immediately retry the same job. Back off 3 min instead.
+                with SessionLocal() as db:
+                    _job = db.get(JobListing, pending_id)
+                    _succeeded = _job is not None and _job.extracted_at is not None
+                if _succeeded:
+                    await asyncio.sleep(_IDLE_INTERVAL_S)
+                else:
+                    logger.warning("Idle: extraction failed for job %s — backing off 3 min", pending_id)
+                    await asyncio.sleep(180)
+                continue  # check for more pending jobs before cover letters
+
+            # ── Phase 2: cover letters ────────────────────────────────────────
+            cl_job_id: int | None = None
+            cl_user_id: int | None = None
+            with SessionLocal() as db:
+                row = db.execute(
+                    select(Match, JobListing)
+                    .join(JobListing, Match.job_id == JobListing.id)
+                    .outerjoin(CoverLetter, CoverLetter.match_id == Match.id)
+                    .where(CoverLetter.id.is_(None))
+                    .where(Match.score >= COVER_LETTER_THRESHOLD)
+                    .where(JobListing.extracted_at.isnot(None))
+                    .order_by(Match.score.desc())
+                    .limit(1)
+                ).first()
+                if row:
+                    match, job = row
+                    cl_job_id, cl_user_id = job.id, match.user_id
+
+            if cl_job_id is not None:
+                logger.info("Idle: cover letter for job %s", cl_job_id)
+                cl = await loop.run_in_executor(
+                    _bg_executor,
+                    functools.partial(generate_cover_letter, cl_job_id, cl_user_id),
+                )
+                if cl:
+                    await _broadcast("cover_letter_ready", {"job_id": cl_job_id, "content": cl.generated_content})
+                await asyncio.sleep(_IDLE_INTERVAL_S)
+            else:
+                await asyncio.sleep(30)  # nothing pending — check again shortly
+
+        except Exception:
+            logger.exception("Idle processing loop error")
+            await asyncio.sleep(60)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global _event_loop
+    _event_loop = asyncio.get_running_loop()
+    task = asyncio.create_task(_processing_idle_loop())
+    try:
+        yield
+    finally:
+        task.cancel()
+
+
+app = FastAPI(title="Seek Job Assistant", version="0.1.0", lifespan=lifespan)
 
 # CORS: the extension calls from a chrome-extension:// origin and the sidebar from
 # localhost. Wide-open for local dev; lock down (specific extension id) later.
@@ -123,6 +253,7 @@ def _process_listing(
     profile_id: int,
     has_description: bool,
     with_cover_letter: bool = False,
+    bypass_threshold: bool = False,
 ) -> None:
     """Background task: extract + match (+ optionally cover letter) a listing.
 
@@ -139,11 +270,14 @@ def _process_listing(
             logger.exception("extract_job failed for job %s", job_id)
         try:
             match_job(job_id, profile_id)
+            broadcast_from_thread("job_processed", {"job_id": job_id})
         except Exception:  # noqa: BLE001
             logger.exception("match_job failed for job %s", job_id)
         if with_cover_letter:
             try:
-                generate_cover_letter(job_id, profile_id, force=True)
+                cl = generate_cover_letter(job_id, profile_id, force=True, bypass_threshold=bypass_threshold)
+                if cl:
+                    broadcast_from_thread("cover_letter_ready", {"job_id": job_id, "content": cl.generated_content})
             except Exception:  # noqa: BLE001
                 logger.exception("generate_cover_letter failed for job %s", job_id)
     else:
@@ -167,19 +301,17 @@ def health(db: Session = Depends(get_db)) -> dict:
 @app.post("/ingest")
 def ingest(
     body: IngestBody,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ) -> dict:
     """Upsert scraped listings; backfill ``raw_description`` on existing rows.
 
     Insert when ``(source='seek', source_job_id)`` is new. If the row already
-    exists but has no description and this payload carries one, update it. Either
-    case schedules extraction/matching as a background task.
+    exists but has no description and this payload carries one, update it.
+    LLM extraction+matching is handled by the idle loop — no burst on ingest.
     """
     received = len(body.listings)
     new = 0
     updated = 0
-    to_process: list[tuple[int, bool]] = []
 
     for item in body.listings:
         existing = db.scalar(
@@ -204,21 +336,13 @@ def ingest(
                 raw_description=item.raw_description,
             )
             db.add(job)
-            db.flush()  # assign job.id
             new += 1
-            to_process.append((job.id, item.raw_description is not None))
         elif existing.raw_description is None and item.raw_description:
             existing.raw_description = item.raw_description
-            db.flush()
             updated += 1
-            to_process.append((existing.id, True))
-        # else: already present with a description (or no new description) — skip.
+        # else: already present with a description — skip.
 
     db.commit()
-
-    for job_id, has_description in to_process:
-        background_tasks.add_task(_process_listing, job_id, body.profile_id, has_description)
-
     return {"received": received, "new": new, "updated": updated}
 
 
@@ -257,6 +381,7 @@ def list_jobs(
             "gaps": _gaps_to_list(match.gaps),
             "status": match.status,
             "has_cover_letter": match.cover_letter is not None,
+            "extracted_at": job.extracted_at.isoformat() if job.extracted_at else None,
         }
         for match, job in rows
     ]
@@ -318,8 +443,8 @@ def regenerate(
 ) -> dict:
     """Re-run extraction + matching + cover letter for one job.
 
-    Cover-letter generation only fires if the match score is >= the threshold
-    (75); below that the call is a no-op and no quota is spent.
+    Always bypasses the score threshold — the user is making a deliberate
+    choice to generate for this specific listing.
     """
     job = db.get(JobListing, job_id)
     if job is None:
@@ -331,8 +456,68 @@ def regenerate(
         profile_id,
         job.raw_description is not None,
         with_cover_letter=True,
+        bypass_threshold=True,
     )
     return {"status": "queued"}
+
+
+@app.delete("/jobs")
+def bulk_delete_jobs(
+    below_score: float,
+    profile_id: int = 1,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Delete all job listings whose match score for a profile is below ``below_score``."""
+    jobs = db.scalars(
+        select(JobListing)
+        .join(Match, Match.job_id == JobListing.id)
+        .where(Match.user_id == profile_id)
+        .where(Match.score < below_score)
+    ).all()
+    count = len(jobs)
+    for job in jobs:
+        db.delete(job)
+    db.commit()
+    return {"deleted": count}
+
+
+@app.delete("/jobs/{job_id}")
+def delete_job(job_id: int, db: Session = Depends(get_db)) -> dict:
+    """Delete a job listing and all its children (matches, cover letters, skills)."""
+    job = db.get(JobListing, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    db.delete(job)
+    db.commit()
+    return {"deleted": job_id}
+
+
+@app.get("/events")
+async def sse_events(request: Request):
+    """Server-Sent Events stream. Pushes job_processed and cover_letter_ready events."""
+    queue: asyncio.Queue[str] = asyncio.Queue(maxsize=50)
+    _sse_clients.append(queue)
+
+    async def stream():
+        try:
+            yield "event: ping\ndata: {}\n\n"
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    msg = await asyncio.wait_for(queue.get(), timeout=25)
+                    yield msg
+                except asyncio.TimeoutError:
+                    yield "event: ping\ndata: {}\n\n"  # keepalive
+        finally:
+            if queue in _sse_clients:
+                _sse_clients.remove(queue)
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.get("/profile/{profile_id}")

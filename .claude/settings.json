@@ -88,7 +88,8 @@
       "PowerShell(cd c:\\\\Users\\\\andre\\\\Job_Apply_Agent; $scripts = python scripts/run_api.py --help 2>&1 | Select-Object -First 2; Write-Host $scripts; $pypath = \\(Get-Command python\\).Source; Write-Host \"Python: $pypath\")",
       "PowerShell(& \"c:\\\\Users\\\\andre\\\\Job_Apply_Agent\\\\.venv\\\\Scripts\\\\python.exe\" -c \"import pytest; print\\(pytest.__version__\\)\" 2>&1)",
       "PowerShell(& \"c:\\\\Users\\\\andre\\\\Job_Apply_Agent\\\\.venv\\\\Scripts\\\\pip.exe\" install \"pytest>=8.0\" \"pytest-asyncio>=0.23\" --trusted-host pypi.org --trusted-host files.pythonhosted.org -q 2>&1)",
-      "PowerShell(& \"c:\\\\Users\\\\andre\\\\Job_Apply_Agent\\\\.venv\\\\Scripts\\\\python.exe\" -c \"import pytest; print\\(pytest.__version__\\)\")"
+      "PowerShell(& \"c:\\\\Users\\\\andre\\\\Job_Apply_Agent\\\\.venv\\\\Scripts\\\\python.exe\" -c \"import pytest; print\\(pytest.__version__\\)\")",
+      "PowerShell(Invoke-RestMethod -Uri \"http://127.0.0.1:8000/health\" -Method Get)"
     ],
     "additionalDirectories": [
       "C:\\Users\\andre\\Job_Apply_Agent",

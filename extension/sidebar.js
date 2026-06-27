@@ -52,6 +52,7 @@ async function loadJobs() {
 
 function renderJob(job) {
   const li = document.createElement('li');
+  li.dataset.jobId = job.job_id;
 
   const row = document.createElement('div');
   row.className = 'job-row';
@@ -67,11 +68,66 @@ function renderJob(job) {
     score.textContent = Math.round(job.score);
     row.appendChild(score);
   }
+
+  const clBtn = document.createElement('button');
+  clBtn.className = 'del-btn';
+  clBtn.title = 'Generate cover letter';
+  clBtn.textContent = '✚';
+  clBtn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    clBtn.textContent = '…';
+    clBtn.disabled = true;
+    try {
+      const res = await fetch(`${BACKEND}/jobs/${job.job_id}/regenerate`, { method: 'POST' });
+      if (!res.ok) throw new Error();
+      pollForCoverLetter(job.job_id, (content) => {
+        clBtn.textContent = '✔';
+        clBtn.disabled = false;
+        // If the detail panel is open, update it in place
+        if (detailEl) {
+          const blurb = detailEl.querySelector('.cl-blurb');
+          if (blurb) {
+            blurb.style.color = '';
+            blurb.textContent = content;
+          }
+        }
+      }, () => {
+        clBtn.textContent = '✚';
+        clBtn.disabled = false;
+      });
+    } catch {
+      clBtn.textContent = '✖';
+      setTimeout(() => { clBtn.textContent = '✚'; clBtn.disabled = false; }, 2000);
+    }
+  });
+  row.appendChild(clBtn);
+
+  const delBtn = document.createElement('button');
+  delBtn.className = 'del-btn';
+  delBtn.title = 'Delete';
+  delBtn.textContent = '🗑';
+  delBtn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    if (!confirm(`Delete "${job.title}"?`)) return;
+    try {
+      const res = await fetch(`${BACKEND}/jobs/${job.job_id}`, { method: 'DELETE' });
+      if (res.ok) li.remove();
+    } catch {
+      alert('Delete failed — is the backend running?');
+    }
+  });
+  row.appendChild(delBtn);
+
   li.appendChild(row);
 
   const meta = document.createElement('div');
   meta.className = 'job-meta';
-  meta.textContent = [job.company, job.location].filter(Boolean).join(' · ') || '—';
+  const metaParts = [job.company, job.location].filter(Boolean);
+  if (job.extracted_at) {
+    const d = new Date(job.extracted_at);
+    metaParts.push(d.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' }));
+  }
+  meta.textContent = metaParts.join(' · ') || '—';
   li.appendChild(meta);
 
   let expanded = false;
@@ -92,6 +148,22 @@ function renderJob(job) {
   return li;
 }
 
+async function pollForCoverLetter(jobId, onFound, onTimeout) {
+  const MAX_ATTEMPTS = 24; // ~2 minutes at 5s intervals
+  for (let i = 0; i < MAX_ATTEMPTS; i++) {
+    await sleep(5000);
+    try {
+      const res = await fetch(`${BACKEND}/jobs/${jobId}?profile_id=${PROFILE_ID}`);
+      const data = await res.json();
+      if (data.cover_letter?.generated_content) {
+        onFound(data.cover_letter.generated_content);
+        return;
+      }
+    } catch { /* ignore transient errors, keep polling */ }
+  }
+  onTimeout();
+}
+
 async function fillDetail(detailEl, job) {
   try {
     const res = await fetch(`${BACKEND}/jobs/${job.job_id}?profile_id=${PROFILE_ID}`);
@@ -100,12 +172,16 @@ async function fillDetail(detailEl, job) {
 
     const link = document.createElement('a');
     link.href = data.url;
-    link.target = '_blank';
     link.textContent = 'Open on Seek ↗';
+    link.addEventListener('click', (e) => {
+      e.preventDefault();
+      chrome.tabs.create({ url: data.url });
+    });
     detailEl.appendChild(link);
 
     const cl = data.cover_letter?.generated_content;
     const blurb = document.createElement('div');
+    blurb.className = 'cl-blurb';
     blurb.style.marginTop = '6px';
     if (cl) {
       blurb.textContent = cl;
@@ -122,7 +198,7 @@ async function fillDetail(detailEl, job) {
 // ---------------------------------------------------------------------------
 // Scan Page (1-hop rule: links from a page the user opened, ≥5s apart, capped)
 // ---------------------------------------------------------------------------
-const MAX_SCAN_PAGES = 3;
+const MAX_SCAN_PAGES = 10;
 const SCAN_DELAY_MS = 5000;
 
 const scanBtn = document.getElementById('scan-btn');
@@ -252,6 +328,28 @@ async function scanPage() {
 
 scanBtn.addEventListener('click', scanPage);
 document.getElementById('refresh-btn').addEventListener('click', loadJobs);
+
+document.getElementById('bulk-delete-btn').addEventListener('click', async () => {
+  const score = parseFloat(document.getElementById('bulk-score').value);
+  if (isNaN(score)) return;
+  const btn = document.getElementById('bulk-delete-btn');
+  btn.disabled = true;
+  btn.textContent = '…';
+  try {
+    const res = await fetch(`${BACKEND}/jobs?below_score=${score}&profile_id=${PROFILE_ID}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (res.ok) {
+      btn.textContent = `Deleted ${data.deleted}`;
+      setTimeout(() => { btn.textContent = 'Delete'; btn.disabled = false; }, 2000);
+      loadJobs();
+    } else {
+      throw new Error();
+    }
+  } catch {
+    btn.textContent = 'Error';
+    setTimeout(() => { btn.textContent = 'Delete'; btn.disabled = false; }, 2000);
+  }
+});
 
 // ---------------------------------------------------------------------------
 // Profile tab — dynamic cards
@@ -492,6 +590,57 @@ document.getElementById('add-exp-btn').addEventListener('click', () =>
 document.getElementById('save-profile-btn').addEventListener('click', saveProfile);
 
 // ---------------------------------------------------------------------------
+// SSE — live updates from the backend
+// ---------------------------------------------------------------------------
+let _eventsEverOpened = false;
+
+function connectEvents() {
+  let source;
+  try {
+    source = new EventSource(`${BACKEND}/events`);
+  } catch {
+    return; // backend not running; jobs tab will show its own error
+  }
+
+  source.onopen = () => {
+    if (_eventsEverOpened) loadJobs(); // reconnect — reload to catch up on missed events
+    _eventsEverOpened = true;
+  };
+
+  // New job scored → reload the jobs list so it appears
+  source.addEventListener('job_processed', () => {
+    loadJobs();
+  });
+
+  // Cover letter ready → update the card in place (no full reload needed)
+  source.addEventListener('cover_letter_ready', (e) => {
+    const { job_id, content } = JSON.parse(e.data);
+
+    // Update blurb if the card is already expanded
+    const li = jobListEl.querySelector(`li[data-job-id="${job_id}"]`);
+    if (li) {
+      const blurb = li.querySelector('.cl-blurb');
+      if (blurb) {
+        blurb.style.color = '';
+        blurb.textContent = content;
+      }
+      // Reset the ✚ button to ✔ to indicate it's done
+      const clBtn = li.querySelector('.del-btn[title="Generate cover letter"]');
+      if (clBtn && clBtn.textContent === '…') {
+        clBtn.textContent = '✔';
+        clBtn.disabled = false;
+        setTimeout(() => { clBtn.textContent = '✚'; }, 2000);
+      }
+    }
+  });
+
+  source.onerror = () => {
+    // EventSource auto-reconnects; onopen will fire again and trigger a reload
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Init
 // ---------------------------------------------------------------------------
 loadJobs();
+connectEvents();

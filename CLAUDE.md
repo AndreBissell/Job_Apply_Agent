@@ -75,7 +75,7 @@ Language: Python 3.11+
 ORM: SQLAlchemy 2.0 (typed, declarative mapped style)
 Migrations: Alembic
 API: FastAPI + uvicorn (local backend for the extension)
-LLM: Google Gemini (free tier) — see the LLM Layer section below
+LLM: Groq (free tier, llama-3.3-70b-versatile) — see the LLM Layer section below
 Config: python-dotenv — app/db.py loads .env so DATABASE_URL (and
 later secrets) can live in a gitignored .env file.
 DB: SQLite for local dev, Postgres-ready for hosting. The database URL
@@ -88,72 +88,49 @@ everything portable so a Postgres DATABASE_URL works with no code changes.
 
 🤖 LLM LAYER
 
-Provider: Google Gemini via Google AI Studio (free tier).
-Project must keep billing DISABLED — enabling billing on a Gemini cloud
-project deletes the free tier entirely and every call becomes billable from the
-first token. If paid is ever needed, use a separate Google Cloud project.
+Active provider: Groq (console.groq.com — free tier).
+Model: llama-3.3-70b-versatile
+Free-tier quota: 30 RPM, ~14,400 RPD — far more headroom than Gemini.
 
-Model (current — EVERYTHING runs on this one): gemini-2.5-flash-lite
-
-
-Used for BOTH job extraction AND cover-letter generation right now.
-Chosen for its high free-tier quota. Daily headroom is fine; the binding
-constraint is a PER-MINUTE short-window limit — see the ⚠️ note below.
-
-⚠️ Free-tier 429s are a PER-MINUTE / short-window rate limit, NOT a daily cap
-(proven by probe 2026-06-23: a 429'd call recovered on retry 65s later). The error
-text is misleading — it reads `limit: 20` with quotaId
-`GenerateRequestsPerDayPerProjectPerModel-FreeTier`, but it carries `retryDelay: ~50s`
-and clears within a minute. So daily headroom is fine; the constraints are: (1) PACE
-calls slowly — even 7.5s spacing (LLM_RPM=8) can trip it in a burst, especially at
-peak hours when capacity dips; (2) BUG in client.py `_is_quota_429`: the "PerDay"
-quotaId substring makes it raise DailyQuotaError, so batches STOP instead of backing
-off + retrying on `retryDelay`. Fix = treat these as retryable, not fatal.
-Always read from the GEMINI_MODEL env var — never hardcode the model name.
-Verify the exact model string against the installed SDK before relying on it;
-Google renames models often (a newer gemini-3.1-flash-lite also exists). If the
-configured name 404s, list available models and use the current free Flash-Lite.
-
+Used for BOTH job extraction AND cover-letter generation.
+Always read from GROQ_MODEL env var — never hardcode the model name.
 
 Provider abstraction: ALL LLM calls go through app/llm/client.py
 (complete_json for structured extraction; complete_text for prose). The provider
-and model live in exactly ONE place so swapping is a one-file change. Do not call the
-Gemini SDK directly from extract.py / match.py / cover-letter code.
+and model live in exactly ONE place. Do not call the Groq/Gemini SDKs directly
+from extract.py / match.py / cover-letter code.
 
 Temperature:
+  Extraction → 0.1 (deterministic, consistent structure).
+  Cover letters → higher (~0.7) for natural prose.
 
+Rate-limit handling: on HTTP 429, client.py backs off and retries (max 3).
+Groq provides a retry-after header; delays > 300s are treated as daily exhaustion
+→ DailyQuotaError. The idle processing loop (_processing_idle_loop in main.py)
+serialises all LLM work through a single-worker executor and backs off 3 minutes
+when extraction fails. Local throttle: LLM_RPM=8 (~7.5s spacing).
 
-Extraction → 0.1 (deterministic, consistent structure).
-Cover letters → higher (~0.7) for natural prose.
-
-
-Rate-limit handling: the binding free-tier limit is PER-MINUTE (see the ⚠️ note
-above) — there is no hourly cap, and daily headroom is fine. On HTTP 429, client.py
-backs off honouring the server's retryDelay (capped ~70s) and retries (max 3), so a
-per-minute trip becomes a brief pause, not a failure. Only a 429 whose retryDelay says
-it won't clear for a long time (> _DAILY_RETRY_SECS = 300s) is treated as a real daily
-exhaustion → DailyQuotaError, which stops a batch cleanly. Classification is by the
-server's retryDelay, NOT by the misleading "PerDay" quotaId substring. Free-tier
-capacity dips below the ceiling at peak hours, so the backoff is load-bearing. Local
-throttle target LLM_RPM=4 (~15s spacing; kept under the tight per-minute ceiling).
+TLS note (this machine): Groq uses httpx internally. The AV does TLS interception
+with a local CA cert that certifi doesn't trust. truststore's inject_into_ssl()
+doesn't affect httpcore's start_tls path, so the Groq httpx client is created
+with verify=False. Acceptable on a local dev machine with a trusted AV proxy.
 
 Env vars (gitignored .env):
+  GROQ_API_KEY — from console.groq.com
+  GROQ_MODEL=llama-3.3-70b-versatile
+  LLM_PROVIDER=groq
+  LLM_RPM=8
 
+Fallback: Gemini (google-genai SDK) is still wired in client.py.
+Switch: set LLM_PROVIDER=gemini + GEMINI_API_KEY + GEMINI_MODEL in .env.
+Gemini TLS works via truststore.inject_into_ssl() (urllib3 path, unlike httpx).
 
-GEMINI_API_KEY — from aistudio.google.com
-GEMINI_MODEL=gemini-2.5-flash-lite
-LLM_PROVIDER=gemini
-LLM_RPM=4
+⚠️ Gemini quota history: gemini-2.5-flash-lite = 20 RPD (NOT per-minute).
+gemini-2.0-flash = 1,500 RPD but requires a proper AIza* AI Studio key, not
+AQ.* Cloud trial keys. Switched to Groq to avoid all of this.
 
-
-Data privacy note: free-tier prompts may be used by Google for model training.
-Fine for public job-ad text; just be aware.
-
-Planned (NOT YET — DO NOT IMPLEMENT): cover-letter generation may later move to
-Anthropic Claude Haiku for better prose, while extraction stays on Gemini
-Flash-Lite (per-task provider rather than one global setting). For now, everything
-stays on Gemini Flash-Lite. Do not pre-wire Anthropic calls. The Anthropic API is
-separate from any Claude.ai subscription (billed per-token via console.anthropic.com).
+Data privacy: Groq free-tier prompts may be used for model training.
+Fine for public job-ad text; be aware for personal profile data.
 
 
 Repo layout (actual)

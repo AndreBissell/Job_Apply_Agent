@@ -14,9 +14,11 @@ aiofiles>=23.0   # required by FastAPI StaticFiles
 httpx>=0.27  # used by tests / for hitting the API
 pytest>=8.0  # test runner
 
-# LLM layer: Google Gemini (Flash-Lite) via the unified GenAI SDK. All calls go
-# through app/llm/client.py; provider/model/key come from .env (see CLAUDE.md).
+# LLM layer: all calls go through app/llm/client.py; provider/model/key from .env.
+# Gemini (Google GenAI SDK) — kept for fallback / future use.
 google-genai>=1.0
+# Groq (OpenAI-compatible SDK) — active provider (llama-3.3-70b-versatile).
+groq>=0.9
 # Makes Python's TLS use the OS trust store — needed where AV/corporate proxies
 # do TLS interception (the local CA is in the OS store, not certifi's bundle).
 truststore>=0.9

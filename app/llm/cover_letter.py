@@ -146,6 +146,7 @@ def generate_cover_letter(
     profile_id: int,
     session=None,
     force: bool = False,
+    bypass_threshold: bool = False,
 ) -> CoverLetter | None:
     """Draft a cover letter for a job/profile match, if score >= THRESHOLD.
 
@@ -170,7 +171,7 @@ def generate_cover_letter(
             )
             return None
 
-        if match.score is None or float(match.score) < THRESHOLD:
+        if not bypass_threshold and (match.score is None or float(match.score) < THRESHOLD):
             logger.info(
                 "generate_cover_letter: job %s score %s below threshold %s — skipping",
                 job_id, match.score, THRESHOLD,
