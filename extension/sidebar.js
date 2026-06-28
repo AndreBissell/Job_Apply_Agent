@@ -5,6 +5,25 @@ const BACKEND = 'http://localhost:8000';
 const PROFILE_ID = 1;
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+const QUAL_TYPE_LABELS   = { degree: 'Degree', certificate: 'Certificate', diploma: 'Diploma', other: 'Other' };
+const QUAL_STATUS_LABELS = { completed: 'Completed', in_progress: 'In Progress', withdrawn: 'Withdrawn' };
+const EXP_TYPE_LABELS    = { job: 'Job', internship: 'Internship', volunteer: 'Volunteer', project: 'Project' };
+
+function fmtDate(ym) {
+  if (!ym) return '';
+  const [y, m] = ym.split('-');
+  return new Date(Number(y), Number(m) - 1, 1)
+    .toLocaleDateString('en-AU', { month: 'short', year: 'numeric' });
+}
+
+function truncate(str, n) {
+  if (!str || str.length <= n) return str;
+  return str.slice(0, n).replace(/\s\S*$/, '') + '…';
+}
+
+// ---------------------------------------------------------------------------
 // Tab switching
 // ---------------------------------------------------------------------------
 const tabBtns = document.querySelectorAll('nav#tabs .tab');
@@ -386,11 +405,29 @@ function showMsg(text, type) {
 
 // -- Qualification card --
 
-function makeQualCard(data = {}) {
+function makeQualCard(data = {}, isNew = false) {
   const card = document.createElement('div');
   card.className = 'entry-card';
-  card.innerHTML = `
-    <button class="remove-btn" title="Remove">×</button>
+
+  // Summary panel
+  const summaryEl = document.createElement('div');
+  summaryEl.className = 'card-summary';
+  summaryEl.innerHTML = `
+    <div class="summary-header">
+      <span class="summary-title"></span>
+      <span class="type-badge"></span>
+    </div>
+    <div class="summary-meta"></div>
+    <div class="card-actions">
+      <button class="btn btn-sm edit-btn">Edit</button>
+      <button class="btn btn-sm btn-remove card-rm-btn">Remove</button>
+    </div>
+  `;
+
+  // Form panel
+  const formEl = document.createElement('div');
+  formEl.className = 'card-form';
+  formEl.innerHTML = `
     <label class="field"><span>Type</span>
       <select class="f-type">
         <option value="degree">Degree</option>
@@ -424,17 +461,55 @@ function makeQualCard(data = {}) {
         <option value="withdrawn">Withdrawn</option>
       </select>
     </label>
+    <div class="card-actions">
+      <button class="btn btn-sm done-btn" style="flex:1">Done</button>
+      <button class="btn btn-sm btn-remove card-rm-btn">Remove</button>
+    </div>
   `;
-  card.querySelector('.remove-btn').addEventListener('click', () => card.remove());
 
-  if (data.qualification_type) card.querySelector('.f-type').value = data.qualification_type;
-  if (data.title)              card.querySelector('.f-title').value = data.title;
-  if (data.institution)        card.querySelector('.f-institution').value = data.institution;
-  if (data.field_of_study)     card.querySelector('.f-field').value = data.field_of_study;
-  if (data.grade)              card.querySelector('.f-grade').value = data.grade;
-  if (data.start_date)         card.querySelector('.f-start').value = data.start_date;
-  if (data.end_date)           card.querySelector('.f-end').value = data.end_date;
-  if (data.status)             card.querySelector('.f-status').value = data.status;
+  card.appendChild(summaryEl);
+  card.appendChild(formEl);
+
+  // Populate form
+  if (data.qualification_type) formEl.querySelector('.f-type').value = data.qualification_type;
+  if (data.title)              formEl.querySelector('.f-title').value = data.title;
+  if (data.institution)        formEl.querySelector('.f-institution').value = data.institution;
+  if (data.field_of_study)     formEl.querySelector('.f-field').value = data.field_of_study;
+  if (data.grade)              formEl.querySelector('.f-grade').value = data.grade;
+  if (data.start_date)         formEl.querySelector('.f-start').value = data.start_date;
+  if (data.end_date)           formEl.querySelector('.f-end').value = data.end_date;
+  if (data.status)             formEl.querySelector('.f-status').value = data.status;
+
+  function updateSummary() {
+    const type   = formEl.querySelector('.f-type').value;
+    const title  = formEl.querySelector('.f-title').value || '(untitled)';
+    const inst   = formEl.querySelector('.f-institution').value;
+    const field  = formEl.querySelector('.f-field').value;
+    const start  = formEl.querySelector('.f-start').value;
+    const end    = formEl.querySelector('.f-end').value;
+    const status = formEl.querySelector('.f-status').value;
+
+    summaryEl.querySelector('.summary-title').textContent = title;
+    summaryEl.querySelector('.type-badge').textContent = QUAL_TYPE_LABELS[type] || type;
+
+    const metaEl = summaryEl.querySelector('.summary-meta');
+    metaEl.innerHTML = '';
+    const line1 = [inst, field].filter(Boolean).join(' · ');
+    if (line1) { const d = document.createElement('div'); d.textContent = line1; metaEl.appendChild(d); }
+    const dateParts = [start ? fmtDate(start) : '', end ? fmtDate(end) : (status === 'in_progress' ? 'Present' : '')].filter(Boolean);
+    const line2 = [dateParts.join(' – '), QUAL_STATUS_LABELS[status] || status].filter(Boolean).join(' · ');
+    if (line2) { const d = document.createElement('div'); d.textContent = line2; metaEl.appendChild(d); }
+  }
+
+  function showForm() { summaryEl.style.display = 'none'; formEl.style.display = ''; }
+  function showSummary() { updateSummary(); formEl.style.display = 'none'; summaryEl.style.display = ''; }
+
+  summaryEl.querySelector('.edit-btn').addEventListener('click', showForm);
+  formEl.querySelector('.done-btn').addEventListener('click', showSummary);
+  card.querySelectorAll('.card-rm-btn').forEach(b => b.addEventListener('click', () => card.remove()));
+
+  if (isNew) { summaryEl.style.display = 'none'; formEl.style.display = ''; }
+  else       { updateSummary(); summaryEl.style.display = ''; formEl.style.display = 'none'; }
 
   return card;
 }
@@ -454,11 +529,29 @@ function readQualCard(card) {
 
 // -- Experience card --
 
-function makeExpCard(data = {}) {
+function makeExpCard(data = {}, isNew = false) {
   const card = document.createElement('div');
   card.className = 'entry-card';
-  card.innerHTML = `
-    <button class="remove-btn" title="Remove">×</button>
+
+  // Summary panel
+  const summaryEl = document.createElement('div');
+  summaryEl.className = 'card-summary';
+  summaryEl.innerHTML = `
+    <div class="summary-header">
+      <span class="summary-title"></span>
+      <span class="type-badge"></span>
+    </div>
+    <div class="summary-meta"></div>
+    <div class="card-actions">
+      <button class="btn btn-sm edit-btn">Edit</button>
+      <button class="btn btn-sm btn-remove card-rm-btn">Remove</button>
+    </div>
+  `;
+
+  // Form panel
+  const formEl = document.createElement('div');
+  formEl.className = 'card-form';
+  formEl.innerHTML = `
     <label class="field"><span>Type</span>
       <select class="f-type">
         <option value="job">Job</option>
@@ -478,8 +571,7 @@ function makeExpCard(data = {}) {
       <label class="field f-end-label"><span>End</span><input class="f-end" type="month"></label>
     </div>
     <div class="check-row">
-      <input class="f-current" type="checkbox">
-      <label>Current role</label>
+      <input class="f-current" type="checkbox"><label>Current role</label>
     </div>
     <label class="field"><span>Description</span>
       <textarea class="f-desc" placeholder="Key responsibilities and achievements…"></textarea>
@@ -487,27 +579,69 @@ function makeExpCard(data = {}) {
     <label class="field"><span>Skills used (comma-separated)</span>
       <input class="f-skills" type="text" placeholder="Python, SQL, React…">
     </label>
+    <div class="card-actions">
+      <button class="btn btn-sm done-btn" style="flex:1">Done</button>
+      <button class="btn btn-sm btn-remove card-rm-btn">Remove</button>
+    </div>
   `;
 
-  const currentCb = card.querySelector('.f-current');
-  const endLabel  = card.querySelector('.f-end-label');
-  const endInput  = card.querySelector('.f-end');
+  card.appendChild(summaryEl);
+  card.appendChild(formEl);
+
+  const currentCb = formEl.querySelector('.f-current');
+  const endLabel  = formEl.querySelector('.f-end-label');
+  const endInput  = formEl.querySelector('.f-end');
 
   function toggleEnd() {
     endLabel.style.opacity = currentCb.checked ? '0.35' : '1';
     endInput.disabled = currentCb.checked;
   }
   currentCb.addEventListener('change', toggleEnd);
-  card.querySelector('.remove-btn').addEventListener('click', () => card.remove());
 
-  if (data.experience_type) card.querySelector('.f-type').value = data.experience_type;
-  if (data.title)           card.querySelector('.f-title').value = data.title;
-  if (data.organization)    card.querySelector('.f-org').value = data.organization;
-  if (data.start_date)      card.querySelector('.f-start').value = data.start_date;
-  if (data.end_date)        card.querySelector('.f-end').value = data.end_date;
-  if (data.description)     card.querySelector('.f-desc').value = data.description;
-  if (data.skills?.length)  card.querySelector('.f-skills').value = data.skills.join(', ');
-  if (data.is_current) { currentCb.checked = true; toggleEnd(); }
+  // Populate form
+  if (data.experience_type) formEl.querySelector('.f-type').value = data.experience_type;
+  if (data.title)           formEl.querySelector('.f-title').value = data.title;
+  if (data.organization)    formEl.querySelector('.f-org').value = data.organization;
+  if (data.start_date)      formEl.querySelector('.f-start').value = data.start_date;
+  if (data.end_date)        formEl.querySelector('.f-end').value = data.end_date;
+  if (data.description)     formEl.querySelector('.f-desc').value = data.description;
+  if (data.skills?.length)  formEl.querySelector('.f-skills').value = data.skills.join(', ');
+  if (data.is_current)      { currentCb.checked = true; toggleEnd(); }
+
+  function updateSummary() {
+    const type   = formEl.querySelector('.f-type').value;
+    const title  = formEl.querySelector('.f-title').value || '(untitled)';
+    const org    = formEl.querySelector('.f-org').value;
+    const start  = formEl.querySelector('.f-start').value;
+    const end    = formEl.querySelector('.f-end').value;
+    const isCur  = formEl.querySelector('.f-current').checked;
+    const desc   = formEl.querySelector('.f-desc').value;
+
+    summaryEl.querySelector('.summary-title').textContent = title;
+    summaryEl.querySelector('.type-badge').textContent = EXP_TYPE_LABELS[type] || type;
+
+    const metaEl = summaryEl.querySelector('.summary-meta');
+    metaEl.innerHTML = '';
+    if (org) { const d = document.createElement('div'); d.textContent = org; metaEl.appendChild(d); }
+    const dateParts = [start ? fmtDate(start) : '', isCur ? 'Present' : (end ? fmtDate(end) : '')].filter(Boolean);
+    if (dateParts.length) { const d = document.createElement('div'); d.textContent = dateParts.join(' – '); metaEl.appendChild(d); }
+    if (desc) {
+      const d = document.createElement('div');
+      d.className = 'desc-preview';
+      d.textContent = truncate(desc, 80);
+      metaEl.appendChild(d);
+    }
+  }
+
+  function showForm() { summaryEl.style.display = 'none'; formEl.style.display = ''; }
+  function showSummary() { updateSummary(); formEl.style.display = 'none'; summaryEl.style.display = ''; }
+
+  summaryEl.querySelector('.edit-btn').addEventListener('click', showForm);
+  formEl.querySelector('.done-btn').addEventListener('click', showSummary);
+  card.querySelectorAll('.card-rm-btn').forEach(b => b.addEventListener('click', () => card.remove()));
+
+  if (isNew) { summaryEl.style.display = 'none'; formEl.style.display = ''; }
+  else       { updateSummary(); summaryEl.style.display = ''; formEl.style.display = 'none'; }
 
   return card;
 }
@@ -524,6 +658,38 @@ function readExpCard(card) {
     description:     card.querySelector('.f-desc').value.trim() || null,
     skills:          card.querySelector('.f-skills').value.split(',').map(s => s.trim()).filter(Boolean),
   };
+}
+
+// -- Skills chips --
+
+let skillsData = [];
+
+function renderSkillPills() {
+  const container = document.getElementById('skills-pills');
+  container.innerHTML = '';
+  for (const skill of skillsData) {
+    const chip = document.createElement('span');
+    chip.className = 'skill-chip';
+    chip.appendChild(document.createTextNode(skill));
+    const rm = document.createElement('button');
+    rm.className = 'rm-skill';
+    rm.textContent = '×';
+    rm.title = 'Remove';
+    rm.addEventListener('click', () => {
+      skillsData = skillsData.filter(s => s !== skill);
+      renderSkillPills();
+    });
+    chip.appendChild(rm);
+    container.appendChild(chip);
+  }
+}
+
+function addSkill(name) {
+  const trimmed = name.trim();
+  if (!trimmed || skillsData.includes(trimmed)) return false;
+  skillsData.push(trimmed);
+  renderSkillPills();
+  return true;
 }
 
 // -- Load / Save --
@@ -552,13 +718,14 @@ function populateForm(data) {
 
   const qualsList = document.getElementById('quals-list');
   qualsList.innerHTML = '';
-  for (const q of (data.qualifications || [])) qualsList.appendChild(makeQualCard(q));
+  for (const q of (data.qualifications || [])) qualsList.appendChild(makeQualCard(q, false));
 
   const expsList = document.getElementById('exps-list');
   expsList.innerHTML = '';
-  for (const e of (data.experiences || [])) expsList.appendChild(makeExpCard(e));
+  for (const e of (data.experiences || [])) expsList.appendChild(makeExpCard(e, false));
 
-  document.getElementById('p-skills').value = (data.skills || []).join('\n');
+  skillsData = data.skills || [];
+  renderSkillPills();
 }
 
 async function saveProfile() {
@@ -570,8 +737,7 @@ async function saveProfile() {
       .map(readQualCard).filter(q => q.title);
     const exps = [...document.querySelectorAll('#exps-list .entry-card')]
       .map(readExpCard).filter(e => e.title);
-    const skills = document.getElementById('p-skills').value
-      .split('\n').map(s => s.trim()).filter(Boolean);
+    const skills = [...skillsData];
 
     const body = {
       profile: {
@@ -604,12 +770,266 @@ async function saveProfile() {
 }
 
 document.getElementById('add-qual-btn').addEventListener('click', () =>
-  document.getElementById('quals-list').appendChild(makeQualCard()));
+  document.getElementById('quals-list').appendChild(makeQualCard({}, true)));
 
 document.getElementById('add-exp-btn').addEventListener('click', () =>
-  document.getElementById('exps-list').appendChild(makeExpCard()));
+  document.getElementById('exps-list').appendChild(makeExpCard({}, true)));
 
 document.getElementById('save-profile-btn').addEventListener('click', saveProfile);
+
+// Skill add UI
+function confirmSkill() {
+  const inp = document.getElementById('skill-input');
+  if (addSkill(inp.value)) inp.value = '';
+  inp.focus();
+}
+function cancelSkillInput() {
+  document.getElementById('skill-input').value = '';
+  document.getElementById('add-skill-row').style.display = 'none';
+}
+
+document.getElementById('add-skill-btn').addEventListener('click', () => {
+  const row = document.getElementById('add-skill-row');
+  row.style.display = 'flex';
+  document.getElementById('skill-input').focus();
+});
+document.getElementById('skill-ok-btn').addEventListener('click', confirmSkill);
+document.getElementById('skill-cancel-btn').addEventListener('click', cancelSkillInput);
+document.getElementById('skill-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); confirmSkill(); }
+  if (e.key === 'Escape') cancelSkillInput();
+});
+
+// ---------------------------------------------------------------------------
+// Import from Seek Profile
+// ---------------------------------------------------------------------------
+
+// Runs INSIDE the au.seek.com/profile/me tab — extracts profile data.
+// All extraction happens in the user's own browser/session; nothing goes server-side.
+async function seekProfileExtract() {
+  // Seek is a SPA — wait until the profile content has actually rendered
+  await new Promise(resolve => {
+    const start = Date.now();
+    function check() {
+      const ready = document.querySelector('[data-automation="personal-details-card"]')
+                 || document.querySelector('[data-automation="read-role"]')
+                 || document.querySelector('[data-automation="skills-items"]');
+      if (ready || Date.now() - start > 15000) resolve();
+      else setTimeout(check, 500);
+    }
+    check();
+  });
+
+  function da(attr)    { return document.querySelector(`[data-automation="${attr}"]`); }
+  function daAll(attr) { return [...document.querySelectorAll(`[data-automation="${attr}"]`)]; }
+
+  // Clone el, remove noisy child nodes, return trimmed innerText
+  function cleanText(el, removeSelectors) {
+    if (!el) return '';
+    const c = el.cloneNode(true);
+    c.querySelectorAll(removeSelectors).forEach(n => n.remove());
+    return c.innerText.trim();
+  }
+
+  // "Jan 2022" / "January 2022" / "2022" → "YYYY-MM"
+  function parseDate(str) {
+    if (!str) return null;
+    const MONTHS = {jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};
+    const m = str.trim().match(/([a-z]+)\s+(\d{4})/i);
+    if (m) {
+      const mon = MONTHS[m[1].toLowerCase().slice(0, 3)];
+      if (mon) return `${m[2]}-${String(mon).padStart(2, '0')}`;
+    }
+    const y = str.trim().match(/^(\d{4})$/);
+    if (y) return `${y[1]}-01`;
+    return null;
+  }
+
+  // "Dec 2020 - Present (5 years 7 months)" → [startYYYY-MM, endYYYY-MM|null, isCurrent]
+  function parseDateRange(raw) {
+    if (!raw) return [null, null, false];
+    const str = raw.replace(/\s*\(.*?\)\s*$/, '').trim(); // strip "(5 years 7 months)"
+    const parts = str.split(/\s*[-–—]\s*/); // hyphen, en-dash, em-dash
+    const start = parseDate(parts[0]);
+    const endRaw = (parts[1] || '').trim();
+    const isCurrent = /present|current/i.test(endRaw);
+    return [start, isCurrent ? null : parseDate(endRaw), isCurrent];
+  }
+
+  const NOISE = 'button, svg, [aria-hidden="true"], [role="button"]';
+
+  const out = {
+    name: null, location: null, email: null, summary: null,
+    experiences: [], qualifications: [], skills: [],
+  };
+
+  // ── Personal details ──────────────────────────────────────────────────────
+  // Confirmed from live HTML: name is in [data-automation="inline-nudge-name"]
+  const nameEl = da('inline-nudge-name');
+  if (nameEl) out.name = nameEl.innerText.trim() || null;
+  const locEl = da('inline-nudge-location');
+  if (locEl) {
+    const t = cleanText(locEl, NOISE);
+    if (t && !/^add\s/i.test(t)) out.location = t; // skip "Add location" nudge
+  }
+  const emailEl = da('personal-detail-email');
+  if (emailEl) out.email = emailEl.innerText.trim() || null;
+
+  // ── Summary ───────────────────────────────────────────────────────────────
+  const summaryCard = da('summary-card');
+  if (summaryCard) {
+    out.summary = cleanText(summaryCard,
+      `${NOISE}, [data-automation="summary-read-title"], [data-automation="summary-edit"], [data-automation="summary-empty-nudge"]`
+    ) || null;
+  }
+
+  // ── Career history ────────────────────────────────────────────────────────
+  // Confirmed from live HTML:
+  //   h4                → job title  ("Team Member")
+  //   time              → date range ("Dec 2020 - Present (5 years 7 months)")
+  //   [data-hj-masked]  → description (appears twice for clamp/expand; take first visible)
+  //   remaining text    → company name (after stripping all above + buttons)
+  daAll('read-role').forEach(item => {
+    const title   = item.querySelector('h4')?.innerText?.trim() || '';
+    const dateRaw = item.querySelector('time')?.innerText?.trim() || '';
+    const [startDate, endDate, isCurrent] = parseDateRange(dateRaw);
+
+    const descEl = item.querySelector(':not([aria-hidden="true"]) [data-hj-masked]')
+                || item.querySelector('[data-hj-masked]');
+    const description = descEl?.innerText?.trim().replace(/^[•·]\s*/, '') || '';
+
+    // Company: remove all known elements; first remaining line is the company name
+    const company = cleanText(item, `h4, time, [data-hj-masked], ${NOISE}`)
+      .split('\n')[0]?.trim() || '';
+
+    out.experiences.push({
+      experience_type: 'job', title, organization: company,
+      start_date: startDate, end_date: endDate, is_current: isCurrent,
+      description, skills: [],
+    });
+  });
+
+  // ── Education ─────────────────────────────────────────────────────────────
+  // Same pattern as roles: h4 = degree title, time = dates, remainder = institution
+  daAll('read-qualification').forEach(item => {
+    const title   = item.querySelector('h4, h3')?.innerText?.trim() || '';
+    const dateRaw = item.querySelector('time')?.innerText?.trim() || '';
+    const [startDate, endDate] = parseDateRange(dateRaw);
+    const institution = cleanText(item, `h4, h3, time, [data-hj-masked], ${NOISE}`)
+      .split('\n')[0]?.trim() || '';
+
+    out.qualifications.push({
+      qualification_type: 'degree', title, institution,
+      field_of_study: '', grade: '',
+      start_date: startDate, end_date: endDate, status: 'completed',
+    });
+  });
+
+  // ── Skills ────────────────────────────────────────────────────────────────
+  // Confirmed from live HTML: <li><div title="PHP Programming">...</div></li>
+  // The title attribute is cleanest — no leading spaces.
+  const skillsEl = da('skills-items');
+  if (skillsEl) {
+    out.skills = [...skillsEl.querySelectorAll('div[title]')]
+      .map(el => el.getAttribute('title'))
+      .filter(Boolean);
+  }
+
+  return out;
+}
+
+function setImportStatus(msg, color) {
+  const el = document.getElementById('import-status');
+  if (el) { el.textContent = msg; el.style.color = color || '#6b7280'; }
+}
+
+async function importFromSeekProfile() {
+  const btn = document.getElementById('seek-import-btn');
+  btn.disabled = true;
+  setImportStatus('Opening Seek profile…', '#6b7280');
+
+  let tab;
+  try {
+    tab = await chrome.tabs.create({ url: 'https://au.seek.com/profile/me', active: false });
+    await waitForTabComplete(tab.id, 20000);
+    setImportStatus('Waiting for page to render…', '#6b7280');
+    // Extra buffer — Seek SPA often fires 'complete' before React has rendered content
+    await sleep(2000);
+
+    const [{ result }] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: seekProfileExtract,
+    });
+
+    console.log('[SeekImport] Extracted:', result);
+
+    if (!result) throw new Error('No data returned from page.');
+
+    // Log debug info so we can refine selectors if needed
+    if (result._debug) {
+      console.log('[SeekImport] Debug:', result._debug);
+    }
+
+    // Merge into the profile form — only overwrite fields that have data
+    const p = result;
+    if (p.name)     document.getElementById('p-name').value     = p.name;
+    if (p.email)    document.getElementById('p-email').value    = p.email;
+    if (p.location) document.getElementById('p-location').value = p.location;
+    if (p.summary)  document.getElementById('p-summary').value  = p.summary;
+
+    // Qualifications — prepend imported ones, keeping existing
+    const qualsList = document.getElementById('quals-list');
+    for (const q of (p.qualifications || [])) {
+      if (q.title) qualsList.prepend(makeQualCard(q, false));
+    }
+
+    // Experiences — prepend imported ones, keeping existing
+    const expsList = document.getElementById('exps-list');
+    for (const e of (p.experiences || [])) {
+      if (e.title) expsList.prepend(makeExpCard(e, false));
+    }
+
+    // Skills — merge without duplicates
+    for (const s of (p.skills || [])) addSkill(s);
+
+    const counts = [
+      p.experiences?.length && `${p.experiences.length} role(s)`,
+      p.qualifications?.length && `${p.qualifications.length} qualification(s)`,
+      p.skills?.length && `${p.skills.length} skill(s)`,
+    ].filter(Boolean);
+
+    if (!p.name && !counts.length) {
+      setImportStatus('Nothing extracted — page may not have rendered. Check browser console (F12).', '#d97706');
+    } else {
+      setImportStatus(`Imported: ${[p.name && 'name', ...counts].filter(Boolean).join(', ')}. Review & save.`, '#059669');
+    }
+  } catch (e) {
+    console.error('[SeekImport] Error:', e);
+    setImportStatus(`Import failed: ${e.message}`, '#dc2626');
+  } finally {
+    if (tab) await chrome.tabs.remove(tab.id).catch(() => {});
+    btn.disabled = false;
+  }
+}
+
+document.getElementById('seek-import-btn').addEventListener('click', importFromSeekProfile);
+
+document.getElementById('export-profile-btn').addEventListener('click', async () => {
+  try {
+    const res = await fetch(`${BACKEND}/profile-ui/data`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = `profile-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    setImportStatus(`Export failed: ${e.message}`, '#dc2626');
+  }
+});
 
 // ---------------------------------------------------------------------------
 // SSE — live updates from the backend

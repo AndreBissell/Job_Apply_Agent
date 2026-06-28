@@ -89,7 +89,10 @@
       "PowerShell(& \"c:\\\\Users\\\\andre\\\\Job_Apply_Agent\\\\.venv\\\\Scripts\\\\python.exe\" -c \"import pytest; print\\(pytest.__version__\\)\" 2>&1)",
       "PowerShell(& \"c:\\\\Users\\\\andre\\\\Job_Apply_Agent\\\\.venv\\\\Scripts\\\\pip.exe\" install \"pytest>=8.0\" \"pytest-asyncio>=0.23\" --trusted-host pypi.org --trusted-host files.pythonhosted.org -q 2>&1)",
       "PowerShell(& \"c:\\\\Users\\\\andre\\\\Job_Apply_Agent\\\\.venv\\\\Scripts\\\\python.exe\" -c \"import pytest; print\\(pytest.__version__\\)\")",
-      "PowerShell(Invoke-RestMethod -Uri \"http://127.0.0.1:8000/health\" -Method Get)"
+      "PowerShell(Invoke-RestMethod -Uri \"http://127.0.0.1:8000/health\" -Method Get)",
+      "WebFetch(domain:console.groq.com)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\andre\\\\Job_Apply_Agent\" -Recurse -Directory)",
+      "Bash(Select-Object -ExpandProperty FullName)"
     ],
     "additionalDirectories": [
       "C:\\Users\\andre\\Job_Apply_Agent",
