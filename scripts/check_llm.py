@@ -2,14 +2,13 @@
 
     python scripts/check_llm.py
 
-Loads the same env/config the app uses (via app.llm.client), then:
-  1. confirms a key is present,
-  2. authenticates by listing models,
-  3. does ONE tiny generateContent on the configured GEMINI_MODEL.
+Loads the same env/config the app uses (via app.llm.client), then makes one
+tiny complete_text call and one tiny complete_json call through the public
+API — whichever provider/model LLM_PROVIDER selects. Costs ~nothing.
 
-Prints a clear PASS/FAIL with the precise upstream error and a hint, so you can
-verify a new key before running the real extraction. Makes at most one tiny
-generation call, so it costs ~nothing against the free quota.
+Provider-agnostic on purpose: it drives the same complete_json/complete_text
+functions extract.py, match.py, and cover_letter.py call, so a PASS here means
+the configured provider actually works end to end, not just that a key exists.
 """
 
 from __future__ import annotations
@@ -18,66 +17,68 @@ import sys
 
 sys.path.insert(0, ".")
 
-from app.llm import client  # noqa: E402  (loads .env + truststore config)
+from pydantic import BaseModel
+
+from app.llm import client  # noqa: E402  (loads .env + provider config)
+
+_KEY_HINTS = {
+    "openai": "OPENAI_API_KEY — create one at https://platform.openai.com/api-keys",
+    "groq": "GROQ_API_KEY — create one at https://console.groq.com/keys",
+    "gemini": "GEMINI_API_KEY (or GOOGLE_API_KEY) — create one at https://aistudio.google.com/apikey",
+}
+
+
+class _Ping(BaseModel):
+    answer: str
+
+
+def _diagnose(exc: Exception, provider: str) -> None:
+    low = str(exc).lower()
+    print()
+    if "no api key" in low:
+        print(f"Diagnosis: no key configured. Set {_KEY_HINTS[provider]}")
+    elif "authentication" in low or "401" in low or "invalid_api_key" in low or "permission" in low:
+        print(f"Diagnosis: key rejected. Check {_KEY_HINTS[provider]}")
+    elif "429" in low or "resource_exhausted" in low or "quota" in low or "rate" in low:
+        print("Diagnosis: rate-limited or out of quota. Check the provider's dashboard "
+              "for billing/tier, or wait and retry.")
+    elif "not found" in low or "404" in low or "does not exist" in low or "model" in low:
+        print("Diagnosis: the configured model may not be available to this key/account. "
+              "Check the *_MODEL env var against the provider's current model list.")
+    else:
+        print("Diagnosis: unexpected error — see the message above.")
 
 
 def main() -> int:
-    key = client.GEMINI_API_KEY
-    if not key:
-        print("FAIL: no key — set GEMINI_API_KEY or GOOGLE_API_KEY in .env")
+    provider = client.LLM_PROVIDER
+    print(f"Provider : {provider}")
+    if provider not in _KEY_HINTS:
+        print(f"FAIL: unknown LLM_PROVIDER={provider!r} (expected one of {sorted(_KEY_HINTS)})")
         return 1
-    print(f"Provider : {client.LLM_PROVIDER}")
-    print(f"Model    : {client.GEMINI_MODEL}")
-    print(f"Key      : {key[:6]}… ({len(key)} chars)")
 
     try:
-        client._get_client()  # applies truststore + builds the genai client
-        gc = client._client
+        text = client.complete_text("You are a test.", "Reply with exactly: OK", temperature=0)
+        print(f"complete_text : OK -> {text[:40]!r}")
     except Exception as exc:  # noqa: BLE001
-        print(f"FAIL: could not init client — {exc}")
+        print(f"complete_text : FAIL — {str(exc)[:240]}")
+        _diagnose(exc, provider)
         return 1
 
-    # 1) Auth check — list models.
     try:
-        models = list(gc.models.list())
-        print(f"list()   : OK ({len(models)} models visible)")
-    except Exception as exc:  # noqa: BLE001
-        print(f"list()   : FAIL — {str(exc)[:200]}")
-        print("\nThe key can't even authenticate. Create a fresh key at "
-              "https://aistudio.google.com/apikey")
-        return 1
-
-    # 2) Generation check — one tiny call on the configured model.
-    try:
-        resp = gc.models.generate_content(
-            model=client.GEMINI_MODEL, contents="Reply with the single word OK."
+        data = client.complete_json(
+            "You are a test. Reply as JSON only.",
+            "Set the answer field to OK.",
+            schema=_Ping,
+            temperature=0,
         )
-        text = (getattr(resp, "text", "") or "").strip()
-        print(f"generate : OK -> {text[:40]!r}")
-        print("\nPASS — the LLM layer is good to go. Run: "
-              "python scripts/run_extraction.py --job-id 4")
-        return 0
+        print(f"complete_json : OK -> {data}")
     except Exception as exc:  # noqa: BLE001
-        msg = str(exc)
-        print(f"generate : FAIL — {msg[:240]}")
-        low = msg.lower()
-        print()
-        if "denied access" in low or "permission_denied" in low or "403" in low:
-            print("Diagnosis: this project is DENIED generation access. Almost always an")
-            print("account-eligibility issue, not the key. Try, in order:")
-            print("  1. Use a PERSONAL @gmail.com account (not school/work/Workspace).")
-            print("  2. Make sure that account is 18+ / age-verified.")
-            print("  3. Create the key via 'Create API key in a NEW project'.")
-        elif "resource_exhausted" in low or "429" in low or "quota" in low:
-            print("Diagnosis: 429 quota. If this is a fresh project showing 0 quota, the")
-            print("account likely has no free tier (same account fixes as above). If you")
-            print("were just running many calls, wait for the per-minute window and retry.")
-        elif "not found" in low or "404" in low:
-            print(f"Diagnosis: model {client.GEMINI_MODEL!r} not available to this key.")
-            print("Set GEMINI_MODEL in .env to one of the listed models and retry.")
-        else:
-            print("Diagnosis: unexpected error — see the message above.")
+        print(f"complete_json : FAIL — {str(exc)[:240]}")
+        _diagnose(exc, provider)
         return 1
+
+    print("\nPASS — the LLM layer is good to go. Run: python scripts/run_extraction.py --job-id 4")
+    return 0
 
 
 if __name__ == "__main__":
