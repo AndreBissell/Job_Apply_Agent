@@ -144,37 +144,16 @@ def _inject_truststore() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Shared retry/backoff loop for OpenAI-compatible chat completion APIs
-# (OpenAI's own SDK and Groq's OpenAI-compatible SDK share this call shape).
+# Shared retry/backoff wrapper for OpenAI-compatible APIs (OpenAI's own SDK and
+# Groq's OpenAI-compatible SDK share this error/retry-after shape).
 # ---------------------------------------------------------------------------
-def _chat_completion_with_retry(
-    *,
-    provider_label: str,
-    client: Any,
-    model: str,
-    system_prompt: str,
-    user_content: str,
-    config_kwargs: dict[str, Any],
-):
-    response_format = config_kwargs.get("response_format")
-
-    call_kwargs: dict[str, Any] = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_content},
-        ],
-    }
-    if "temperature" in config_kwargs:
-        call_kwargs["temperature"] = config_kwargs["temperature"]
-    if response_format:
-        call_kwargs["response_format"] = response_format
-
+def _with_retry(provider_label: str, call_fn):
+    """Run ``call_fn()`` with throttle + retry/backoff. ``call_fn`` takes no args."""
     last_exc: Exception | None = None
     for attempt in range(_MAX_RETRIES + 1):
         _throttle()
         try:
-            return client.chat.completions.create(**call_kwargs)
+            return call_fn()
         except Exception as exc:
             last_exc = exc
             is_429 = _is_quota_429(exc)
@@ -200,6 +179,32 @@ def _chat_completion_with_retry(
                 continue
             raise
     raise LLMError(f"{provider_label} call failed after {_MAX_RETRIES} retries: {last_exc}")
+
+
+def _chat_completion_with_retry(
+    *,
+    provider_label: str,
+    client: Any,
+    model: str,
+    system_prompt: str,
+    user_content: str,
+    config_kwargs: dict[str, Any],
+):
+    response_format = config_kwargs.get("response_format")
+
+    call_kwargs: dict[str, Any] = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ],
+    }
+    if "temperature" in config_kwargs:
+        call_kwargs["temperature"] = config_kwargs["temperature"]
+    if response_format:
+        call_kwargs["response_format"] = response_format
+
+    return _with_retry(provider_label, lambda: client.chat.completions.create(**call_kwargs))
 
 
 # ---------------------------------------------------------------------------
@@ -239,6 +244,30 @@ def _generate_openai(
         system_prompt=system_prompt,
         user_content=user_content,
         config_kwargs=openai_kwargs,
+    )
+
+
+def _generate_openai_structured(system_prompt: str, user_content: str, model: str, schema: Any):
+    """Structured extraction via OpenAI's native Structured Outputs (strict schema).
+
+    Uses ``chat.completions.parse`` with the Pydantic model as ``response_format``
+    instead of describing the schema in the prompt + plain JSON mode: on
+    gpt-5-nano, the text-described-schema approach was observed returning the
+    JSON *schema itself* (its ``$defs``/``properties`` wrapper) instead of an
+    instance of it — a live failure on job extraction, not a hypothetical one.
+    Structured Outputs constrains decoding at the API level so that can't happen.
+    """
+    client = _get_openai_client()
+    return _with_retry(
+        "OpenAI",
+        lambda: client.chat.completions.parse(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content},
+            ],
+            response_format=schema,
+        ),
     )
 
 
@@ -351,12 +380,23 @@ def complete_json(
 ) -> dict[str, Any]:
     """Structured extraction — returns parsed JSON conforming to ``schema``.
 
-    For OpenAI/Groq: the JSON schema is appended to the system prompt and JSON
-    mode is enabled via response_format. For Gemini: response_schema constrains
-    decoding. In all cases the caller validates the result with
-    ``schema.model_validate()``.
+    For OpenAI: native Structured Outputs (chat.completions.parse) constrains
+    decoding to ``schema`` — see ``_generate_openai_structured`` for why this
+    matters. For Groq: the JSON schema is appended to the system prompt and
+    JSON mode is enabled via response_format. For Gemini: response_schema
+    constrains decoding. The caller validates the result with
+    ``schema.model_validate()`` regardless of provider.
     """
-    if LLM_PROVIDER in ("openai", "groq"):
+    if LLM_PROVIDER == "openai":
+        resp = _generate_openai_structured(system_prompt, user_content, OPENAI_MODEL_SMALL, schema)
+        message = resp.choices[0].message
+        if getattr(message, "refusal", None):
+            raise LLMError(f"OpenAI refused: {message.refusal}")
+        if message.parsed is None:
+            raise LLMError("Empty response from OpenAI (no parsed structured output)")
+        return message.parsed.model_dump(mode="json")
+
+    if LLM_PROVIDER == "groq":
         schema_json = json.dumps(schema.model_json_schema(), indent=2)
         enhanced_system = (
             system_prompt
@@ -366,19 +406,14 @@ def complete_json(
             "temperature": temperature,
             "response_format": {"type": "json_object"},
         }
-        if LLM_PROVIDER == "openai":
-            provider_label = "OpenAI"
-            resp = _generate_openai(enhanced_system, user_content, OPENAI_MODEL_SMALL, config_kwargs)
-        else:
-            provider_label = "Groq"
-            resp = _generate_groq(enhanced_system, user_content, config_kwargs)
+        resp = _generate_groq(enhanced_system, user_content, config_kwargs)
         text = (resp.choices[0].message.content or "").strip()
         if not text:
-            raise LLMError(f"Empty response from {provider_label} (no JSON text)")
+            raise LLMError("Empty response from Groq (no JSON text)")
         try:
             return json.loads(text)
         except json.JSONDecodeError as exc:
-            raise LLMError(f"{provider_label} returned non-JSON: {exc}: {text[:200]!r}") from exc
+            raise LLMError(f"Groq returned non-JSON: {exc}: {text[:200]!r}") from exc
 
     if LLM_PROVIDER == "gemini":
         resp = _generate_gemini(
