@@ -221,10 +221,18 @@ relationships set passive_deletes=True so deletes rely on DB-level cascade.
 
 
 
-🔄 CURRENT TASK: TBD
+🔄 CURRENT TASK: Extension revamp — Centrelink-ready application tracking
 
-Cover-letter generation is done (2026-06-27). Next task not yet defined — see
-docs/job-application-assistant-plan.md for the planned feature list.
+Full plan (read it in full before starting): docs/extension-revamp-plan.md.
+Summary: score-tiered card UI (neon blue ≥90 / green ≥75 / amber 60-74 /
+collapsed long-tail <60), idle-loop reprioritized so cover letters for
+existing good matches finish before new low-value jobs get extracted, a new
+"Mark Applied" + CSV export flow for Centrelink mutual-obligation reporting
+(new matches.applied_at column), a cleaner "cover letter ready" card state,
+a Quick-Apply floating panel injected on Seek job pages via content_script.js,
+and free (non-LLM) search-phrase suggestions mined from high-scoring job
+titles. Not started as of 2026-09-11 — nothing in the plan file is implemented
+yet.
 
 
 ✅ COMPLETED: Cover-letter generation (app/llm/cover_letter.py) — 2026-06-27
