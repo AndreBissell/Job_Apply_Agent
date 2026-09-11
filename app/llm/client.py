@@ -156,7 +156,6 @@ def _chat_completion_with_retry(
     user_content: str,
     config_kwargs: dict[str, Any],
 ):
-    temperature = config_kwargs.get("temperature", 0.7)
     response_format = config_kwargs.get("response_format")
 
     call_kwargs: dict[str, Any] = {
@@ -165,8 +164,9 @@ def _chat_completion_with_retry(
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_content},
         ],
-        "temperature": temperature,
     }
+    if "temperature" in config_kwargs:
+        call_kwargs["temperature"] = config_kwargs["temperature"]
     if response_format:
         call_kwargs["response_format"] = response_format
 
@@ -225,14 +225,20 @@ def _get_openai_client():
 def _generate_openai(
     system_prompt: str, user_content: str, model: str, config_kwargs: dict[str, Any]
 ):
-    """Single OpenAI chat completion with throttle + retry/backoff."""
+    """Single OpenAI chat completion with throttle + retry/backoff.
+
+    The GPT-5 family only supports the default temperature (1) — passing any
+    other value is a 400 ("Unsupported value... Only the default (1) value is
+    supported"). Drop it here rather than make every caller special-case it.
+    """
+    openai_kwargs = {k: v for k, v in config_kwargs.items() if k != "temperature"}
     return _chat_completion_with_retry(
         provider_label="OpenAI",
         client=_get_openai_client(),
         model=model,
         system_prompt=system_prompt,
         user_content=user_content,
-        config_kwargs=config_kwargs,
+        config_kwargs=openai_kwargs,
     )
 
 
