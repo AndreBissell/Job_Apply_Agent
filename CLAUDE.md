@@ -88,49 +88,66 @@ everything portable so a Postgres DATABASE_URL works with no code changes.
 
 🤖 LLM LAYER
 
-Active provider: Groq (console.groq.com — free tier).
-Model: llama-3.3-70b-versatile
-Free-tier quota: 30 RPM, ~14,400 RPD — far more headroom than Gemini.
+Active provider: OpenAI (platform.openai.com), paid — chosen 2026-09-11 after
+Groq deprecated its free-tier models (llama-3.1-8b-instant cut 2026-08-16,
+llama-3.3-70b-versatile went enterprise-only 2026-08-26) and Gemini's fallback
+default (gemini-2.0-flash) was retired 2026-06-01. Neither old default works
+anymore. Cost is negligible at this project's volume — a few cents/month even
+at dozens of applications — so the model choice below is optimised for quality
+where it matters (cover letters), not absolute cheapness everywhere.
 
-Used for BOTH job extraction AND cover-letter generation.
-Always read from GROQ_MODEL env var — never hardcode the model name.
+Split by task — two different models, not one:
+  Extraction + matching (complete_json) → OPENAI_MODEL_SMALL, default
+    gpt-5-nano. Structured JSON, low judgment required — the cheap tier is
+    genuinely fine here.
+  Cover letters (complete_text) → OPENAI_MODEL_LETTER, default gpt-5-mini.
+    This is the one output a human (an employer) actually reads, so it gets
+    the better model even though the dollar difference is trivial either way.
+
+⚠️ gpt-5-mini is scheduled for shutdown 2026-12-11, successor is gpt-5.6-terra
+(pricier tier — re-check current pricing/model landscape before migrating,
+don't assume today's numbers still hold). Swap is a single .env change
+(OPENAI_MODEL_LETTER), never a code change — see provider abstraction below.
 
 Provider abstraction: ALL LLM calls go through app/llm/client.py
-(complete_json for structured extraction; complete_text for prose). The provider
-and model live in exactly ONE place. Do not call the Groq/Gemini SDKs directly
-from extract.py / match.py / cover-letter code.
+(complete_json for structured extraction; complete_text for prose). Provider
+and models live in exactly ONE place. Do not call the OpenAI/Groq/Gemini SDKs
+directly from extract.py / match.py / cover-letter code.
 
 Temperature:
   Extraction → 0.1 (deterministic, consistent structure).
   Cover letters → higher (~0.7) for natural prose.
 
 Rate-limit handling: on HTTP 429, client.py backs off and retries (max 3).
-Groq provides a retry-after header; delays > 300s are treated as daily exhaustion
-→ DailyQuotaError. The idle processing loop (_processing_idle_loop in main.py)
-serialises all LLM work through a single-worker executor and backs off 3 minutes
-when extraction fails. Local throttle: LLM_RPM=8 (~7.5s spacing).
+OpenAI/Groq provide a retry-after header; delays > 300s are treated as daily
+exhaustion → DailyQuotaError. The idle processing loop (_processing_idle_loop
+in main.py) serialises all LLM work through a single-worker executor and backs
+off 3 minutes when extraction fails. Local throttle: LLM_RPM=8 (~7.5s spacing).
 
-TLS note (this machine): Groq uses httpx internally. The AV does TLS interception
-with a local CA cert that certifi doesn't trust. truststore's inject_into_ssl()
-doesn't affect httpcore's start_tls path, so the Groq httpx client is created
-with verify=False. Acceptable on a local dev machine with a trusted AV proxy.
+TLS note (this machine): OpenAI/Groq both use httpx internally. The AV does TLS
+interception with a local CA cert that certifi doesn't trust. truststore's
+inject_into_ssl() doesn't affect httpcore's start_tls path, so both httpx
+clients are created with verify=False. Acceptable on a local dev machine with a
+trusted AV proxy.
 
 Env vars (gitignored .env):
-  GROQ_API_KEY — from console.groq.com
-  GROQ_MODEL=llama-3.3-70b-versatile
-  LLM_PROVIDER=groq
+  OPENAI_API_KEY — from platform.openai.com/api-keys
+  OPENAI_MODEL_SMALL=gpt-5-nano
+  OPENAI_MODEL_LETTER=gpt-5-mini
+  LLM_PROVIDER=openai
   LLM_RPM=8
 
-Fallback: Gemini (google-genai SDK) is still wired in client.py.
-Switch: set LLM_PROVIDER=gemini + GEMINI_API_KEY + GEMINI_MODEL in .env.
-Gemini TLS works via truststore.inject_into_ssl() (urllib3 path, unlike httpx).
+Dormant fallbacks (kept working, not required): Groq (LLM_PROVIDER=groq,
+GROQ_API_KEY, GROQ_MODEL) and Gemini (LLM_PROVIDER=gemini, GEMINI_API_KEY,
+GEMINI_MODEL) are still wired in client.py. Neither has a currently-valid free
+default model as of 2026-09-11 — check current model availability before
+switching back. Gemini TLS works via truststore.inject_into_ssl() (urllib3
+path, unlike httpx).
 
-⚠️ Gemini quota history: gemini-2.5-flash-lite = 20 RPD (NOT per-minute).
-gemini-2.0-flash = 1,500 RPD but requires a proper AIza* AI Studio key, not
-AQ.* Cloud trial keys. Switched to Groq to avoid all of this.
-
-Data privacy: Groq free-tier prompts may be used for model training.
-Fine for public job-ad text; be aware for personal profile data.
+Data privacy: check OpenAI's current data-usage terms for API traffic before
+sending personal profile data (as of this writing, API inputs are not used for
+training by default, unlike the old Groq free tier — verify this hasn't
+changed if it matters for your use case).
 
 
 Repo layout (actual)

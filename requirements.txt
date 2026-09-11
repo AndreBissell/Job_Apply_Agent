@@ -15,10 +15,13 @@ httpx>=0.27  # used by tests / for hitting the API
 pytest>=8.0  # test runner
 
 # LLM layer: all calls go through app/llm/client.py; provider/model/key from .env.
-# Gemini (Google GenAI SDK) — kept for fallback / future use.
-google-genai>=1.0
-# Groq (OpenAI-compatible SDK) — active provider (llama-3.3-70b-versatile).
+# OpenAI — active provider (gpt-5-nano for extraction/matching, gpt-5-mini for
+# cover letters; see app/llm/client.py docstring).
+openai>=1.0
+# Groq (OpenAI-compatible SDK) — kept as a dormant fallback.
 groq>=0.9
+# Gemini (Google GenAI SDK) — kept as a dormant fallback.
+google-genai>=1.0
 # Makes Python's TLS use the OS trust store — needed where AV/corporate proxies
 # do TLS interception (the local CA is in the OS store, not certifi's bundle).
 truststore>=0.9
