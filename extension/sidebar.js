@@ -217,7 +217,7 @@ async function fillDetail(detailEl, job) {
 // ---------------------------------------------------------------------------
 // Scan Page (1-hop rule: links from a page the user opened, ≥5s apart, capped)
 // ---------------------------------------------------------------------------
-const MAX_SCAN_PAGES = 10;
+const MAX_SCAN_PAGES = 4;
 const SCAN_DELAY_MS = 5000;
 
 const scanBtn = document.getElementById('scan-btn');
