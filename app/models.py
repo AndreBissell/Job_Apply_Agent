@@ -343,6 +343,23 @@ class JobListing(Base):
     extracted_at: Mapped[datetime.datetime | None] = mapped_column(
         DateTime(timezone=True)
     )
+    # Stamped by app/llm/quickscreen.py's cheap pre-extraction pass, on both
+    # outcomes. quick_screen_score is 0-100 on a real screen; NULL with
+    # quick_screen_at set means the screen errored and failed open (job still
+    # proceeds to extraction) rather than a genuine low score.
+    quick_screen_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    quick_screen_score: Mapped[int | None] = mapped_column(Integer)
+    # Stamped opportunistically when the extension revisits this job's detail
+    # page and finds no description where one was previously captured — see
+    # content_script.js::main()'s waitFor-timeout branch. Never set proactively
+    # (the Seek Access Policy forbids backend/agent-initiated requests to Seek),
+    # so this only reflects listings the user's own browsing happened to
+    # revisit, not a full sweep.
+    expired_detected_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
     date_scraped: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -417,6 +434,19 @@ class Match(Base):
     gaps: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(
         Text, nullable=False, server_default="new"
+    )
+    # Stamped when status transitions to 'applied' (idempotent — re-marking
+    # applied does not reset it). Nullable = never applied.
+    applied_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    # Durable Centrelink evidence, set by POST /jobs/{id}/screenshot — see
+    # app/api/main.py. screenshot_path is relative to the app dir (served under
+    # /screenshots); overwritten (old file deleted) on repeat capture, so it's
+    # always the latest screenshot for this match, not a history of all of them.
+    screenshot_path: Mapped[str | None] = mapped_column(Text)
+    screenshot_taken_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True)
     )
     cv_used_id: Mapped[int | None] = mapped_column(
         BIG_INT_FK,

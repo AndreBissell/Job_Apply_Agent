@@ -265,6 +265,9 @@ CREATE TABLE job_listings (
     key_responsibilities        TEXT,                   -- LLM-extracted, JSON array of short phrases
     summary                     TEXT,                   -- LLM-extracted, 2-3 neutral sentences
     extracted_at                TIMESTAMPTZ,            -- set when LLM extraction succeeded (NULL = pending)
+    quick_screen_at             TIMESTAMPTZ,            -- set after the pre-extraction screen runs (NULL = pending)
+    quick_screen_score          INTEGER,                -- 0-100 screen verdict; NULL + quick_screen_at set = screen errored, failed open
+    expired_detected_at         TIMESTAMPTZ,            -- set opportunistically when a revisit finds the listing gone (NULL = not observed closed)
     date_scraped                TIMESTAMPTZ NOT NULL DEFAULT now(),
     created_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (source, source_job_id)                      -- dedup key
@@ -278,6 +281,29 @@ marker: NULL means "not yet extracted", and the batch runner
 (`scripts/run_extraction.py`) processes only NULL-marked rows unless `--force`.
 The list-valued fields are stored as JSON **text** (portable across SQLite and
 Postgres); fine-grained skills go to `job_skills`, not into these columns.
+
+`quick_screen_at`/`quick_screen_score` are written by `app/llm/quickscreen.py`,
+a cheap pass that runs **before** extraction to skip the two expensive LLM calls
+(extraction + matching) for jobs that are obviously the wrong field. It's
+deliberately conservative (see that module's docstring) — a low score only skips
+extraction when the mismatch is clear-cut; anything uncertain proceeds normally.
+A skip writes a terminal low-score `matches` row directly and leaves `extracted_at`
+NULL forever, so a skipped job never re-enters extraction on its own; the only way
+back is a manual `/jobs/{id}/regenerate`, which bypasses the screen entirely. If
+the screen itself errors (LLM failure, not a skip verdict), it fails open:
+`quick_screen_at` is stamped but `quick_screen_score` stays NULL, and the job
+proceeds to extraction as if nothing had run — that NULL-with-timestamp state is
+how to tell "screen errored" apart from "screen genuinely scored low."
+
+`expired_detected_at` is set by `PATCH /jobs/{id}/expired`, called from
+`extension/content_script.js` when a revisit to a job's detail page finds no
+description where one was previously captured — the only Seek Access Policy
+-compliant signal available, since the backend may never check a listing's
+status on its own. It's inherently opportunistic (only jobs the user's browser
+happens to revisit ever get checked), never a full sweep. `GET /jobs` excludes
+anything with this set from its default (no-`status`) response; `status`-filtered
+queries (e.g. the Applied tab) ignore it, since a listing closing after the user
+already applied doesn't invalidate that application as Centrelink evidence.
 
 ---
 
@@ -309,22 +335,40 @@ The per-user relevance layer linking a profile to a job. `score` (0-100) is the
 **single source of truth**; tiers (strong / medium / reach) are *derived at
 display time* so you can switch between top-N and threshold strategies - or let
 the user tune them - without recomputing. `reasoning` and `gaps` are the LLM's
-explanation and flagged shortfalls. `status` tracks the application lifecycle
-(including the "not interested" dismissal).
+explanation and flagged shortfalls. `status` tracks the application lifecycle:
+`new -> shortlisted -> applied -> interviewing -> rejected / withdrawn`. Only
+`applied` has dedicated backend support today (`PATCH /jobs/{id}/status`,
+which stamps `applied_at`); the rest of the vocabulary is free bookkeeping for
+later. `applied_at` exists specifically for Centrelink mutual-obligation
+reporting (CSV export of what was applied to and when) - it is set once, the
+first time `status` transitions to `'applied'`, and is never reset by a
+repeat "mark applied" call.
+
+`screenshot_path`/`screenshot_taken_at` are further Centrelink evidence: a
+screenshot of the actual applied-to page, captured client-side by the extension
+(`chrome.tabs.captureVisibleTab`) and persisted server-side via
+`POST /jobs/{id}/screenshot` so it's durable and exportable rather than living
+only in the user's Downloads folder. `screenshot_path` is relative to the app
+directory, served under `/screenshots`; a repeat capture deletes the previous
+file and overwrites both columns - one screenshot per match, latest wins, not a
+history of every capture.
 
 ```sql
 CREATE TABLE matches (
-    id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    user_id     BIGINT      NOT NULL REFERENCES profiles(id)     ON DELETE CASCADE,
-    job_id      BIGINT      NOT NULL REFERENCES job_listings(id) ON DELETE CASCADE,
-    score       NUMERIC,                     -- 0-100, source of truth
-    reasoning   TEXT,                        -- LLM: why it matched
-    gaps        TEXT,                        -- LLM: requirements not clearly met
-    status      TEXT        NOT NULL DEFAULT 'new',
-                -- 'new','shortlisted','applied','not_interested','rejected'
-    cv_used_id  BIGINT      REFERENCES user_cvs(id) ON DELETE SET NULL,  -- which CV went out (optional)
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    id                   BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    user_id              BIGINT      NOT NULL REFERENCES profiles(id)     ON DELETE CASCADE,
+    job_id               BIGINT      NOT NULL REFERENCES job_listings(id) ON DELETE CASCADE,
+    score                NUMERIC,                     -- 0-100, source of truth
+    reasoning            TEXT,                        -- LLM: why it matched
+    gaps                 TEXT,                        -- LLM: requirements not clearly met
+    status               TEXT        NOT NULL DEFAULT 'new',
+                -- 'new','shortlisted','applied','interviewing','rejected','withdrawn'
+    screenshot_path      TEXT,                        -- relative path under /screenshots (NULL = none captured)
+    screenshot_taken_at  TIMESTAMPTZ,                 -- set on each (re)capture
+    applied_at           TIMESTAMPTZ,                 -- set once, on first transition to 'applied'
+    cv_used_id           BIGINT      REFERENCES user_cvs(id) ON DELETE SET NULL,  -- which CV went out (optional)
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (user_id, job_id)                 -- one match row per user-job pair
 );
 ```
@@ -391,22 +435,40 @@ CREATE INDEX idx_matches_status         ON matches(status);
    listings, and upserts into `job_listings` keyed on `(source, source_job_id)`.
    Extracted required skills go into `job_skills` tagged hard/soft.
 
-3. **Pre-filter.** Cheap keyword check: do the listing's **hard** `job_skills`
-   intersect the user's `skills`? Non-matches are dropped before any LLM call.
+3. **Quick screen.** Before extraction, a cheap LLM pass (`app/llm/quickscreen.py`)
+   sees only the title/company/location and a short excerpt, and stamps
+   `quick_screen_at`/`quick_screen_score`. A clear-cut mismatch writes a terminal
+   low-score `matches` row and stops here -> `extracted_at` stays NULL forever.
+   Anything else (including uncertainty) proceeds to extraction.
 
-4. **Score.** Survivors go to the LLM with the user's profile + `raw_description`.
+4. **Pre-filter.** Cheap keyword check: do the listing's **hard** `job_skills`
+   intersect the user's `skills`? This is context injected into the scoring
+   prompt, not a gate — every screened-through, extracted job still gets a full
+   LLM score (see `app/llm/prefilter.py`).
+
+5. **Score.** Extracted jobs go to the LLM with the user's profile + `raw_description`.
    It returns a score, reasoning, and gaps -> written to `matches`
    (`UNIQUE (user_id, job_id)` keeps it idempotent on re-runs).
 
-5. **Generate.** For above-threshold matches, a cover letter is produced (eagerly
+6. **Generate.** For above-threshold matches, a cover letter is produced (eagerly
    for the strong tier, lazily on click for the rest) -> `cover_letters`
    (`status = 'draft'`). It pulls evidence by walking `experience_skills` for the
    skills the job wants.
 
-6. **Review & apply.** The dashboard reads `matches` ordered by `score`, derives
+7. **Review & apply.** The dashboard reads `matches` ordered by `score`, derives
    tiers, and shows each job's `url`, reasoning, the editable cover letter, and the
    default `user_cvs` entry. The user edits (`status -> 'edited'`), applies on Seek,
    marks the match `applied` (optionally recording `cv_used_id`).
+
+8. **Expire (opportunistic).** There's no compliant way to poll Seek for whether
+   a listing is still live (see the Seek Access Policy in CLAUDE.md — no
+   backend-initiated requests). Instead, if the user's own browsing revisits a
+   job's detail page and its description is now missing where one was
+   previously captured, the extension calls `PATCH /jobs/{id}/expired`, which
+   stamps `job_listings.expired_detected_at`. The default (no-`status`) job
+   listing query then excludes it, so a closed listing stops appearing as
+   something to act on — while jobs already marked `applied` stay visible
+   regardless, since they remain valid Centrelink evidence.
 
 This walkthrough touches every table, which is a good sign the model is complete
 for the core pipeline.

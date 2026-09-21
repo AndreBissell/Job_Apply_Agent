@@ -32,7 +32,10 @@ _SYSTEM_PROMPT = (
     "Write a compelling, tailored cover letter in first person based ONLY on evidence "
     "from the candidate profile supplied — never invent or embellish experience. "
     "3–4 concise paragraphs, natural professional prose. No placeholders, no subject "
-    "line, no date headers — just the body of the letter."
+    "line, no date headers — just the body of the letter, ending with a one-line "
+    "sign-off: 'Sincerely, {name}' using the candidate's name as given. "
+    "If the candidate is a recent or current graduate, foreground their degree and "
+    "university by name in the opening paragraph."
 )
 
 

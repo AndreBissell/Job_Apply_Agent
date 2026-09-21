@@ -4,6 +4,22 @@
 const BACKEND = 'http://localhost:8000';
 const PROFILE_ID = 1;
 
+// Score tiers (docs/extension-revamp-plan.md §1). GREEN_MIN reuses the same
+// number as app/llm/cover_letter.py's THRESHOLD deliberately — "green or
+// better" and "eligible for an auto-generated cover letter" are always the
+// same set of jobs.
+const BLUE_MIN = 90;
+const GREEN_MIN = 75;
+const AMBER_MIN = 60;
+
+function tierOf(score) {
+  if (score == null) return 'amber';
+  if (score >= BLUE_MIN) return 'blue';
+  if (score >= GREEN_MIN) return 'green';
+  if (score >= AMBER_MIN) return 'amber';
+  return 'hidden';
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -28,6 +44,7 @@ function truncate(str, n) {
 // ---------------------------------------------------------------------------
 const tabBtns = document.querySelectorAll('nav#tabs .tab');
 const jobsSection = document.getElementById('jobs-section');
+const appliedSection = document.getElementById('applied-section');
 const profileSection = document.getElementById('profile-section');
 const hdrJobsBtns = document.getElementById('hdr-jobs-btns');
 let profileLoaded = false;
@@ -38,9 +55,11 @@ tabBtns.forEach(btn => {
     btn.classList.add('active');
     const tab = btn.dataset.tab;
     jobsSection.hidden = tab !== 'jobs';
+    appliedSection.hidden = tab !== 'applied';
     profileSection.hidden = tab !== 'profile';
     hdrJobsBtns.style.display = tab === 'jobs' ? '' : 'none';
     if (tab === 'profile' && !profileLoaded) loadProfile();
+    if (tab === 'applied') loadApplied(); // always refresh — cheap query, keeps it current
   });
 });
 
@@ -49,6 +68,18 @@ tabBtns.forEach(btn => {
 // ---------------------------------------------------------------------------
 const jobStatusEl = document.getElementById('job-status');
 const jobListEl = document.getElementById('job-list');
+
+// A plain heading row inside #job-list, splitting the flat list into the two
+// groups that actually matter for "what can I act on right now": jobs with a
+// cover letter ready to copy and submit, vs everything else still waiting on
+// one. Score tier still colors each individual card within its group (see
+// renderJob) — this is the coarser, primary grouping on top of that.
+function renderSectionHeader(text, kind) {
+  const li = document.createElement('li');
+  li.className = `section-header ${kind}`;
+  li.textContent = text;
+  return li;
+}
 
 async function loadJobs() {
   jobStatusEl.textContent = 'Loading…';
@@ -66,12 +97,76 @@ async function loadJobs() {
     return;
   }
   jobStatusEl.textContent = `${jobs.length} matched job(s).`;
-  for (const job of jobs) jobListEl.appendChild(renderJob(job));
+
+  const ready = [];
+  const waiting = [];
+  const longTail = [];
+  for (const job of jobs) {
+    const tier = tierOf(job.score);
+    if (coverLetterState(job) === 'ready') {
+      ready.push(job); // a cover letter exists regardless of score/tier — always "ready"
+    } else if (tier === 'hidden') {
+      longTail.push(job);
+    } else {
+      waiting.push(job);
+    }
+  }
+
+  if (ready.length) {
+    jobListEl.appendChild(renderSectionHeader(`✅ Ready to Apply (${ready.length})`, 'ready'));
+    for (const job of ready) jobListEl.appendChild(renderJob(job, tierOf(job.score)));
+  }
+  if (waiting.length || longTail.length) {
+    jobListEl.appendChild(renderSectionHeader(`⏳ Waiting on Cover Letter (${waiting.length + longTail.length})`, 'waiting'));
+    for (const job of waiting) jobListEl.appendChild(renderJob(job, tierOf(job.score)));
+    if (longTail.length) jobListEl.appendChild(renderFold(longTail));
+  }
+
+  maybeShowSuggestions();
 }
 
-function renderJob(job) {
+// Long-tail (<60) jobs aren't rendered individually up front — just a count.
+// The real rows are built lazily on first click (so a backlog of 50 low
+// scorers doesn't cost render time until asked for); after that, the fold
+// bar just toggles their visibility back and forth.
+function renderFold(jobs) {
+  const li = document.createElement('li');
+  li.className = 'fold';
+  const showText = `${jobs.length} other role${jobs.length === 1 ? '' : 's'} — click to show`;
+  const hideText = `▲ Hide ${jobs.length} other role${jobs.length === 1 ? '' : 's'}`;
+  li.textContent = showText;
+
+  let rows = null;
+  let expanded = false;
+
+  li.addEventListener('click', () => {
+    if (!rows) {
+      rows = jobs.map(job => renderJob(job, 'amber'));
+      for (const row of rows) jobListEl.insertBefore(row, li);
+    }
+    expanded = !expanded;
+    for (const row of rows) row.style.display = expanded ? '' : 'none';
+    li.textContent = expanded ? hideText : showText;
+  });
+
+  return li;
+}
+
+// Cover-letter card state (docs/extension-revamp-plan.md §5.1):
+//  - 'ready'   letter generated, has_cover_letter is true
+//  - 'pending' score >= GREEN_MIN, idle loop hasn't reached it yet
+//  - 'none'    below GREEN_MIN and no letter — no collapsed-card affordance;
+//              a manual force-generate lives only in the expanded detail view
+function coverLetterState(job) {
+  if (job.has_cover_letter) return 'ready';
+  if (job.score != null && job.score >= GREEN_MIN) return 'pending';
+  return 'none';
+}
+
+function renderJob(job, tier) {
   const li = document.createElement('li');
   li.dataset.jobId = job.job_id;
+  if (tier) li.dataset.tier = tier;
 
   const row = document.createElement('div');
   row.className = 'job-row';
@@ -88,38 +183,45 @@ function renderJob(job) {
     row.appendChild(score);
   }
 
-  const clBtn = document.createElement('button');
-  clBtn.className = 'del-btn';
-  clBtn.title = 'Generate cover letter';
-  clBtn.textContent = '✚';
-  clBtn.addEventListener('click', async (e) => {
+  const clState = coverLetterState(job);
+  if (clState === 'ready') {
+    const badge = document.createElement('span');
+    badge.className = 'cl-badge ready';
+    badge.textContent = '✅ Ready';
+    row.appendChild(badge);
+  } else if (clState === 'pending') {
+    const badge = document.createElement('span');
+    badge.className = 'cl-badge pending';
+    badge.textContent = 'Cover letter pending…';
+    row.appendChild(badge);
+  }
+
+  const applyBtn = document.createElement('button');
+  applyBtn.className = 'apply-btn' + (job.status === 'applied' ? ' applied' : '');
+  applyBtn.title = job.status === 'applied' ? 'Applied' : 'Mark Applied';
+  applyBtn.textContent = job.status === 'applied' ? '✓ Applied' : 'Mark Applied';
+  applyBtn.addEventListener('click', async (e) => {
     e.stopPropagation();
-    clBtn.textContent = '…';
-    clBtn.disabled = true;
+    if (job.status === 'applied') return;
+    applyBtn.disabled = true;
     try {
-      const res = await fetch(`${BACKEND}/jobs/${job.job_id}/regenerate`, { method: 'POST' });
-      if (!res.ok) throw new Error();
-      pollForCoverLetter(job.job_id, (content) => {
-        clBtn.textContent = '✔';
-        clBtn.disabled = false;
-        // If the detail panel is open, update it in place
-        if (detailEl) {
-          const blurb = detailEl.querySelector('.cl-blurb');
-          if (blurb) {
-            blurb.style.color = '';
-            blurb.textContent = content;
-          }
-        }
-      }, () => {
-        clBtn.textContent = '✚';
-        clBtn.disabled = false;
+      const res = await fetch(`${BACKEND}/jobs/${job.job_id}/status?profile_id=${PROFILE_ID}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'applied' }),
       });
+      if (!res.ok) throw new Error();
+      job.status = 'applied';
+      applyBtn.className = 'apply-btn applied';
+      applyBtn.textContent = '✓ Applied';
+      applyBtn.title = 'Applied';
     } catch {
-      clBtn.textContent = '✖';
-      setTimeout(() => { clBtn.textContent = '✚'; clBtn.disabled = false; }, 2000);
+      alert('Could not mark applied — is the backend running?');
+    } finally {
+      applyBtn.disabled = false;
     }
   });
-  row.appendChild(clBtn);
+  row.appendChild(applyBtn);
 
   const delBtn = document.createElement('button');
   delBtn.className = 'del-btn';
@@ -149,10 +251,30 @@ function renderJob(job) {
   meta.textContent = metaParts.join(' · ') || '—';
   li.appendChild(meta);
 
+  // Blue-tier cards show a reasoning snippet + top skill chips inline, no
+  // click needed — everything else stays click-to-expand as before.
+  if (tier === 'blue' && (job.reasoning || job.top_skills?.length)) {
+    const preview = document.createElement('div');
+    preview.className = 'job-preview';
+    if (job.reasoning) preview.appendChild(document.createTextNode(truncate(job.reasoning, 90)));
+    if (job.top_skills?.length) {
+      const chips = document.createElement('div');
+      chips.className = 'chips';
+      for (const skill of job.top_skills.slice(0, 3)) {
+        const chip = document.createElement('span');
+        chip.className = 'chip';
+        chip.textContent = skill;
+        chips.appendChild(chip);
+      }
+      preview.appendChild(chips);
+    }
+    li.appendChild(preview);
+  }
+
   let expanded = false;
   let detailEl = null;
   li.addEventListener('click', async (ev) => {
-    if (ev.target.tagName === 'A') return;
+    if (ev.target.tagName === 'A' || ev.target.tagName === 'TEXTAREA') return;
     expanded = !expanded;
     if (!detailEl) {
       detailEl = document.createElement('div');
@@ -165,22 +287,6 @@ function renderJob(job) {
   });
 
   return li;
-}
-
-async function pollForCoverLetter(jobId, onFound, onTimeout) {
-  const MAX_ATTEMPTS = 24; // ~2 minutes at 5s intervals
-  for (let i = 0; i < MAX_ATTEMPTS; i++) {
-    await sleep(5000);
-    try {
-      const res = await fetch(`${BACKEND}/jobs/${jobId}?profile_id=${PROFILE_ID}`);
-      const data = await res.json();
-      if (data.cover_letter?.generated_content) {
-        onFound(data.cover_letter.generated_content);
-        return;
-      }
-    } catch { /* ignore transient errors, keep polling */ }
-  }
-  onTimeout();
 }
 
 async function fillDetail(detailEl, job) {
@@ -198,27 +304,244 @@ async function fillDetail(detailEl, job) {
     });
     detailEl.appendChild(link);
 
-    const cl = data.cover_letter?.generated_content;
-    const blurb = document.createElement('div');
-    blurb.className = 'cl-blurb';
-    blurb.style.marginTop = '6px';
-    if (cl) {
-      blurb.textContent = cl;
+    const cl = data.cover_letter;
+    if (cl?.generated_content) {
+      renderCoverLetterEditor(detailEl, job.job_id, cl);
+    } else if (job.score != null && job.score >= GREEN_MIN) {
+      const note = document.createElement('div');
+      note.style.cssText = 'margin-top:6px;color:#6b7280;';
+      note.textContent = 'Cover letter pending — the idle loop will generate it shortly.';
+      detailEl.appendChild(note);
     } else {
-      blurb.style.color = '#6b7280';
-      blurb.textContent = 'No cover letter yet.';
+      const forceBtn = document.createElement('button');
+      forceBtn.className = 'btn btn-sm';
+      forceBtn.style.marginTop = '6px';
+      forceBtn.textContent = 'Generate cover letter anyway';
+      forceBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        forceBtn.disabled = true;
+        forceBtn.textContent = 'Generating…';
+        try {
+          const r = await fetch(`${BACKEND}/jobs/${job.job_id}/regenerate?profile_id=${PROFILE_ID}`, { method: 'POST' });
+          if (!r.ok) throw new Error();
+          forceBtn.textContent = 'Queued — will appear when ready.';
+        } catch {
+          forceBtn.textContent = 'Generate cover letter anyway';
+          forceBtn.disabled = false;
+        }
+      });
+      detailEl.appendChild(forceBtn);
     }
-    detailEl.appendChild(blurb);
   } catch {
     detailEl.textContent = 'Could not load detail.';
   }
 }
 
+// Cover-letter editor: Copy + editable textarea that saves via
+// PATCH /jobs/{id}/cover-letter (shared with the Quick-Apply overlay on Seek).
+function renderCoverLetterEditor(container, jobId, cl) {
+  const wrap = document.createElement('div');
+  wrap.style.marginTop = '6px';
+
+  const badge = document.createElement('div');
+  badge.style.cssText = 'color:#059669;font-weight:600;font-size:11px;margin-bottom:4px;';
+  badge.textContent = '✅ Cover letter ready';
+  wrap.appendChild(badge);
+
+  const textarea = document.createElement('textarea');
+  textarea.value = cl.edited_content || cl.generated_content || '';
+  wrap.appendChild(textarea);
+
+  const actions = document.createElement('div');
+  actions.className = 'cl-actions';
+
+  const copyBtn = document.createElement('button');
+  copyBtn.className = 'btn btn-sm';
+  copyBtn.textContent = 'Copy';
+  copyBtn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(textarea.value);
+      copyBtn.textContent = 'Copied ✓';
+      setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);
+    } catch { /* clipboard permission denied — ignore */ }
+  });
+  actions.appendChild(copyBtn);
+
+  const saveBtn = document.createElement('button');
+  saveBtn.className = 'btn btn-sm';
+  saveBtn.textContent = 'Save edits';
+  saveBtn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving…';
+    try {
+      const res = await fetch(`${BACKEND}/jobs/${jobId}/cover-letter?profile_id=${PROFILE_ID}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ edited_content: textarea.value }),
+      });
+      if (!res.ok) throw new Error();
+      saveBtn.textContent = 'Saved ✓';
+    } catch {
+      saveBtn.textContent = 'Save failed';
+    } finally {
+      setTimeout(() => { saveBtn.textContent = 'Save edits'; saveBtn.disabled = false; }, 1500);
+    }
+  });
+  actions.appendChild(saveBtn);
+
+  wrap.appendChild(actions);
+  container.appendChild(wrap);
+}
+
+// ---------------------------------------------------------------------------
+// Applied tab — Centrelink mutual-obligation reporting
+// ---------------------------------------------------------------------------
+const appliedStatusEl = document.getElementById('applied-status');
+const appliedListEl = document.getElementById('applied-list');
+let lastAppliedJobs = [];
+
+async function loadApplied() {
+  appliedStatusEl.textContent = 'Loading…';
+  appliedListEl.innerHTML = '';
+  let jobs;
+  try {
+    const res = await fetch(`${BACKEND}/jobs?profile_id=${PROFILE_ID}&min_score=0&status=applied`);
+    jobs = await res.json();
+  } catch {
+    appliedStatusEl.textContent = 'Backend not running — start run_api.py.';
+    return;
+  }
+  lastAppliedJobs = Array.isArray(jobs) ? jobs : [];
+  if (!lastAppliedJobs.length) {
+    appliedStatusEl.textContent = 'No applications logged yet. Use "Mark Applied" on a job in the Jobs tab.';
+    return;
+  }
+  appliedStatusEl.textContent = `${lastAppliedJobs.length} application(s).`;
+  for (const job of lastAppliedJobs) appliedListEl.appendChild(renderAppliedRow(job));
+}
+
+function renderAppliedRow(job) {
+  const li = document.createElement('li');
+  const row = document.createElement('div');
+  row.className = 'job-row';
+
+  const title = document.createElement('span');
+  title.className = 'job-title';
+  title.textContent = job.title || '(untitled)';
+  row.appendChild(title);
+
+  if (job.applied_at) {
+    const date = document.createElement('span');
+    date.className = 'applied-date';
+    date.textContent = new Date(job.applied_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' });
+    row.appendChild(date);
+  }
+  li.appendChild(row);
+
+  const meta = document.createElement('div');
+  meta.className = 'job-meta';
+  meta.textContent = [job.company, job.location].filter(Boolean).join(' · ') || '—';
+  li.appendChild(meta);
+
+  li.addEventListener('click', () => chrome.tabs.create({ url: job.url }));
+  return li;
+}
+
+function csvEscape(val) {
+  const s = String(val ?? '');
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+document.getElementById('export-applied-btn').addEventListener('click', () => {
+  const rows = [['Date Applied', 'Job Title', 'Employer', 'Location', 'Source URL', 'Screenshot Evidence']];
+  for (const job of lastAppliedJobs) {
+    rows.push([
+      job.applied_at ? job.applied_at.slice(0, 10) : '',
+      job.title || '',
+      job.company || '',
+      job.location || '',
+      job.url || '',
+      job.screenshot_taken_at ? job.screenshot_taken_at.slice(0, 10) : 'No',
+    ]);
+  }
+  const csv = rows.map(r => r.map(csvEscape).join(',')).join('\r\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `applied-jobs-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+});
+
+// ---------------------------------------------------------------------------
+// Resize hint — dismissible one-time nudge that the panel edge is draggable
+// ---------------------------------------------------------------------------
+const resizeHintEl = document.getElementById('resize-hint');
+if (localStorage.getItem('resizeHintDismissed')) {
+  resizeHintEl.hidden = true;
+}
+document.getElementById('resize-hint-close').addEventListener('click', () => {
+  localStorage.setItem('resizeHintDismissed', '1');
+  resizeHintEl.hidden = true;
+});
+
+// ---------------------------------------------------------------------------
+// Suggested searches — free (non-LLM) phrase mining from good matches (§7)
+// ---------------------------------------------------------------------------
+const SUGGESTION_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+async function maybeShowSuggestions() {
+  const banner = document.getElementById('suggestion-banner');
+  try {
+    const stored = await chrome.storage.local.get('suggestionsDismissedUntil');
+    if (stored.suggestionsDismissedUntil && Date.now() < stored.suggestionsDismissedUntil) return;
+
+    const res = await fetch(`${BACKEND}/jobs/suggested-searches?profile_id=${PROFILE_ID}`);
+    if (!res.ok) return;
+    const { suggestions } = await res.json();
+    if (!suggestions?.length) return;
+
+    const linksEl = document.getElementById('sugg-links');
+    linksEl.innerHTML = '';
+    suggestions.forEach((phrase, i) => {
+      const a = document.createElement('a');
+      a.textContent = `"${phrase}"`;
+      a.addEventListener('click', () => {
+        const slug = phrase.toLowerCase().trim().replace(/\s+/g, '-') + '-jobs';
+        chrome.tabs.create({ url: `https://au.seek.com/${slug}` }); // normal user-initiated open, not a fetch — still 0-hop
+      });
+      linksEl.appendChild(a);
+      if (i < suggestions.length - 1) linksEl.appendChild(document.createTextNode(' · '));
+    });
+    banner.hidden = false;
+  } catch { /* suggestions are a nicety — fail silently */ }
+}
+
+document.getElementById('sugg-close').addEventListener('click', async () => {
+  document.getElementById('suggestion-banner').hidden = true;
+  await chrome.storage.local.set({ suggestionsDismissedUntil: Date.now() + SUGGESTION_COOLDOWN_MS });
+});
+
 // ---------------------------------------------------------------------------
 // Scan Page (1-hop rule: links from a page the user opened, ≥5s apart, capped)
 // ---------------------------------------------------------------------------
-const MAX_SCAN_PAGES = 4;
+// MAX_SCAN_PAGES is now mostly a safety ceiling, not the primary cost control —
+// WEAK_STREAK_LIMIT below does the real work of cutting a bad search short.
+const MAX_SCAN_PAGES = 10;
 const SCAN_DELAY_MS = 5000;
+
+// Early-exit: if this many consecutive scraped jobs come back weak on the
+// cheap quick-screen (below WEAK_SCORE_THRESHOLD, same 0-100 scale as a full
+// match), stop opening further links on this page — this search query isn't
+// yielding relevant results, so paying to scrape (and later extract+match)
+// more of it is wasted. Quick-screen is used here specifically because it's
+// cheap enough to plausibly keep pace with scraping a new tab every 5s; the
+// full match score requires extraction first and can take far longer per job.
+const WEAK_SCORE_THRESHOLD = 50;
+const WEAK_STREAK_LIMIT = 3;
 
 const scanBtn = document.getElementById('scan-btn');
 const scanLogEl = document.getElementById('scanlog');
@@ -282,6 +605,9 @@ async function injectFn(tabId, func) {
   return result;
 }
 
+// Returns the ingested listing's internal job_id on success, or null on
+// failure — the caller needs the id to kick off a quick-screen check right
+// after scraping (see scanPage's early-exit loop below).
 async function ingestListing(listing) {
   try {
     const res = await fetch(`${BACKEND}/ingest`, {
@@ -289,8 +615,10 @@ async function ingestListing(listing) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ listings: [listing], profile_id: PROFILE_ID }),
     });
-    return res.ok;
-  } catch { return false; }
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.job_ids?.[0] ?? null;
+  } catch { return null; }
 }
 
 async function scanPage() {
@@ -329,37 +657,90 @@ async function scanPage() {
 
     if (skipped) scanLog(`Skipped ${skipped} already-captured job(s).`);
     if (!urls.length) { scanLog('All jobs on this page already captured.'); return; }
-    scanLog(`Found ${newUrls.length} new link(s); scanning ${urls.length} (5s apart)…`);
+    scanLog(`Found ${newUrls.length} new link(s); scraping up to ${urls.length} (5s apart), screening as we go…`);
 
-    for (let i = 0; i < urls.length; i++) {
-      const label = `(${i + 1}/${urls.length})`;
-      scanLog(`${label} opening job page…`);
-      let bgTab;
-      try {
-        bgTab = await chrome.tabs.create({ url: urls[i], active: false });
-        await waitForTabComplete(bgTab.id, 15000);
-      } catch (e) {
-        scanLog(`${label} could not open tab: ${e.message}`);
-        if (bgTab) await chrome.tabs.remove(bgTab.id).catch(() => {});
-        continue;
+    // Scraping (the "producer") and quick-screening (the "consumer") run
+    // concurrently rather than one-at-a-time: scraping doesn't wait on a job's
+    // screen result before opening the next tab, since screening (an LLM call)
+    // is far slower than the 5s scrape pacing. The consumer works through
+    // scraped jobs strictly in scrape order (so "3 in a row" means what it
+    // sounds like) and can fall behind — that's expected. When it sees
+    // WEAK_STREAK_LIMIT consecutive weak scores, it flips `abort`, which the
+    // producer checks before opening its next tab.
+    const screenQueue = [];   // { label, jobId } pushed by the producer
+    let producing = true;     // producer still has links left to try
+    let abort = false;        // consumer decided to stop this search early
+
+    async function produce() {
+      for (let i = 0; i < urls.length; i++) {
+        if (abort) { scanLog('Stopping further scraping — search abandoned early.'); break; }
+        const label = `(${i + 1}/${urls.length})`;
+        scanLog(`${label} opening job page…`);
+        let bgTab;
+        try {
+          bgTab = await chrome.tabs.create({ url: urls[i], active: false });
+          await waitForTabComplete(bgTab.id, 15000);
+        } catch (e) {
+          scanLog(`${label} could not open tab: ${e.message}`);
+          if (bgTab) await chrome.tabs.remove(bgTab.id).catch(() => {});
+          continue;
+        }
+
+        let payload = null;
+        try { payload = await injectFn(bgTab.id, pageScrapeDetail); }
+        catch (e) { scanLog(`${label} could not scrape: ${e.message}`); }
+        finally { await chrome.tabs.remove(bgTab.id).catch(() => {}); }
+
+        if (payload?.source_job_id) {
+          const jobId = await ingestListing(payload);
+          const desc = payload.raw_description ? `${payload.raw_description.length} chars` : 'NO DESCRIPTION';
+          if (jobId != null) {
+            scanLog(`${label} captured ✓ (${desc})`);
+            screenQueue.push({ label, jobId });
+          } else {
+            scanLog(`${label} backend error ✗`);
+          }
+        } else {
+          scanLog(`${label} no data scraped ✗`);
+        }
+        if (i < urls.length - 1) await sleep(SCAN_DELAY_MS);
       }
-
-      let payload = null;
-      try { payload = await injectFn(bgTab.id, pageScrapeDetail); }
-      catch (e) { scanLog(`${label} could not scrape: ${e.message}`); }
-      finally { await chrome.tabs.remove(bgTab.id).catch(() => {}); }
-
-      if (payload?.source_job_id) {
-        const ok = await ingestListing(payload);
-        const desc = payload.raw_description ? `${payload.raw_description.length} chars` : 'NO DESCRIPTION';
-        scanLog(ok ? `${label} captured ✓ (${desc})` : `${label} backend error ✗`);
-      } else {
-        scanLog(`${label} no data scraped ✗`);
-      }
-      if (i < urls.length - 1) await sleep(SCAN_DELAY_MS);
+      producing = false;
     }
 
-    scanLog('Scan complete — refreshing matches…');
+    async function consume() {
+      let consecutiveWeak = 0;
+      let idx = 0;
+      while (true) {
+        if (idx < screenQueue.length) {
+          const { label, jobId } = screenQueue[idx++];
+          try {
+            const res = await fetch(`${BACKEND}/jobs/${jobId}/quick-screen?profile_id=${PROFILE_ID}`, { method: 'POST' });
+            if (!res.ok) { scanLog(`${label} quick-screen failed (${res.status})`); continue; }
+            const { score } = await res.json();
+            if (score == null) { scanLog(`${label} quick-screen: no score (already processed or errored)`); continue; }
+            const weak = score < WEAK_SCORE_THRESHOLD;
+            scanLog(`${label} quick-screen: ${score}/100${weak ? ' (weak)' : ''}`);
+            consecutiveWeak = weak ? consecutiveWeak + 1 : 0;
+            if (consecutiveWeak >= WEAK_STREAK_LIMIT) {
+              abort = true;
+              scanLog(`${WEAK_STREAK_LIMIT} weak results in a row — this search doesn't look productive. `
+                + 'Stopping early; try a different search.');
+            }
+          } catch (e) {
+            scanLog(`${label} quick-screen error: ${e.message}`);
+          }
+        } else if (!producing) {
+          break; // producer is done and we've drained everything it added
+        } else {
+          await sleep(500); // wait for the producer to add more
+        }
+      }
+    }
+
+    await Promise.all([produce(), consume()]);
+
+    scanLog(abort ? 'Scan stopped early — refreshing matches…' : 'Scan complete — refreshing matches…');
     loadJobs();
   } finally {
     scanning = false;
@@ -1054,26 +1435,11 @@ function connectEvents() {
     loadJobs();
   });
 
-  // Cover letter ready → update the card in place (no full reload needed)
-  source.addEventListener('cover_letter_ready', (e) => {
-    const { job_id, content } = JSON.parse(e.data);
-
-    // Update blurb if the card is already expanded
-    const li = jobListEl.querySelector(`li[data-job-id="${job_id}"]`);
-    if (li) {
-      const blurb = li.querySelector('.cl-blurb');
-      if (blurb) {
-        blurb.style.color = '';
-        blurb.textContent = content;
-      }
-      // Reset the ✚ button to ✔ to indicate it's done
-      const clBtn = li.querySelector('.del-btn[title="Generate cover letter"]');
-      if (clBtn && clBtn.textContent === '…') {
-        clBtn.textContent = '✔';
-        clBtn.disabled = false;
-        setTimeout(() => { clBtn.textContent = '✚'; }, 2000);
-      }
-    }
+  // Cover letter ready → update the badge and, if expanded, the editor in place.
+  // A full reload is the simplest way to move the card between the "pending"
+  // and "ready" badge states, and jobs lists are small enough that it's cheap.
+  source.addEventListener('cover_letter_ready', () => {
+    loadJobs();
   });
 
   source.onerror = () => {

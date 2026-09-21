@@ -5,6 +5,47 @@ one block per milestone.
 
 ---
 
+## 2026-09-11 — Extension revamp: Centrelink-ready application tracking — DONE ✅
+
+**Goal:** implement docs/extension-revamp-plan.md — score-tiered card UI,
+idle-loop reprioritization (cover letters before new extraction), application
+tracking for Centrelink mutual-obligation reporting, a cleaner cover-letter
+card state, a Quick-Apply overlay on Seek, and free search-phrase suggestions.
+
+**Delivered**
+- Migration `60d65ffb16df`: `matches.applied_at`. Status vocabulary
+  (`new -> shortlisted -> applied -> interviewing -> rejected/withdrawn`)
+  documented in docs/database-schema.md.
+- `app/api/main.py`: `PATCH /jobs/{id}/status` (idempotent `applied_at`
+  stamping), `PATCH /jobs/{id}/cover-letter`, `GET /jobs/suggested-searches`
+  (pure-Python bigram/trigram mining, no LLM call, registered before
+  `/jobs/{job_id}` to avoid the route-match collision — same pattern as the
+  existing `/jobs/known-ids`), `GET /jobs` gained `top_skills` + a `status`
+  filter (sorts by `applied_at desc` when set). Idle loop reordered — cover
+  letters (score>=75, no letter yet) checked first every iteration.
+- `extension/sidebar.html` + `sidebar.js`: client-side tiering
+  (blue>=90/green>=75/amber 60-74/hidden<60 behind a lazy fold), Applied tab +
+  CSV export, "Mark Applied" per card, cover-letter ready/pending/none state
+  machine with an editable Copy/Save textarea, dismissible resize hint,
+  dismissible suggested-searches banner (`chrome.storage.local`, 7-day
+  cooldown). Dropped `pollForCoverLetter` in favor of SSE-driven reload.
+- `extension/content_script.js`: Shadow-DOM Quick-Apply panel on `/job/{id}`
+  pages when a cover letter exists — title, editable textarea, Copy/Save
+  edits/Mark Applied, all through the existing PATCH endpoints. Apply-flow
+  auto-detection deliberately deferred (needs live inspection of Seek's
+  actual Apply DOM — see CLAUDE.md CURRENT TASK).
+- `app/llm/cover_letter.py`: system prompt now requests a `Sincerely, {name}`
+  sign-off and foregrounds degree/university for recent grads.
+
+**Verified:** `python -m pytest` (72 passed); manual TestClient round-trips of
+both new PATCH endpoints against the live dev DB, including idempotency of
+`applied_at` on repeat "mark applied" (then reverted the test writes);
+`node --check` on all three edited extension JS files. **Not verified:** the
+sidebar/Quick-Apply UI in an actual loaded Chrome extension — no browser
+harness available this session.
+
+---
+
 ## 2026-06-23 — LLM matching + scoring (match.py) — DONE, verified live ✅
 
 **Goal:** score each extracted job against profile id=1 into a `matches` row

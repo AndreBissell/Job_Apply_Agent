@@ -221,18 +221,58 @@ relationships set passive_deletes=True so deletes rely on DB-level cascade.
 
 
 
-🔄 CURRENT TASK: Extension revamp — Centrelink-ready application tracking
+🔄 CURRENT TASK: TBD
 
-Full plan (read it in full before starting): docs/extension-revamp-plan.md.
-Summary: score-tiered card UI (neon blue ≥90 / green ≥75 / amber 60-74 /
-collapsed long-tail <60), idle-loop reprioritized so cover letters for
-existing good matches finish before new low-value jobs get extracted, a new
-"Mark Applied" + CSV export flow for Centrelink mutual-obligation reporting
-(new matches.applied_at column), a cleaner "cover letter ready" card state,
-a Quick-Apply floating panel injected on Seek job pages via content_script.js,
-and free (non-LLM) search-phrase suggestions mined from high-scoring job
-titles. Not started as of 2026-09-11 — nothing in the plan file is implemented
-yet.
+Everything in docs/extension-revamp-plan.md landed 2026-09-11 (see the
+✅ COMPLETED entry below) except one deliberate fast-follow: §5.2's
+apply-flow-specific detection (auto-filling Seek's own Apply button/flow).
+That needs a live session where the user clicks through a real Seek Quick
+Apply flow so the real DOM/URL can be inspected — don't guess it. The
+Quick-Apply panel today is keyed off the `/job/{id}` detail page only, which
+is confirmed working. Pick that up next, or a new priority the user names.
+
+
+✅ COMPLETED: Extension revamp — Centrelink-ready application tracking — 2026-09-11
+
+Implemented the full plan in docs/extension-revamp-plan.md (see there for
+the detailed rationale/design) except the §5.2 fast-follow noted above.
+- **Schema**: `matches.applied_at` (migration `60d65ffb16df`), status
+  vocabulary documented in docs/database-schema.md.
+- **Backend**: `PATCH /jobs/{id}/status` (stamps `applied_at` once, on first
+  transition to `applied`), `PATCH /jobs/{id}/cover-letter` (saves
+  `edited_content`, shared by the sidebar and the Quick-Apply overlay),
+  `GET /jobs/suggested-searches` (pure-Python bigram/trigram mining over
+  score>=75 titles, zero LLM calls, excludes phrases already in an active
+  `SavedSearch`), `GET /jobs` gained `top_skills` (top-3 hard job_skills) and
+  an optional `status` filter (switches sort to `applied_at desc` for the
+  Applied tab/CSV export).
+- **Idle loop** (`app/api/main.py::_processing_idle_loop`): reordered so the
+  cover-letter phase is checked first every iteration; extraction/matching
+  only runs when there's no cover-letter backlog for score>=75 matches.
+- **Sidebar** (`extension/sidebar.html`/`sidebar.js`): client-side score
+  tiering (blue>=90/green>=75/amber 60-74/long-tail<60, long-tail collapsed
+  behind a lazy "N other roles" fold), a third Applied tab (CSV export:
+  Date Applied/Job Title/Employer/Location/Source URL), a per-card "Mark
+  Applied" action, a cover-letter state machine (ready/pending/none) replacing
+  the old always-there ✚ button, an editable cover-letter textarea with
+  Copy/Save wired to the new PATCH endpoint, a dismissible resize hint, and a
+  dismissible suggested-searches banner (7-day cooldown via
+  `chrome.storage.local`). Dropped `pollForCoverLetter` — SSE
+  (`cover_letter_ready` → reload) now drives the ready-state transition.
+- **Quick-Apply overlay** (`extension/content_script.js`): Shadow-DOM floating
+  panel on `/job/{id}` pages when a cover letter already exists for that job —
+  title, editable textarea, Copy/Save edits/Mark Applied. No new
+  `host_permissions`, no second-hop scanning change.
+- **cover_letter.py**: system prompt now asks for a `Sincerely, {name}`
+  sign-off and to foreground degree/university by name for recent grads.
+
+Verified: `python -m pytest` (72 passed), manual TestClient round-trips of
+the new PATCH endpoints against the live dev DB (idempotent `applied_at`,
+then reverted the test writes), `node --check` on all three edited JS files.
+Not verified: the sidebar UI in an actual loaded Chrome extension (no browser
+harness in this session) — recommend the user do a quick visual pass,
+especially the width breakpoint and the Quick-Apply panel on a real Seek job
+page, before relying on it.
 
 
 ✅ COMPLETED: Cover-letter generation (app/llm/cover_letter.py) — 2026-06-27

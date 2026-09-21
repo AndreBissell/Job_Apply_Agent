@@ -44,14 +44,33 @@
     .btn-sm { font-size: 11px; padding: 3px 7px; }
 
     /* ── Jobs tab ─────────────────────────────────────────── */
+    #resize-hint {
+      font-size: 11px; color: #6b7280; background: #eff6ff; padding: 5px 14px;
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    }
+    #resize-hint button {
+      background: none; border: none; cursor: pointer; color: #6b7280;
+      font-size: 13px; padding: 0 2px; flex: none;
+    }
+    #suggestion-banner {
+      font-size: 12px; color: #78350f; background: #fffbeb;
+      border-bottom: 1px solid #fde68a; padding: 6px 14px;
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    }
+    #suggestion-banner .sugg-links { display: flex; flex-wrap: wrap; gap: 6px; }
+    #suggestion-banner a { cursor: pointer; font-weight: 600; }
+    #suggestion-banner button.close-x {
+      background: none; border: none; cursor: pointer; color: #92400e;
+      font-size: 13px; padding: 0 2px; flex: none;
+    }
     #scanlog { font-size: 12px; color: #374151; padding: 0 14px; }
     #job-status { font-size: 12px; color: #6b7280; padding: 8px 14px; }
-    ul#job-list { list-style: none; margin: 0; padding: 0; }
-    ul#job-list li {
+    ul#job-list, ul#applied-list { list-style: none; margin: 0; padding: 0; }
+    ul#job-list li, ul#applied-list li {
       background: #fff; border-bottom: 1px solid #eef0f3; padding: 10px 14px;
       cursor: pointer;
     }
-    ul#job-list li:hover { background: #f0f4fb; }
+    ul#job-list li:hover, ul#applied-list li:hover { background: #f0f4fb; }
     .job-row { display: flex; align-items: center; gap: 8px; }
     .job-title { font-size: 13px; font-weight: 600; flex: 1; }
     .score {
@@ -64,7 +83,24 @@
       padding: 0 2px; opacity: 0.4; flex: none;
     }
     .del-btn:hover { opacity: 1; }
+    .cl-badge {
+      font-size: 11px; font-weight: 600; flex: none; white-space: nowrap;
+    }
+    .cl-badge.ready { color: #059669; }
+    .cl-badge.pending { color: #9ca3af; font-weight: 500; }
+    .apply-btn {
+      background: none; border: 1px solid #cbd5e1; border-radius: 5px;
+      cursor: pointer; font-size: 11px; padding: 2px 7px; flex: none; color: #374151;
+    }
+    .apply-btn:hover { background: #f3f4f6; }
+    .apply-btn.applied { border-color: #10b981; color: #059669; }
     .job-detail { font-size: 12px; color: #374151; margin-top: 6px; white-space: pre-wrap; }
+    .job-detail textarea {
+      width: 100%; min-height: 140px; margin-top: 6px; padding: 6px 8px;
+      border: 1px solid #d1d5db; border-radius: 5px; font-size: 12px;
+      font-family: inherit; color: #1c2330; resize: vertical;
+    }
+    .job-detail .cl-actions { display: flex; gap: 6px; margin-top: 6px; }
     a { color: #2557a7; text-decoration: none; }
     a:hover { text-decoration: underline; }
     #bulk-bar {
@@ -77,6 +113,53 @@
       border-radius: 5px; font-size: 12px; text-align: center;
     }
     #bulk-bar .btn { padding: 3px 8px; font-size: 12px; }
+
+    /* ── Score tiers (blue >=90, green >=75, amber 60-74, long-tail <60) ──── */
+    ul#job-list li[data-tier="blue"]  { --tier-color: #22d3ee; --tier-bg: #ecfeff; padding: 14px; }
+    ul#job-list li[data-tier="green"] { --tier-color: #10b981; --tier-bg: #f0fdf6; padding: 11px 14px; }
+    ul#job-list li[data-tier="amber"] { --tier-color: #f59e0b; --tier-bg: #fffbeb; padding: 7px 14px; }
+    ul#job-list li[data-tier] { border-left: 4px solid var(--tier-color); background: var(--tier-bg); }
+    ul#job-list li[data-tier="blue"] .job-title  { font-size: 15px; }
+    ul#job-list li[data-tier="amber"] .job-title { font-size: 12px; font-weight: 500; }
+    ul#job-list li[data-tier="amber"] .job-meta  { display: none; }
+    .job-preview { font-size: 12px; color: #374151; margin-top: 5px; }
+    .job-preview .chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+    .job-preview .chip {
+      font-size: 10px; font-weight: 600; color: #0e7490; background: #cffafe;
+      border-radius: 8px; padding: 2px 7px;
+    }
+    li.fold {
+      text-align: center; font-size: 12px; color: #6b7280; padding: 8px 14px !important;
+      background: #fafafa !important; border-left: none !important;
+    }
+    li.fold:hover { background: #f0f4fb !important; }
+
+    /* ── Section headers: ready-to-apply vs still-waiting-on-a-letter ─────── */
+    li.section-header {
+      font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+      padding: 8px 14px 4px !important; cursor: default; border-left: none !important;
+      background: transparent !important;
+    }
+    li.section-header:hover { background: transparent !important; }
+    li.section-header.ready { color: #059669; border-top: 2px solid #059669; }
+    li.section-header.waiting { color: #9ca3af; border-top: 2px solid #d1d5db; margin-top: 4px; }
+    li.section-header:first-child { border-top: none; margin-top: 0; }
+
+    /* Wider panel (dragged out): two-column meta layout on blue cards */
+    @media (min-width: 420px) {
+      ul#job-list li[data-tier="blue"] .job-row { flex-wrap: wrap; }
+      ul#job-list li[data-tier="blue"] .job-meta {
+        display: flex; gap: 10px; flex: 1 0 100%; margin-top: 4px;
+      }
+    }
+
+    /* ── Applied tab ──────────────────────────────────────── */
+    #applied-bar {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 6px 14px; background: #fff; border-bottom: 1px solid #eef0f3;
+    }
+    #applied-status { font-size: 12px; color: #6b7280; padding: 8px 14px; }
+    .applied-date { font-size: 11px; color: #059669; font-weight: 600; }
 
     /* ── Profile tab ──────────────────────────────────────── */
     #profile-section { padding: 12px 14px 24px; }
@@ -199,11 +282,21 @@
 
   <nav id="tabs">
     <button class="tab active" data-tab="jobs">Jobs</button>
+    <button class="tab" data-tab="applied">Applied</button>
     <button class="tab" data-tab="profile">Profile</button>
   </nav>
 
   <!-- ── Jobs tab ─────────────────────────────────────── -->
   <div id="jobs-section">
+    <div id="resize-hint">
+      <span>Tip: drag the panel's left edge to make it wider.</span>
+      <button id="resize-hint-close" title="Dismiss">✕</button>
+    </div>
+    <div id="suggestion-banner" hidden>
+      <span>💡 Try searching:</span>
+      <span class="sugg-links" id="sugg-links"></span>
+      <button class="close-x" id="sugg-close" title="Dismiss">✕</button>
+    </div>
     <div id="bulk-bar">
       <span>Delete below score</span>
       <input id="bulk-score" type="number" min="0" max="100" value="70">
@@ -212,6 +305,16 @@
     <div id="scanlog"></div>
     <div id="job-status">Loading…</div>
     <ul id="job-list"></ul>
+  </div>
+
+  <!-- ── Applied tab ──────────────────────────────────── -->
+  <div id="applied-section" hidden>
+    <div id="applied-bar">
+      <span style="font-size:12px;color:#6b7280;">For Centrelink mutual-obligation reporting</span>
+      <button class="btn" id="export-applied-btn">Export CSV</button>
+    </div>
+    <div id="applied-status">Loading…</div>
+    <ul id="applied-list"></ul>
   </div>
 
   <!-- ── Profile tab ──────────────────────────────────── -->

@@ -57,9 +57,12 @@ Score this candidate against this job. Return a JSON object with exactly these k
 Scoring rules — judge the WHOLE picture: core skills, real evidence, the role's
 level, and whether it's even in the candidate's field. Calibrate to these bands:
 - 85-100: Excellent. Meets essentially ALL core hard requirements with direct,
-  demonstrated evidence AND fits the role's level. Reserve the very top (95+) for
-  candidates whose experience clearly operates AT or above the job's seniority —
-  rare for a new grad, whose evidence is shallow by nature.
+  demonstrated evidence AND fits the role's level. For an entry-level/graduate/
+  junior role, "direct, demonstrated evidence" does NOT require paid work history —
+  a relevant internship, capstone project, coursework, or personal project counts as
+  direct evidence at THIS level; do not hold a graduate to a senior candidate's
+  evidentiary bar. Reserve the very top (95+) for candidates whose experience clearly
+  operates AT or above the job's stated seniority.
 - 65-84:  Strong. Meets most core requirements with real evidence; only minor gaps,
   or slightly below the stated level but clearly capable.
 - 45-64:  Partial. Meaningful overlap BUT missing one or more CORE required skills
@@ -71,11 +74,24 @@ level, and whether it's even in the candidate's field. Calibrate to these bands:
   field or domain from the candidate's background.
 
 new-grad fairness — apply WITHIN the bands above; it does not override them:
-- "X years of experience" is a SOFT gap, not a disqualifier. A relevant internship,
-  capstone, or project is real evidence and can lift a candidate by roughly one band.
+- Judge a graduate against the LEVEL the role is actually pitched at. If the job
+  title/seniority is graduate, intern, or junior, and the candidate meets essentially
+  all of ITS core requirements (via degree, internship, capstone, coursework, or
+  personal projects — not necessarily paid years), that is a full, legitimate 85-100
+  Excellent match for THIS role. Do not default a graduate into the 65-84 Strong band
+  purely because their evidence is a project or internship rather than years of paid
+  work — evidence type does not cap the band; core-requirement coverage does.
+- "X years of experience" stated in the ad is a SOFT gap for an entry-level role, not
+  a disqualifier and not a reason to withhold the Excellent band.
+- Reserve 65-84 Strong for a graduate with only PARTIAL core-skill coverage, or who is
+  reaching for a role above entry level (e.g. a "junior" applying to a role titled
+  "mid" or above).
 - BUT a missing CORE hard skill the role is built around (e.g. the primary frontend
   framework for a front-end-heavy role) is a genuine gap that keeps the score in the
   partial band, no matter how strong the transferable skills.
+- If the candidate's stated target role/field lines up with this job's title/field,
+  treat that as confirmation they are deliberately seeking roles like this one — a
+  positive signal, not a reason for suspicion or a lower score.
 - Do NOT score a candidate highly for a role in a different field just because their
   soft/communication skills are good.
 - Gaps must be specific and honest, but "not enough years" alone is never the reason
@@ -94,7 +110,18 @@ def _fmt_year(d) -> str:
 
 
 def _build_profile_summary(profile: Profile) -> str:
-    lines = ["CANDIDATE PROFILE", "-----------------", "Qualifications:"]
+    lines = ["CANDIDATE PROFILE", "-----------------"]
+    if profile.target_role or profile.target_location:
+        bits = []
+        if profile.target_role:
+            bits.append(f"Target role: {profile.target_role}")
+        if profile.target_location:
+            bits.append(f"Target location: {profile.target_location}")
+        lines.append(" | ".join(bits))
+    if profile.summary:
+        lines.append(f"Candidate summary: {profile.summary}")
+    lines.append("")
+    lines.append("Qualifications:")
     if profile.qualifications:
         for q in profile.qualifications:
             bits = [q.title]

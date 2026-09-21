@@ -12,6 +12,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     console.log('[SeekAssistant BG] Ingest done:', msg);
   } else if (msg && msg.type === 'GET_SESSION_COUNT') {
     sendResponse({ count: capturedThisSession });
+  } else if (msg && msg.type === 'CAPTURE_SCREENSHOT') {
+    // captureVisibleTab only works from an extension page (not a content script
+    // directly), and only captures whichever tab is currently active in the
+    // given window — that's why this is relayed through the background worker
+    // rather than called straight from content_script.js. Covered by the
+    // existing au.seek.com/www.seek.com.au host_permissions, no extra grant needed.
+    const windowId = sender.tab ? sender.tab.windowId : chrome.windows.WINDOW_ID_CURRENT;
+    chrome.tabs.captureVisibleTab(windowId, { format: 'png' }, (dataUrl) => {
+      if (chrome.runtime.lastError) {
+        sendResponse({ error: chrome.runtime.lastError.message });
+      } else {
+        sendResponse({ dataUrl });
+      }
+    });
   }
   return true; // keep the message channel open for async sendResponse
 });
