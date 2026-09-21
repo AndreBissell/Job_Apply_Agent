@@ -5,6 +5,69 @@ one block per milestone.
 
 ---
 
+## 2026-09-21 — Search-suggestion overhaul: 4-layer pipeline — DONE ✅
+
+**Goal:** the suggested-searches banner was offering "Administration Assistant
+· Intermediate Software · Intermediate Software Engineer". Two of those are the
+same idea and neither is a phrase anyone types into Seek. Replace frequency
+ranking with something that measures payoff, and stop discarding the signals
+that would make it measurable.
+
+**Diagnosis** (run against the live dev DB, 25 matches, baseline avg 69.4):
+frequency ranked `software engineer` top at 12 occurrences despite averaging
+60.9 — *below* baseline. Frequency measures what the user already searched for,
+not what worked. It also emitted nested n-grams and non-role fragments
+(`experienced software`, `engineer front`, `systems automation`).
+
+**Delivered**
+- **Layer 1 — `app/search_suggest.py`** (new, pure Python, no LLM). Ranks by
+  `(shrunk_mean - baseline) * log1p(support)`; Bayesian shrink K=3 stops a
+  single 92-point job outranking a phrase with real support. Leading-segment-
+  only mining, MODIFIER_TOKENS stripping (seniority words are Seek *filters*,
+  not keywords), a ROLE_NOUNS head-noun gate, then nested + family dedup.
+  Ranks over the whole score distribution — the low scores are what make the
+  baseline meaningful.
+- **Layer 2 — capture.** `job_listings.discovered_query` (migration
+  `c5b21d7f4e3a`) from the search page; classification/subclassification now
+  actually sent by the extension (columns existed since `aa057c74b513`, all 25
+  rows were NULL) via the page's schema.org JSON-LD, with a selector fallback.
+  `/ingest` backfills NULL fields without overwriting, so card and detail
+  captures complete each other.
+- **Layer 3 — `GET /jobs/search-performance`.** Volume/hits/yield per query;
+  >=5 jobs and <15% yield halves the rank of any phrase that query contains.
+  Demote, not delete. Surfaced as a table in the Personalise panel.
+- **Layer 4 — `app/llm/search_refine.py`**, OFF by default behind a checkbox.
+  One `complete_json` on OPENAI_MODEL_SMALL that picks/generalises among mined
+  candidates rather than generating freely; debounced at 10 new matches and
+  cached in `profiles.preferences`. Failure falls back to the mined list.
+
+- **Location scoping.** A clicked suggestion opens the search scoped to
+  `target_location`, falling back to `location`, else nationwide. Slug path +
+  `?where=` deliberately, so `currentSearchQuery()` still attributes the job to
+  the bare phrase and the same role in two cities aggregates under one query.
+- **Bulk hide became a soft delete** (`matches.hidden_at`, migration
+  `d3f8a1c60b92`). Found this mid-session: the dev DB had gone 25 jobs → 16
+  and the baseline 69.4 → 82.5 because everything under 70 had been deleted,
+  which is exactly the contrast Layer 1 measures against. `DELETE /jobs` now
+  stamps `hidden_at` and nulls `raw_description` (the bulk of the storage)
+  rather than removing the row. Hidden matches leave every `/jobs` view and
+  are skipped by the cover-letter loop, but still feed the baseline and the
+  yield stats.
+
+**Result on live data:** `["Administration Assistant", "Data Analyst",
+"Software Engineering"]`. Both "Intermediate" fragments gone. "Administration
+Assistant" survives on merit — avg 86 vs a 69.4 baseline.
+
+**Verified:** `python -m pytest` — 132 passed (44 new). `node --check` on the
+three edited JS files. Endpoint exercised against the live dev DB. Attribution
+round-trip (`seekSearchUrl` → `currentSearchQuery`) checked directly, including
+the `/in-Brisbane-QLD-4000` form Seek redirects `?where=` into.
+**Not verified:** sidebar UI in a loaded Chrome extension; the classification
+selectors against a real Seek page (JSON-LD is primary, selectors are a
+fallback guess — see CLAUDE.md CURRENT TASK).
+
+---
+
 ## 2026-09-11 — Extension revamp: Centrelink-ready application tracking — DONE ✅
 
 **Goal:** implement docs/extension-revamp-plan.md — score-tiered card UI,

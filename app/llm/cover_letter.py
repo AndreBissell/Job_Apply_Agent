@@ -20,12 +20,14 @@ from sqlalchemy.orm import selectinload
 from app.db import SessionLocal
 from app.llm.client import complete_text
 from app.models import CoverLetter, Experience, JobListing, Match, Profile
+from app.preferences import DEFAULT_AUTO_LETTER_MIN_SCORE, get_auto_letter_min_score
 
 logger = logging.getLogger(__name__)
 
-# Only generate for matches at or above this score (0-100). Quality gate:
-# a weak match produces a weak letter and wastes an LLM call.
-THRESHOLD = 75
+# Default for the per-user "auto-generate cover letters at or above this score"
+# preference (0-100) — the live value is read per profile, see app/preferences.py.
+# Quality gate: a weak match produces a weak letter and wastes an LLM call.
+THRESHOLD = DEFAULT_AUTO_LETTER_MIN_SCORE
 
 _SYSTEM_PROMPT = (
     "You are an expert cover letter writer. "
@@ -151,7 +153,8 @@ def generate_cover_letter(
     force: bool = False,
     bypass_threshold: bool = False,
 ) -> CoverLetter | None:
-    """Draft a cover letter for a job/profile match, if score >= THRESHOLD.
+    """Draft a cover letter for a job/profile match, if score >= the profile's
+    auto-letter minimum (default THRESHOLD).
 
     Idempotent: a second call updates the existing row rather than duplicating.
     Returns the CoverLetter row when generated/updated, or None when below
@@ -174,12 +177,14 @@ def generate_cover_letter(
             )
             return None
 
-        if not bypass_threshold and (match.score is None or float(match.score) < THRESHOLD):
-            logger.info(
-                "generate_cover_letter: job %s score %s below threshold %s — skipping",
-                job_id, match.score, THRESHOLD,
-            )
-            return None
+        if not bypass_threshold:
+            threshold = get_auto_letter_min_score(db, profile_id)
+            if match.score is None or float(match.score) < threshold:
+                logger.info(
+                    "generate_cover_letter: job %s score %s below threshold %s — skipping",
+                    job_id, match.score, threshold,
+                )
+                return None
 
         if match.cover_letter is not None and not force:
             logger.info(

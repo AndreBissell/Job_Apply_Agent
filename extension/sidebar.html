@@ -44,14 +44,6 @@
     .btn-sm { font-size: 11px; padding: 3px 7px; }
 
     /* ── Jobs tab ─────────────────────────────────────────── */
-    #resize-hint {
-      font-size: 11px; color: #6b7280; background: #eff6ff; padding: 5px 14px;
-      display: flex; align-items: center; justify-content: space-between; gap: 8px;
-    }
-    #resize-hint button {
-      background: none; border: none; cursor: pointer; color: #6b7280;
-      font-size: 13px; padding: 0 2px; flex: none;
-    }
     #suggestion-banner {
       font-size: 12px; color: #78350f; background: #fffbeb;
       border-bottom: 1px solid #fde68a; padding: 6px 14px;
@@ -65,6 +57,7 @@
     }
     #scanlog { font-size: 12px; color: #374151; padding: 0 14px; }
     #job-status { font-size: 12px; color: #6b7280; padding: 8px 14px; }
+    #job-status:empty { display: none; }
     ul#job-list, ul#applied-list { list-style: none; margin: 0; padding: 0; }
     ul#job-list li, ul#applied-list li {
       background: #fff; border-bottom: 1px solid #eef0f3; padding: 10px 14px;
@@ -79,10 +72,10 @@
     }
     .job-meta { font-size: 12px; color: #6b7280; margin-top: 2px; }
     .del-btn {
-      background: none; border: none; cursor: pointer; font-size: 14px;
-      padding: 0 2px; opacity: 0.4; flex: none;
+      background: none; border: none; cursor: pointer; color: #9ca3af;
+      padding: 3px; border-radius: 5px; line-height: 0; flex: none;
     }
-    .del-btn:hover { opacity: 1; }
+    .del-btn:hover { color: #dc2626; background: #fee2e2; }
     .cl-badge {
       font-size: 11px; font-weight: 600; flex: none; white-space: nowrap;
     }
@@ -103,25 +96,93 @@
     .job-detail .cl-actions { display: flex; gap: 6px; margin-top: 6px; }
     a { color: #2557a7; text-decoration: none; }
     a:hover { text-decoration: underline; }
-    #bulk-bar {
-      display: flex; align-items: center; gap: 6px;
-      padding: 6px 14px; background: #fff; border-bottom: 1px solid #eef0f3;
-      font-size: 12px; color: #6b7280;
+    #personalise { background: #fff; border-bottom: 1px solid #eef0f3; }
+    #personalise-toggle {
+      width: 100%; display: flex; align-items: center; justify-content: space-between;
+      padding: 7px 14px; background: none; border: none; cursor: pointer;
+      font-size: 12px; font-weight: 600; color: #374151; text-align: left;
     }
-    #bulk-bar input[type="number"] {
+    #personalise-toggle:hover { background: #f3f4f6; }
+    #personalise-toggle .chev { color: #9ca3af; transition: transform 0.15s; }
+    #personalise-toggle[aria-expanded="true"] .chev { transform: rotate(180deg); }
+    #personalise-panel { padding: 2px 14px 10px; }
+    .pref-row {
+      display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+      padding: 5px 0; font-size: 12px; color: #6b7280;
+    }
+    .pref-row > span { flex: 1 1 150px; }
+    .pref-row input[type="number"] {
       width: 52px; padding: 3px 6px; border: 1px solid #d1d5db;
       border-radius: 5px; font-size: 12px; text-align: center;
     }
-    #bulk-bar .btn { padding: 3px 8px; font-size: 12px; }
+    .pref-row .btn { padding: 3px 8px; font-size: 12px; }
+    .pref-check { flex: 1 1 150px; display: flex; align-items: center; gap: 6px; cursor: pointer; }
+    .pref-check input { margin: 0; flex: none; }
+    .pref-note {
+      margin: 0 0 4px; font-size: 11px; line-height: 1.4; color: #9ca3af;
+    }
+    #search-perf { font-size: 11px; color: #6b7280; padding: 2px 0 6px; }
+    #search-perf table { width: 100%; border-collapse: collapse; }
+    #search-perf th, #search-perf td {
+      text-align: left; padding: 3px 4px; border-bottom: 1px solid #f3f4f6;
+    }
+    #search-perf th { color: #9ca3af; font-weight: 600; }
+    #search-perf td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    #search-perf tr.weak td { color: #b45309; }
+    #analysing-row {
+      font-size: 12px; color: #6b7280; padding: 10px 14px;
+      border-top: 2px solid #d1d5db; margin-top: 4px;
+    }
 
-    /* ── Score tiers (blue >=90, green >=75, amber 60-74, long-tail <60) ──── */
+    /* ── Score tiers (gold >=95, blue >=90, green >=75, amber 60-74, long-tail <60) ──── */
+    ul#job-list li[data-tier="gold"]  { --tier-color: #d99a00; padding: 14px; }
     ul#job-list li[data-tier="blue"]  { --tier-color: #22d3ee; --tier-bg: #ecfeff; padding: 14px; }
     ul#job-list li[data-tier="green"] { --tier-color: #10b981; --tier-bg: #f0fdf6; padding: 11px 14px; }
     ul#job-list li[data-tier="amber"] { --tier-color: #f59e0b; --tier-bg: #fffbeb; padding: 7px 14px; }
     ul#job-list li[data-tier] { border-left: 4px solid var(--tier-color); background: var(--tier-bg); }
-    ul#job-list li[data-tier="blue"] .job-title  { font-size: 15px; }
+    ul#job-list li[data-tier="blue"] .job-title,
+    ul#job-list li[data-tier="gold"] .job-title  { font-size: 15px; }
     ul#job-list li[data-tier="amber"] .job-title { font-size: 12px; font-weight: 500; }
     ul#job-list li[data-tier="amber"] .job-meta  { display: none; }
+
+    /* 95+ : bright gold card. A soft light band sweeps across every few seconds
+       and the glow gently pulses. Both are switched off under
+       prefers-reduced-motion (the static gold styling stays). */
+    ul#job-list li[data-tier="gold"] {
+      position: relative; overflow: hidden; color: #3b2a00;
+      background: linear-gradient(135deg, #fff3b0 0%, #ffe066 45%, #ffd23f 100%);
+      border-color: #f5c518; border-left-color: #d99a00;
+      box-shadow: 0 0 0 1px rgba(245, 197, 24, 0.55), 0 2px 14px rgba(245, 180, 0, 0.45);
+      animation: gold-glow 2.8s ease-in-out infinite;
+    }
+    ul#job-list li[data-tier="gold"]:hover { background: linear-gradient(135deg, #fff6c2 0%, #ffe680 45%, #ffdb57 100%); }
+    ul#job-list li[data-tier="gold"]::after {
+      content: ""; position: absolute; inset: 0; pointer-events: none;
+      background: linear-gradient(105deg, transparent 38%, rgba(255, 255, 255, 0.75) 50%, transparent 62%);
+      transform: translateX(-120%);
+      animation: gold-sheen 4.5s ease-in-out infinite;
+    }
+    ul#job-list li[data-tier="gold"] .job-title { font-weight: 700; color: #4a3500; }
+    ul#job-list li[data-tier="gold"] .job-meta,
+    ul#job-list li[data-tier="gold"] .job-preview { color: #6b4e00; }
+    ul#job-list li[data-tier="gold"] .score {
+      background: linear-gradient(135deg, #f5b800, #c98a00); color: #fff;
+      text-shadow: 0 1px 1px rgba(90, 60, 0, 0.5);
+      box-shadow: 0 0 8px rgba(245, 180, 0, 0.8);
+    }
+    ul#job-list li[data-tier="gold"] .score::before { content: "★ "; }
+    ul#job-list li[data-tier="gold"] .job-preview .chip { color: #7a5200; background: rgba(255, 255, 255, 0.65); }
+    @keyframes gold-sheen {
+      0%, 55% { transform: translateX(-120%); }
+      100%    { transform: translateX(120%); }
+    }
+    @keyframes gold-glow {
+      0%, 100% { box-shadow: 0 0 0 1px rgba(245, 197, 24, 0.55), 0 2px 10px rgba(245, 180, 0, 0.35); }
+      50%      { box-shadow: 0 0 0 1px rgba(245, 197, 24, 0.9),  0 2px 20px rgba(245, 180, 0, 0.7); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      ul#job-list li[data-tier="gold"], ul#job-list li[data-tier="gold"]::after { animation: none; }
+    }
     .job-preview { font-size: 12px; color: #374151; margin-top: 5px; }
     .job-preview .chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
     .job-preview .chip {
@@ -145,10 +206,36 @@
     li.section-header.waiting { color: #9ca3af; border-top: 2px solid #d1d5db; margin-top: 4px; }
     li.section-header:first-child { border-top: none; margin-top: 0; }
 
+    /* Wide panel (~2 cards comfortably side by side): switch the lists to a
+       two-column grid. Headers and the fold link span both columns. Cards in a
+       row stretch to the same height (grid default) — so expanding one card also
+       grows its neighbour, which keeps the rows tidy. Only the top/right/bottom
+       borders are set on cards so the tier colour's 4px border-left (above) is
+       left alone. */
+    @media (min-width: 640px) {
+      ul#job-list, ul#applied-list {
+        display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px; padding: 8px; align-items: stretch;
+      }
+      ul#job-list li, ul#applied-list li {
+        min-width: 0; border-radius: 8px;
+        border-top: 1px solid #eef0f3; border-right: 1px solid #eef0f3;
+        border-bottom: 1px solid #eef0f3;
+      }
+      ul#job-list li.section-header, ul#job-list li.fold { grid-column: 1 / -1; border-radius: 0; }
+      /* Restore the header rules the card border above would otherwise outrank. */
+      ul#job-list li.section-header { border-right: none; border-bottom: none; border-top: none; }
+      ul#job-list li.section-header.ready { border-top: 2px solid #059669; }
+      ul#job-list li.section-header.waiting { border-top: 2px solid #d1d5db; }
+      ul#job-list li.section-header:first-child { border-top: none; }
+    }
+
     /* Wider panel (dragged out): two-column meta layout on blue cards */
     @media (min-width: 420px) {
-      ul#job-list li[data-tier="blue"] .job-row { flex-wrap: wrap; }
-      ul#job-list li[data-tier="blue"] .job-meta {
+      ul#job-list li[data-tier="blue"] .job-row,
+      ul#job-list li[data-tier="gold"] .job-row { flex-wrap: wrap; }
+      ul#job-list li[data-tier="blue"] .job-meta,
+      ul#job-list li[data-tier="gold"] .job-meta {
         display: flex; gap: 10px; flex: 1 0 100%; margin-top: 4px;
       }
     }
@@ -288,23 +375,53 @@
 
   <!-- ── Jobs tab ─────────────────────────────────────── -->
   <div id="jobs-section">
-    <div id="resize-hint">
-      <span>Tip: drag the panel's left edge to make it wider.</span>
-      <button id="resize-hint-close" title="Dismiss">✕</button>
-    </div>
     <div id="suggestion-banner" hidden>
       <span>💡 Try searching:</span>
       <span class="sugg-links" id="sugg-links"></span>
       <button class="close-x" id="sugg-close" title="Dismiss">✕</button>
     </div>
-    <div id="bulk-bar">
-      <span>Delete below score</span>
-      <input id="bulk-score" type="number" min="0" max="100" value="70">
-      <button class="btn" id="bulk-delete-btn">Delete</button>
+    <div id="personalise">
+      <button id="personalise-toggle" aria-expanded="false" aria-controls="personalise-panel">
+        <span>⚙ Personalise metrics</span><span class="chev">▾</span>
+      </button>
+      <div id="personalise-panel" hidden>
+        <div class="pref-row">
+          <span>Hide job apps below score</span>
+          <input id="bulk-score" type="number" min="0" max="100" value="70">
+          <button class="btn" id="bulk-delete-btn">Hide</button>
+        </div>
+        <p class="pref-note">
+          Removes them from your lists and frees their stored text, but keeps the
+          score — search suggestions are ranked against the average of all scored
+          jobs, so discarding the weak ones would flatten the ranking.
+        </p>
+        <div class="pref-row">
+          <span>Auto-generate cover letters at or above score</span>
+          <input id="auto-letter-min" type="number" min="0" max="100" value="75">
+          <button class="btn" id="auto-letter-save">Save</button>
+        </div>
+        <div class="pref-row">
+          <label class="pref-check" for="llm-suggest">
+            <input id="llm-suggest" type="checkbox">
+            <span>Use AI to refine search suggestions</span>
+          </label>
+          <button class="btn" id="llm-suggest-refresh">Refresh now</button>
+        </div>
+        <p class="pref-note">
+          Off by default. Suggestions are mined from your match history for free;
+          this spends one small LLM call, cached until ~10 new jobs are scored.
+        </p>
+        <div class="pref-row">
+          <span>Search performance</span>
+          <button class="btn" id="search-perf-btn">Show</button>
+        </div>
+        <div id="search-perf" hidden></div>
+      </div>
     </div>
     <div id="scanlog"></div>
     <div id="job-status">Loading…</div>
     <ul id="job-list"></ul>
+    <div id="analysing-row" hidden></div>
   </div>
 
   <!-- ── Applied tab ──────────────────────────────────── -->

@@ -223,6 +223,76 @@ relationships set passive_deletes=True so deletes rely on DB-level cascade.
 
 🔄 CURRENT TASK: TBD
 
+Two fast-follows are outstanding, both needing a live Seek session rather than
+guesswork — pick these up, or a new priority the user names:
+1. §5.2's apply-flow detection (see the extension-revamp entry below).
+2. Verify the classification capture added 2026-09-21. readJsonLdJobPosting()
+   is the primary source and should work, but SELECTORS.DETAIL_CLASSIFICATION /
+   DETAIL_SUBCLASSIFICATION (the fallback) are UNVERIFIED guesses. Open a real
+   job page, check job_listings.classification is populated, and fix the
+   selectors if the JSON-LD path ever stops covering it.
+
+
+✅ COMPLETED: Search-suggestion overhaul — 4-layer pipeline — 2026-09-21
+
+Replaced the frequency-based suggested-searches miner, which ranked by how
+often a phrase appeared rather than how well it scored. On the dev profile it
+put "software engineer" top (12 titles, avg 60.9, against a 69.4 baseline) and
+emitted fragments — "Intermediate Software" alongside "Intermediate Software
+Engineer". Four layers, cheapest first; only the last costs money.
+- **Layer 1 — app/search_suggest.py** (new, pure Python): rank by
+  `(shrunk_mean - baseline) * log1p(support)` with a Bayesian shrink (K=3)
+  toward the baseline, so one lucky 92 can't outrank a phrase with real
+  support. Mines only the leading title segment (kills `| I.T Services |
+  5 Days Onsite` junk), drops MODIFIER_TOKENS (seniority is a *filter* on
+  Seek, not a keyword — "Intermediate" in a query shrinks the result set),
+  gates on a phrase ending in a ROLE_NOUNS head noun (deletes essentially
+  every fragment in one rule), then dedups nested phrases and role families.
+  Ranks over the WHOLE score distribution, not just score>=75 — the low
+  scores are what make the baseline mean anything.
+- **Layer 2 — capture what was being thrown away**: `job_listings
+  .discovered_query` (migration `c5b21d7f4e3a`) set from the search page, and
+  classification/subclassification finally populated (the columns and /ingest
+  accepted them since aa057c74b513; the extension never sent them, so all 25
+  rows were NULL). Primary source is the page's schema.org JSON-LD JobPosting
+  block — already-rendered DOM, no extra Seek request. /ingest now backfills
+  any NULL field from a later capture without overwriting, so the card
+  (query) and the detail page (description + taxonomy) complete each other.
+- **Layer 3 — yield feedback**: `GET /jobs/search-performance` reports
+  volume/hits/yield per query; a query with >=5 jobs and <15% yield halves the
+  rank of any phrase it contains. Demotes, never deletes — the same role may
+  still be worth searching under different wording.
+- **Location scoping**: clicking a suggestion opens the search scoped to the
+  profile's target_location, falling back to location, else nationwide
+  (_search_location()). The URL keeps the slug path and puts the place in
+  ?where=, because currentSearchQuery() reads keywords-then-path — so the
+  location never enters the attribution key and Brisbane/Melbourne runs of the
+  same role aggregate under one query in the yield stats.
+- **Bulk hide is now a soft delete** (`matches.hidden_at`, migration
+  `d3f8a1c60b92`). DELETE /jobs?below_score= stamps hidden_at and nulls the
+  job's raw_description to reclaim space, instead of deleting the row. Hidden
+  matches leave every /jobs view but still feed the baseline and the yield
+  stats. This is load-bearing, not tidiness: hard-deleting the low scorers
+  moved the dev baseline 69.4 → 82.5 in one click and flattened the ranking
+  the whole pipeline depends on. Don't "clean this up" back into a real DELETE.
+- **Layer 4 — optional LLM re-rank** (app/llm/search_refine.py), OFF by
+  default behind the `llm_search_suggestions` preference and a checkbox in the
+  sidebar's Personalise panel. One complete_json call on OPENAI_MODEL_SMALL
+  that *picks and generalises among mined candidates* rather than generating
+  freely — a hallucinated search term wastes a whole scan, which costs far
+  more than the call. Debounced (REFRESH_AFTER_NEW_MATCHES=10) and cached in
+  profiles.preferences; any failure falls back to the mined list.
+
+Verified: `python -m pytest` (132 passed, 44 new across
+tests/test_search_suggest.py + tests/test_search_endpoints.py), `node --check`
+on the three edited JS files, and the endpoint run against the live dev DB —
+suggestions went from ["Administration Assistant", "Intermediate Software",
+"Intermediate Software Engineer"] to ["Administration Assistant", "Data
+Analyst", "Software Engineering"].
+Not verified: the sidebar UI in a loaded Chrome extension, and the
+classification selectors against a live Seek page (see CURRENT TASK above).
+
+
 Everything in docs/extension-revamp-plan.md landed 2026-09-11 (see the
 ✅ COMPLETED entry below) except one deliberate fast-follow: §5.2's
 apply-flow-specific detection (auto-filling Seek's own Apply button/flow).

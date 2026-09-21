@@ -28,8 +28,66 @@ function textOrNull(root, selector) {
   return text || null;
 }
 
+// Seek embeds a schema.org JobPosting block on detail pages. It's part of the
+// already-rendered DOM (no extra request to Seek) and it's the most stable
+// source of the classification/subclassification pair, since data-automation
+// attribute names change more often than the JSON-LD contract does. Returns
+// null whenever the block is absent or unparseable, so callers fall back to
+// the selectors above.
+function readJsonLdJobPosting() {
+  for (const script of document.querySelectorAll('script[type="application/ld+json"]')) {
+    let data;
+    try { data = JSON.parse(script.textContent || ''); } catch { continue; }
+    // Seek sometimes wraps the posting in an array or an @graph list.
+    const nodes = Array.isArray(data) ? data : (data['@graph'] || [data]);
+    for (const node of nodes) {
+      if (node && node['@type'] === 'JobPosting') return node;
+    }
+  }
+  return null;
+}
+
+// "Developers/Programmers (Information & Communication Technology)" splits into
+// a subclassification and a classification. Seek writes it that way on the
+// detail page and as occupationalCategory in the JSON-LD.
+function splitOccupationalCategory(raw) {
+  const text = (raw || '').trim();
+  if (!text) return { classification: null, subclassification: null };
+  const m = text.match(/^(.*?)\s*\((.+)\)\s*$/);
+  if (m) return { subclassification: m[1].trim(), classification: m[2].trim() };
+  return { classification: text, subclassification: null };
+}
+
+function readClassification() {
+  const posting = readJsonLdJobPosting();
+  const fromLd = posting && (
+    typeof posting.occupationalCategory === 'string' ? posting.occupationalCategory : null
+  );
+  if (fromLd) return splitOccupationalCategory(fromLd);
+  // Fallback: the on-page classification links.
+  const sub = textOrNull(document, SELECTORS.DETAIL_SUBCLASSIFICATION);
+  const cls = textOrNull(document, SELECTORS.DETAIL_CLASSIFICATION);
+  if (sub && !cls) return splitOccupationalCategory(sub);
+  return { classification: cls, subclassification: sub };
+}
+
+// The search that produced this results page, normalised to a comparable key
+// so the backend can aggregate yield per query. Seek expresses the same search
+// two ways — an SEO slug (/software-engineer-jobs/in-Perth) and a ?keywords=
+// param — and both must reduce to the same string or the stats fragment.
+// Reads only location.*; makes no request to Seek.
+function currentSearchQuery() {
+  const params = new URLSearchParams(location.search);
+  const keywords = (params.get('keywords') || '').trim();
+  if (keywords) return keywords.toLowerCase();
+  const slug = (location.pathname.match(/\/([^/]+)-jobs(?:\/|$)/) || [])[1];
+  if (slug) return decodeURIComponent(slug).replace(/-/g, ' ').trim().toLowerCase();
+  return null;
+}
+
 function parseSearchPage() {
   const cards = document.querySelectorAll(SELECTORS.JOB_CARD);
+  const discovered_query = currentSearchQuery();
   const listings = [];
   for (const card of cards) {
     const link = card.querySelector(SELECTORS.CARD_TITLE_LINK);
@@ -47,6 +105,7 @@ function parseSearchPage() {
       location:  textOrNull(card, SELECTORS.CARD_LOCATION),
       work_type: textOrNull(card, SELECTORS.CARD_WORK_TYPE),
       salary:    textOrNull(card, SELECTORS.CARD_SALARY),
+      discovered_query,
       raw_description: null,
     });
   }
@@ -63,10 +122,13 @@ function parseDetailPage() {
   const title = textOrNull(document, SELECTORS.DETAIL_TITLE)
     || (document.title || '').replace(/\s*[|-]\s*SEEK.*$/i, '').trim()
     || 'Untitled';
+  const { classification, subclassification } = readClassification();
   return [{
     source_job_id: job_id,
     url: window.location.href,
     title,
+    classification,
+    subclassification,
     raw_description,
   }];
 }

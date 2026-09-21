@@ -70,9 +70,10 @@ class Profile(Base):
     summary: Mapped[str | None] = mapped_column(Text)
     target_role: Mapped[str | None] = mapped_column(Text)
     target_location: Mapped[str | None] = mapped_column(Text)
+    preferences: Mapped[str | None] = mapped_column(Text)  # JSON object; see app/preferences.py
     created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), 
-        nullable=False, 
+        DateTime(timezone=True),
+        nullable=False,
         server_default=func.now()
     )
     updated_at: Mapped[datetime.datetime] = mapped_column(
@@ -329,6 +330,11 @@ class JobListing(Base):
     subclassification: Mapped[str | None] = mapped_column(Text)
     work_type: Mapped[str | None] = mapped_column(Text)
     salary: Mapped[str | None] = mapped_column(Text)
+    # The Seek search that surfaced this listing, so search performance can be
+    # measured (see GET /jobs/search-performance). NULL for jobs opened
+    # directly rather than from a results page, and for everything captured
+    # before migration c5b21d7f4e3a.
+    discovered_query: Mapped[str | None] = mapped_column(Text)
     close_date: Mapped[datetime.date | None] = mapped_column(Date)
     start_date: Mapped[datetime.date | None] = mapped_column(Date)
     qualification_requirements: Mapped[str | None] = mapped_column(Text)
@@ -438,6 +444,15 @@ class Match(Base):
     # Stamped when status transitions to 'applied' (idempotent — re-marking
     # applied does not reset it). Nullable = never applied.
     applied_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    # Soft delete for the sidebar's bulk "delete jobs below score" action.
+    # NULL = visible. The row is kept rather than deleted because the
+    # suggestion miner ranks phrases against the baseline of ALL scored
+    # matches, and removing the low scorers raises that baseline and flattens
+    # the contrast the ranking depends on. Hidden matches stay out of /jobs
+    # but still count toward the baseline and toward search-performance yield.
+    hidden_at: Mapped[datetime.datetime | None] = mapped_column(
         DateTime(timezone=True)
     )
     # Durable Centrelink evidence, set by POST /jobs/{id}/screenshot — see

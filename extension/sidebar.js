@@ -4,16 +4,20 @@
 const BACKEND = 'http://localhost:8000';
 const PROFILE_ID = 1;
 
-// Score tiers (docs/extension-revamp-plan.md §1). GREEN_MIN reuses the same
-// number as app/llm/cover_letter.py's THRESHOLD deliberately — "green or
-// better" and "eligible for an auto-generated cover letter" are always the
-// same set of jobs.
+// Score tiers (docs/extension-revamp-plan.md §1) — purely visual colouring.
+const GOLD_MIN = 95;
 const BLUE_MIN = 90;
 const GREEN_MIN = 75;
 const AMBER_MIN = 60;
 
+// Minimum score for an auto-generated cover letter. User-tunable in the
+// "Personalise metrics" panel and stored server-side (profiles.preferences),
+// since the backend idle loop is what acts on it. 75 is only the pre-load default.
+let autoLetterMin = GREEN_MIN;
+
 function tierOf(score) {
   if (score == null) return 'amber';
+  if (score >= GOLD_MIN) return 'gold';
   if (score >= BLUE_MIN) return 'blue';
   if (score >= GREEN_MIN) return 'green';
   if (score >= AMBER_MIN) return 'amber';
@@ -81,7 +85,26 @@ function renderSectionHeader(text, kind) {
   return li;
 }
 
+// Jobs captured but still waiting on the LLM pass have no match row, so /jobs
+// can't list them — show a count under the list instead. Separate element from
+// the <ul> so it can update mid-scan without re-rendering (and collapsing) cards.
+const analysingEl = document.getElementById('analysing-row');
+
+async function refreshPendingCount() {
+  try {
+    const res = await fetch(`${BACKEND}/jobs/pending-count?profile_id=${PROFILE_ID}`);
+    if (!res.ok) throw new Error();
+    const { pending } = await res.json();
+    if (!pending) { analysingEl.hidden = true; return; }
+    analysingEl.textContent = `⏳ ${pending} more job app${pending === 1 ? '' : 's'} scanned — analysing…`;
+    analysingEl.hidden = false;
+  } catch {
+    analysingEl.hidden = true;
+  }
+}
+
 async function loadJobs() {
+  refreshPendingCount();
   jobStatusEl.textContent = 'Loading…';
   jobListEl.innerHTML = '';
   let jobs;
@@ -96,7 +119,7 @@ async function loadJobs() {
     jobStatusEl.textContent = 'No matched jobs yet. Browse Seek with the extension active to capture listings.';
     return;
   }
-  jobStatusEl.textContent = `${jobs.length} matched job(s).`;
+  jobStatusEl.textContent = ''; // status line is only for loading/error/empty states
 
   const ready = [];
   const waiting = [];
@@ -154,12 +177,12 @@ function renderFold(jobs) {
 
 // Cover-letter card state (docs/extension-revamp-plan.md §5.1):
 //  - 'ready'   letter generated, has_cover_letter is true
-//  - 'pending' score >= GREEN_MIN, idle loop hasn't reached it yet
-//  - 'none'    below GREEN_MIN and no letter — no collapsed-card affordance;
+//  - 'pending' score >= autoLetterMin, idle loop hasn't reached it yet
+//  - 'none'    below autoLetterMin and no letter — no collapsed-card affordance;
 //              a manual force-generate lives only in the expanded detail view
 function coverLetterState(job) {
   if (job.has_cover_letter) return 'ready';
-  if (job.score != null && job.score >= GREEN_MIN) return 'pending';
+  if (job.score != null && job.score >= autoLetterMin) return 'pending';
   return 'none';
 }
 
@@ -226,7 +249,11 @@ function renderJob(job, tier) {
   const delBtn = document.createElement('button');
   delBtn.className = 'del-btn';
   delBtn.title = 'Delete';
-  delBtn.textContent = '🗑';
+  // Inline SVG (not the 🗑 emoji) so the icon can take the hover colour via currentColor.
+  delBtn.innerHTML =
+    '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+    'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/></svg>';
   delBtn.addEventListener('click', async (e) => {
     e.stopPropagation();
     if (!confirm(`Delete "${job.title}"?`)) return;
@@ -251,9 +278,9 @@ function renderJob(job, tier) {
   meta.textContent = metaParts.join(' · ') || '—';
   li.appendChild(meta);
 
-  // Blue-tier cards show a reasoning snippet + top skill chips inline, no
+  // Gold- and blue-tier cards show a reasoning snippet + top skill chips inline, no
   // click needed — everything else stays click-to-expand as before.
-  if (tier === 'blue' && (job.reasoning || job.top_skills?.length)) {
+  if ((tier === 'blue' || tier === 'gold') && (job.reasoning || job.top_skills?.length)) {
     const preview = document.createElement('div');
     preview.className = 'job-preview';
     if (job.reasoning) preview.appendChild(document.createTextNode(truncate(job.reasoning, 90)));
@@ -307,7 +334,7 @@ async function fillDetail(detailEl, job) {
     const cl = data.cover_letter;
     if (cl?.generated_content) {
       renderCoverLetterEditor(detailEl, job.job_id, cl);
-    } else if (job.score != null && job.score >= GREEN_MIN) {
+    } else if (job.score != null && job.score >= autoLetterMin) {
       const note = document.createElement('div');
       note.style.cssText = 'margin-top:6px;color:#6b7280;';
       note.textContent = 'Cover letter pending — the idle loop will generate it shortly.';
@@ -477,41 +504,54 @@ document.getElementById('export-applied-btn').addEventListener('click', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Resize hint — dismissible one-time nudge that the panel edge is draggable
-// ---------------------------------------------------------------------------
-const resizeHintEl = document.getElementById('resize-hint');
-if (localStorage.getItem('resizeHintDismissed')) {
-  resizeHintEl.hidden = true;
-}
-document.getElementById('resize-hint-close').addEventListener('click', () => {
-  localStorage.setItem('resizeHintDismissed', '1');
-  resizeHintEl.hidden = true;
-});
-
-// ---------------------------------------------------------------------------
 // Suggested searches — free (non-LLM) phrase mining from good matches (§7)
 // ---------------------------------------------------------------------------
 const SUGGESTION_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
-async function maybeShowSuggestions() {
+// Builds the Seek search a suggestion opens. Keeps the SEO-slug path form
+// ("/data-analyst-jobs") and adds the location as ?where=, because that is the
+// combination content_script.js's currentSearchQuery() already normalises back
+// to the bare phrase — so a job found this way is attributed to "data analyst",
+// not "data analyst brisbane", and search-performance stats stay comparable
+// across locations.
+function seekSearchUrl(phrase, searchLocation) {
+  const slug = phrase.toLowerCase().trim().replace(/\s+/g, '-') + '-jobs';
+  const where = (searchLocation || '').trim();
+  return `https://au.seek.com/${slug}`
+    + (where ? `?where=${encodeURIComponent(where)}` : '');
+}
+
+// Renders whatever the backend ranked. `forceLlm` is only set by the explicit
+// "Refresh now" button, which re-runs the LLM layer regardless of its cache
+// and regardless of the saved preference.
+async function maybeShowSuggestions({ forceLlm = false, ignoreCooldown = false } = {}) {
   const banner = document.getElementById('suggestion-banner');
   try {
-    const stored = await chrome.storage.local.get('suggestionsDismissedUntil');
-    if (stored.suggestionsDismissedUntil && Date.now() < stored.suggestionsDismissedUntil) return;
+    if (!ignoreCooldown) {
+      const stored = await chrome.storage.local.get('suggestionsDismissedUntil');
+      if (stored.suggestionsDismissedUntil && Date.now() < stored.suggestionsDismissedUntil) return;
+    }
 
-    const res = await fetch(`${BACKEND}/jobs/suggested-searches?profile_id=${PROFILE_ID}`);
+    let url = `${BACKEND}/jobs/suggested-searches?profile_id=${PROFILE_ID}`;
+    if (forceLlm) url += '&use_llm=true';
+    const res = await fetch(url);
     if (!res.ok) return;
-    const { suggestions } = await res.json();
+    // Named searchLocation, not location — `location` would shadow
+    // window.location inside this function.
+    const { suggestions, llm_used, location: searchLocation } = await res.json();
     if (!suggestions?.length) return;
 
+    const scope = searchLocation ? ` in ${searchLocation}` : '';
+    banner.querySelector('span').textContent =
+      `${llm_used ? '✨' : '💡'} Try searching${scope}:`;
     const linksEl = document.getElementById('sugg-links');
     linksEl.innerHTML = '';
     suggestions.forEach((phrase, i) => {
       const a = document.createElement('a');
       a.textContent = `"${phrase}"`;
+      a.title = `Search Seek for "${phrase}"${scope}`;
       a.addEventListener('click', () => {
-        const slug = phrase.toLowerCase().trim().replace(/\s+/g, '-') + '-jobs';
-        chrome.tabs.create({ url: `https://au.seek.com/${slug}` }); // normal user-initiated open, not a fetch — still 0-hop
+        chrome.tabs.create({ url: seekSearchUrl(phrase, searchLocation) }); // normal user-initiated open, not a fetch — still 0-hop
       });
       linksEl.appendChild(a);
       if (i < suggestions.length - 1) linksEl.appendChild(document.createTextNode(' · '));
@@ -547,10 +587,16 @@ const scanBtn = document.getElementById('scan-btn');
 const scanLogEl = document.getElementById('scanlog');
 let scanning = false;
 
+// Per-page progress goes to the console only — the list itself is the progress
+// display (the "N more scanned — analysing" row at the bottom). scanNotice is
+// for the few messages the user needs to act on (wrong page, nothing found…).
 function scanLog(msg) {
-  const line = document.createElement('div');
-  line.textContent = msg;
-  scanLogEl.appendChild(line);
+  console.log(`[scan] ${msg}`);
+}
+
+function scanNotice(msg) {
+  scanLog(msg);
+  scanLogEl.textContent = msg;
 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
@@ -625,19 +671,19 @@ async function scanPage() {
   if (scanning) return;
   scanning = true;
   scanBtn.disabled = true;
-  scanLogEl.innerHTML = '';
+  scanLogEl.textContent = '';
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab || !/^https:\/\/(au\.seek\.com|www\.seek\.com\.au)\/[^?#]*jobs/i.test(tab.url || '')) {
-      scanLog('Open a Seek search results page in this tab first, then click Scan Page.');
+      scanNotice('Open a Seek search results page in this tab first, then click Scan Page.');
       return;
     }
     let allUrls;
     try { allUrls = await injectFn(tab.id, pageCollectJobLinks); }
-    catch (e) { scanLog(`Could not read the page: ${e.message}`); return; }
+    catch (e) { scanNotice(`Could not read the page: ${e.message}`); return; }
 
     allUrls = allUrls || [];
-    if (!allUrls.length) { scanLog('No job links found on this page.'); return; }
+    if (!allUrls.length) { scanNotice('No job links found on this page.'); return; }
 
     // Filter out URLs whose source_job_id is already in the database.
     let knownIds = new Set();
@@ -656,7 +702,7 @@ async function scanPage() {
     const urls = newUrls.slice(0, MAX_SCAN_PAGES);
 
     if (skipped) scanLog(`Skipped ${skipped} already-captured job(s).`);
-    if (!urls.length) { scanLog('All jobs on this page already captured.'); return; }
+    if (!urls.length) { scanNotice('All jobs on this page already captured.'); return; }
     scanLog(`Found ${newUrls.length} new link(s); scraping up to ${urls.length} (5s apart), screening as we go…`);
 
     // Scraping (the "producer") and quick-screening (the "consumer") run
@@ -697,6 +743,7 @@ async function scanPage() {
           if (jobId != null) {
             scanLog(`${label} captured ✓ (${desc})`);
             screenQueue.push({ label, jobId });
+            refreshPendingCount();
           } else {
             scanLog(`${label} backend error ✗`);
           }
@@ -724,8 +771,8 @@ async function scanPage() {
             consecutiveWeak = weak ? consecutiveWeak + 1 : 0;
             if (consecutiveWeak >= WEAK_STREAK_LIMIT) {
               abort = true;
-              scanLog(`${WEAK_STREAK_LIMIT} weak results in a row — this search doesn't look productive. `
-                + 'Stopping early; try a different search.');
+              scanNotice(`${WEAK_STREAK_LIMIT} weak results in a row — this search doesn't look productive. `
+                + 'Stopped early; try a different search.');
             }
           } catch (e) {
             scanLog(`${label} quick-screen error: ${e.message}`);
@@ -751,6 +798,150 @@ async function scanPage() {
 scanBtn.addEventListener('click', scanPage);
 document.getElementById('refresh-btn').addEventListener('click', loadJobs);
 
+// ---------------------------------------------------------------------------
+// Personalise metrics — collapsible panel of user-tunable thresholds
+// ---------------------------------------------------------------------------
+const personaliseToggle = document.getElementById('personalise-toggle');
+const personalisePanel = document.getElementById('personalise-panel');
+const autoLetterInput = document.getElementById('auto-letter-min');
+const autoLetterSaveBtn = document.getElementById('auto-letter-save');
+const llmSuggestCheckbox = document.getElementById('llm-suggest');
+const llmSuggestRefreshBtn = document.getElementById('llm-suggest-refresh');
+
+personaliseToggle.addEventListener('click', () => {
+  const open = personalisePanel.hidden; // about to open
+  personalisePanel.hidden = !open;
+  personaliseToggle.setAttribute('aria-expanded', String(open));
+});
+
+// Resolves once the stored preferences (if reachable) have been applied, so the
+// first loadJobs() can classify "pending" letters against the real threshold.
+async function loadPreferences() {
+  try {
+    const res = await fetch(`${BACKEND}/profile/${PROFILE_ID}/preferences`);
+    if (!res.ok) return;
+    const prefs = await res.json();
+    if (Number.isInteger(prefs.auto_cover_letter_min_score)) {
+      autoLetterMin = prefs.auto_cover_letter_min_score;
+      autoLetterInput.value = autoLetterMin;
+    }
+    llmSuggestCheckbox.checked = prefs.llm_search_suggestions === true;
+  } catch { /* backend down — keep defaults; loadJobs shows its own error */ }
+}
+
+autoLetterSaveBtn.addEventListener('click', async () => {
+  const value = parseInt(autoLetterInput.value, 10);
+  if (!Number.isInteger(value) || value < 0 || value > 100) {
+    autoLetterInput.value = autoLetterMin;
+    return;
+  }
+  autoLetterSaveBtn.disabled = true;
+  autoLetterSaveBtn.textContent = '…';
+  try {
+    const res = await fetch(`${BACKEND}/profile/${PROFILE_ID}/preferences`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ auto_cover_letter_min_score: value }),
+    });
+    if (!res.ok) throw new Error();
+    autoLetterMin = value;
+    autoLetterSaveBtn.textContent = 'Saved ✓';
+    loadJobs(); // cards move between "pending" and "no letter" states
+  } catch {
+    autoLetterSaveBtn.textContent = 'Error';
+  }
+  setTimeout(() => { autoLetterSaveBtn.textContent = 'Save'; autoLetterSaveBtn.disabled = false; }, 1500);
+});
+
+// Layer 4 opt-in. Unticked, /jobs/suggested-searches never reaches the LLM;
+// ticked, it spends one cached call. Ticking it also refreshes the banner
+// immediately so the effect is visible rather than deferred to the next load.
+llmSuggestCheckbox.addEventListener('change', async () => {
+  const enabled = llmSuggestCheckbox.checked;
+  llmSuggestCheckbox.disabled = true;
+  try {
+    const res = await fetch(`${BACKEND}/profile/${PROFILE_ID}/preferences`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ llm_search_suggestions: enabled }),
+    });
+    if (!res.ok) throw new Error();
+    await maybeShowSuggestions({ ignoreCooldown: true });
+  } catch {
+    llmSuggestCheckbox.checked = !enabled; // revert — the setting didn't stick
+  } finally {
+    llmSuggestCheckbox.disabled = false;
+  }
+});
+
+// Forces a refine even when the cache is still warm, and even when the
+// checkbox is off (a one-off look, without turning the feature on).
+llmSuggestRefreshBtn.addEventListener('click', async () => {
+  llmSuggestRefreshBtn.disabled = true;
+  llmSuggestRefreshBtn.textContent = '…';
+  try {
+    await maybeShowSuggestions({ forceLlm: true, ignoreCooldown: true });
+    llmSuggestRefreshBtn.textContent = 'Done ✓';
+  } catch {
+    llmSuggestRefreshBtn.textContent = 'Error';
+  }
+  setTimeout(() => {
+    llmSuggestRefreshBtn.textContent = 'Refresh now';
+    llmSuggestRefreshBtn.disabled = false;
+  }, 1500);
+});
+
+// Layer 3: which searches actually paid off. Volume is also the LLM cost of a
+// search, so a big-volume/low-yield row is the one worth retiring.
+const searchPerfEl = document.getElementById('search-perf');
+document.getElementById('search-perf-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('search-perf-btn');
+  if (!searchPerfEl.hidden) {
+    searchPerfEl.hidden = true;
+    btn.textContent = 'Show';
+    return;
+  }
+  btn.disabled = true;
+  try {
+    const res = await fetch(`${BACKEND}/jobs/search-performance?profile_id=${PROFILE_ID}`);
+    if (!res.ok) throw new Error();
+    const { performance, underperforming } = await res.json();
+    if (!performance.length) {
+      searchPerfEl.textContent =
+        'No data yet — searches are tracked from the next results page you open.';
+    } else {
+      const weak = new Set(underperforming);
+      searchPerfEl.innerHTML = '';
+      const table = document.createElement('table');
+      const head = table.insertRow();
+      ['Search', 'Jobs', 'Good', 'Yield'].forEach((label, i) => {
+        const th = document.createElement('th');
+        th.textContent = label;
+        if (i > 0) th.className = 'num';
+        head.appendChild(th);
+      });
+      for (const row of performance) {
+        const tr = table.insertRow();
+        if (weak.has(row.query)) tr.className = 'weak';
+        tr.insertCell().textContent = row.query;
+        [row.volume, row.hits, `${Math.round(row.yield * 100)}%`].forEach((v) => {
+          const td = tr.insertCell();
+          td.textContent = v;
+          td.className = 'num';
+        });
+      }
+      searchPerfEl.appendChild(table);
+    }
+    searchPerfEl.hidden = false;
+    btn.textContent = 'Hide';
+  } catch {
+    searchPerfEl.textContent = 'Could not load search performance.';
+    searchPerfEl.hidden = false;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
 document.getElementById('bulk-delete-btn').addEventListener('click', async () => {
   const score = parseFloat(document.getElementById('bulk-score').value);
   if (isNaN(score)) return;
@@ -761,15 +952,15 @@ document.getElementById('bulk-delete-btn').addEventListener('click', async () =>
     const res = await fetch(`${BACKEND}/jobs?below_score=${score}&profile_id=${PROFILE_ID}`, { method: 'DELETE' });
     const data = await res.json();
     if (res.ok) {
-      btn.textContent = `Deleted ${data.deleted}`;
-      setTimeout(() => { btn.textContent = 'Delete'; btn.disabled = false; }, 2000);
+      btn.textContent = `Hid ${data.hidden ?? data.deleted}`;
+      setTimeout(() => { btn.textContent = 'Hide'; btn.disabled = false; }, 2000);
       loadJobs();
     } else {
       throw new Error();
     }
   } catch {
     btn.textContent = 'Error';
-    setTimeout(() => { btn.textContent = 'Delete'; btn.disabled = false; }, 2000);
+    setTimeout(() => { btn.textContent = 'Hide'; btn.disabled = false; }, 2000);
   }
 });
 
@@ -1450,5 +1641,5 @@ function connectEvents() {
 // ---------------------------------------------------------------------------
 // Init
 // ---------------------------------------------------------------------------
-loadJobs();
+loadPreferences().then(loadJobs);
 connectEvents();

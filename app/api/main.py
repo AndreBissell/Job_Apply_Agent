@@ -29,12 +29,14 @@ from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
-from sqlalchemy import select
+from pydantic import BaseModel, Field
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
+from app import search_suggest
 from app.api.profile_ui import router as profile_ui_router
 from app.db import SessionLocal
+from app.llm import search_refine
 from app.llm.client import DailyQuotaError
 from app.llm.cover_letter import THRESHOLD as COVER_LETTER_THRESHOLD
 from app.llm.cover_letter import generate_cover_letter
@@ -52,6 +54,7 @@ from app.models import (
     Skill,
     UserCv,
 )
+from app.preferences import get_auto_letter_min_score, get_preferences, set_preferences
 
 logger = logging.getLogger(__name__)
 
@@ -117,12 +120,17 @@ async def _processing_idle_loop() -> None:
             cl_job_id: int | None = None
             cl_user_id: int | None = None
             with SessionLocal() as db:
+                # Same per-profile threshold generate_cover_letter() gates on —
+                # they must agree, or this would pick a match the gate then refuses.
+                auto_min = get_auto_letter_min_score(db, 1)
                 row = db.execute(
                     select(Match, JobListing)
                     .join(JobListing, Match.job_id == JobListing.id)
                     .outerjoin(CoverLetter, CoverLetter.match_id == Match.id)
                     .where(CoverLetter.id.is_(None))
-                    .where(Match.score >= COVER_LETTER_THRESHOLD)
+                    .where(Match.user_id == 1)
+                    .where(Match.hidden_at.is_(None))  # never write a letter for a hidden job
+                    .where(Match.score >= auto_min)
                     .where(JobListing.extracted_at.isnot(None))
                     .order_by(Match.score.desc())
                     .limit(1)
@@ -316,6 +324,7 @@ class IngestListing(BaseModel):
     work_type: str | None = None
     salary: str | None = None
     raw_description: str | None = None
+    discovered_query: str | None = None
 
 
 class IngestBody(BaseModel):
@@ -326,6 +335,11 @@ class IngestBody(BaseModel):
 class ProfileUpdate(BaseModel):
     name: str | None = None
     email: str | None = None
+
+
+class PreferencesUpdate(BaseModel):
+    auto_cover_letter_min_score: int | None = Field(default=None, ge=0, le=100)
+    llm_search_suggestions: bool | None = None
 
 
 class StatusUpdate(BaseModel):
@@ -466,6 +480,7 @@ def ingest(
                 subclassification=item.subclassification,
                 work_type=item.work_type,
                 salary=item.salary,
+                discovered_query=item.discovered_query,
                 raw_description=item.raw_description,
             )
             db.add(job)
@@ -473,10 +488,25 @@ def ingest(
             new += 1
             job_ids.append(job.id)
         else:
-            if existing.raw_description is None and item.raw_description:
-                existing.raw_description = item.raw_description
+            # A listing is typically ingested twice — once as a search-results
+            # card (which carries discovered_query but no description or
+            # taxonomy) and once as a detail page (the reverse). Backfill any
+            # field this payload can fill and the row is still missing, so
+            # whichever arrives second completes the row. Existing values are
+            # never overwritten: the first capture of a field is the one made
+            # while the page was actually open.
+            changed = False
+            for attr in (
+                "raw_description",
+                "classification",
+                "subclassification",
+                "discovered_query",
+            ):
+                if getattr(existing, attr) is None and getattr(item, attr):
+                    setattr(existing, attr, getattr(item, attr))
+                    changed = True
+            if changed:
                 updated += 1
-            # else: already present with a description — nothing to update.
             job_ids.append(existing.id)
 
     db.commit()
@@ -488,6 +518,27 @@ def known_job_ids(db: Session = Depends(get_db)) -> dict:
     """Return all source_job_ids already in the database so the extension can skip re-scraping."""
     ids = db.scalars(select(JobListing.source_job_id)).all()
     return {"source_ids": ids}
+
+
+@app.get("/jobs/pending-count")
+def pending_job_count(profile_id: int = 1, db: Session = Depends(get_db)) -> dict:
+    """How many captured jobs are still waiting on the LLM pass (no match row yet).
+
+    The sidebar shows this at the bottom of the list ("N more scanned, analysing")
+    since /jobs only returns jobs that already have a scored match. A quick-screen
+    skip writes a terminal match row, so skipped jobs are already out of this count.
+    Jobs with no description can't be processed and are excluded.
+    """
+    pending = db.scalar(
+        select(func.count())
+        .select_from(JobListing)
+        .where(JobListing.raw_description.isnot(None))
+        .where(JobListing.expired_detected_at.is_(None))
+        .where(
+            ~JobListing.matches.any(Match.user_id == profile_id)
+        )
+    )
+    return {"pending": pending or 0}
 
 
 @app.get("/jobs/by-source-id/{source_job_id}")
@@ -565,12 +616,18 @@ def list_jobs(
     applied doesn't invalidate that application as Centrelink evidence.
     ``include_expired=true`` lifts the filter on the default view too, mainly
     for debugging/verification.
+
+    Matches hidden by the bulk low-score action (``hidden_at``) are excluded
+    from every view here, including the Applied tab. They still exist, and
+    still feed the suggestion baseline and the search-performance yield — see
+    DELETE /jobs for why they are kept rather than deleted.
     """
     query = (
         select(Match, JobListing)
         .join(JobListing, Match.job_id == JobListing.id)
         .options(selectinload(JobListing.job_skills))
         .where(Match.user_id == profile_id)
+        .where(Match.hidden_at.is_(None))
         .where(Match.score >= min_score)
     )
     if status is not None:
@@ -610,16 +667,6 @@ def list_jobs(
     ]
 
 
-# Words that carry no search-relevant meaning in a job title — stripped before
-# mining bigrams/trigrams for suggested-searches so "Graduate" or a company
-# name don't drown out the actual role.
-_TITLE_STOPWORDS = {
-    "a", "an", "the", "and", "or", "for", "to", "of", "in", "at", "with",
-    "graduate", "senior", "junior", "mid", "level", "entry", "new", "role",
-    "position", "opportunity", "wanted", "required", "urgent", "immediate",
-}
-
-
 def _profile_phrase_candidates(profile: Profile | None) -> list[str]:
     """Fallback phrase candidates straight from the profile — skill names, then
     qualification fields of study, deduped in that order.
@@ -647,21 +694,110 @@ def _profile_phrase_candidates(profile: Profile | None) -> list[str]:
     return candidates
 
 
+# A query needs at least this many captured jobs before its yield is treated as
+# a real signal rather than noise, and must fall below this hit rate to be
+# called under-performing. Both are deliberately forgiving: the penalty below
+# demotes a phrase, it never deletes it.
+_YIELD_MIN_VOLUME = 5
+_YIELD_LOW_THRESHOLD = 0.15
+_YIELD_PENALTY = 0.5
+
+
+def _search_performance(db: Session, profile_id: int) -> list[dict]:
+    """Per-query yield: how much of what each Seek search surfaced was any good.
+
+    ``yield`` is the share of a query's captured jobs that scored at or above
+    the cover-letter threshold; ``volume`` doubles as its cost, since every
+    captured job is an LLM call. A high-volume, low-yield query is the thing
+    worth retiring, and neither number means anything without the other.
+
+    Only counts jobs captured since migration c5b21d7f4e3a — earlier rows have
+    no ``discovered_query`` and are invisible here by design.
+    """
+    rows = db.execute(
+        select(JobListing.discovered_query, Match.score)
+        .join(Match, Match.job_id == JobListing.id)
+        .where(Match.user_id == profile_id)
+        .where(JobListing.discovered_query.isnot(None))
+    ).all()
+
+    totals: Counter[str] = Counter()
+    hits: Counter[str] = Counter()
+    for query, score in rows:
+        key = (query or "").strip()
+        if not key:
+            continue
+        totals[key] += 1
+        if score is not None and float(score) >= COVER_LETTER_THRESHOLD:
+            hits[key] += 1
+
+    return sorted(
+        (
+            {
+                "query": query,
+                "volume": volume,
+                "hits": hits[query],
+                "yield": round(hits[query] / volume, 3),
+            }
+            for query, volume in totals.items()
+        ),
+        key=lambda r: (-r["yield"], -r["volume"]),
+    )
+
+
+def _underperforming_queries(performance: list[dict]) -> list[str]:
+    """Queries with enough volume to judge and too few hits to keep trusting."""
+    return [
+        row["query"].lower()
+        for row in performance
+        if row["volume"] >= _YIELD_MIN_VOLUME and row["yield"] < _YIELD_LOW_THRESHOLD
+    ]
+
+
+@app.get("/jobs/search-performance")
+def search_performance(profile_id: int = 1, db: Session = Depends(get_db)) -> dict:
+    """Yield per Seek search — Layer 3 of the suggestion pipeline.
+
+    Exposed on its own so the sidebar can show the user which of their searches
+    are earning their keep, independent of whether any of it feeds back into
+    the suggestions.
+    """
+    performance = _search_performance(db, profile_id)
+    return {
+        "performance": performance,
+        "underperforming": _underperforming_queries(performance),
+        "min_volume": _YIELD_MIN_VOLUME,
+        "low_yield_threshold": _YIELD_LOW_THRESHOLD,
+    }
+
+
 @app.get("/jobs/suggested-searches")
-def suggested_searches(profile_id: int = 1, db: Session = Depends(get_db)) -> dict:
-    """Free (non-LLM) search-phrase suggestions, hybrid-ranked in priority order:
+def suggested_searches(
+    profile_id: int = 1,
+    use_llm: bool | None = None,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Search-phrase suggestions, mined from the user's own match history.
 
-    1. ``Profile.target_role`` (if set) — the most direct statement of intent
-       available, so it outranks even a rich title-mining history.
-    2. Titles of score >= COVER_LETTER_THRESHOLD matches, tokenized into
-       bigrams/trigrams after stripping stopwords and ranked by frequency
-       (the original approach, unchanged).
-    3. Profile skill names / qualification fields of study — a fallback pool
-       only used to fill slots still empty after 1+2, fixing the cold-start
-       case where a new profile has little match history for (2) to mine.
+    Four layers, cheapest first — see ``app/search_suggest.py`` for why the
+    original frequency counting was replaced:
 
-    Excludes anything already covered by an active saved search. Pure Python,
-    no LLM call (see docs/extension-revamp-plan.md §7).
+    1. **Score-weighted mining** over every scored title: shrunk lift x log
+       support, gated on a role noun, deduplicated by nesting then by family.
+       Pure Python.
+    2. **Yield demotion** — a phrase already covered by a high-volume,
+       low-yield saved query gets its rank halved. Demoted, not dropped: the
+       same role may still be worth searching under different wording.
+    3. **Cold-start fallback** — ``target_role``, then skill names and fields
+       of study, used only to fill slots the mining could not, which is the
+       case on a new profile with no match history to mine.
+    4. **Optional LLM re-rank** (``app/llm/search_refine.py``), off unless the
+       user ticks it on. Debounced and cached; on failure or an empty result
+       the mined list stands.
+
+    ``use_llm`` overrides the stored preference for one call — the sidebar's
+    "Refresh now" button uses it to force a refine without flipping the
+    persisted setting.
 
     Registered before ``/jobs/{job_id}`` (like ``/jobs/known-ids`` above it) so
     the literal path wins the route match instead of being swallowed as a
@@ -673,12 +809,17 @@ def suggested_searches(profile_id: int = 1, db: Session = Depends(get_db)) -> di
         .options(selectinload(Profile.skills), selectinload(Profile.qualifications))
     )
 
-    titles = db.scalars(
-        select(JobListing.title)
-        .join(Match, Match.job_id == JobListing.id)
-        .where(Match.user_id == profile_id)
-        .where(Match.score >= COVER_LETTER_THRESHOLD)
-    ).all()
+    # The whole distribution, not just the good matches: the low scores are
+    # what make the baseline meaningful (see search_suggest.rank_phrases).
+    scored_titles = [
+        (title, float(score))
+        for title, score in db.execute(
+            select(JobListing.title, Match.score)
+            .join(Match, Match.job_id == JobListing.id)
+            .where(Match.user_id == profile_id)
+            .where(Match.score.isnot(None))
+        ).all()
+    ]
 
     active_keywords = {
         kw.lower()
@@ -690,18 +831,13 @@ def suggested_searches(profile_id: int = 1, db: Session = Depends(get_db)) -> di
         if kw
     }
 
-    phrase_counts: Counter[str] = Counter()
-    for title in titles:
-        words = [
-            w for w in re.findall(r"[A-Za-z]+", title.lower())
-            if w not in _TITLE_STOPWORDS
-        ]
-        for n in (2, 3):
-            for i in range(len(words) - n + 1):
-                phrase = " ".join(words[i : i + n])
-                phrase_counts[phrase] += 1
+    stats = search_suggest.mine(scored_titles)
 
-    ranked = [phrase for phrase, _count in phrase_counts.most_common()]
+    weak_queries = _underperforming_queries(_search_performance(db, profile_id))
+    for stat in stats:
+        if any(stat.phrase in query for query in weak_queries):
+            stat.rank *= _YIELD_PENALTY
+    stats.sort(key=lambda s: -s.rank)
 
     suggestions: list[str] = []
     seen_lower: set[str] = set()
@@ -716,10 +852,10 @@ def suggested_searches(profile_id: int = 1, db: Session = Depends(get_db)) -> di
     if profile is not None and profile.target_role:
         _add(profile.target_role.strip())
 
-    for phrase in ranked:
+    for stat in stats:
         if len(suggestions) >= 3:
             break
-        _add(phrase.title())
+        _add(stat.phrase.title())
 
     if len(suggestions) < 3:
         for phrase in _profile_phrase_candidates(profile):
@@ -727,7 +863,84 @@ def suggested_searches(profile_id: int = 1, db: Session = Depends(get_db)) -> di
                 break
             _add(phrase.title())
 
-    return {"suggestions": suggestions[:3]}
+    candidates = [stat.as_dict() for stat in stats]
+    llm_enabled = (
+        get_preferences(db, profile_id).get("llm_search_suggestions", False)
+        if use_llm is None
+        else use_llm
+    )
+    llm_used = False
+    if llm_enabled and candidates:
+        refined = _refined_suggestions(
+            db, profile_id, profile, candidates, sorted(active_keywords), force=bool(use_llm)
+        )
+        if refined:
+            llm_used = True
+            suggestions = [p for p in refined if p.lower() not in active_keywords][:3]
+
+    return {
+        "suggestions": suggestions[:3],
+        "candidates": candidates[:search_refine.MAX_CANDIDATES],
+        "llm_used": llm_used,
+        # Where the sidebar scopes the search it opens. target_location (where
+        # the user wants to WORK) always wins; `location` (where they live) is
+        # only a fallback for a profile that never set a target. They can
+        # legitimately differ — someone in Brisbane targeting Melbourne — so
+        # the order matters. Null means a nationwide search.
+        "location": _search_location(profile),
+    }
+
+
+def _search_location(profile: Profile | None) -> str | None:
+    """``target_location``, falling back to ``location``. See above for why."""
+    if profile is None:
+        return None
+    for value in (profile.target_location, profile.location):
+        cleaned = (value or "").strip()
+        if cleaned:
+            return cleaned
+    return None
+
+
+def _refined_suggestions(
+    db: Session,
+    profile_id: int,
+    profile: Profile | None,
+    candidates: list[dict],
+    active_keywords: list[str],
+    force: bool = False,
+) -> list[str]:
+    """Layer 4: cached, debounced LLM re-rank of the mined candidates.
+
+    The cache key is the user's scored-match count: a result stays current
+    until enough new matches have landed to plausibly change the ranking (see
+    ``search_refine.REFRESH_AFTER_NEW_MATCHES``). ``force`` bypasses that for
+    an explicit user-triggered refresh.
+    """
+    prefs = get_preferences(db, profile_id)
+    cached = prefs.get("llm_search_suggestions_cache")
+    match_count = db.scalar(
+        select(func.count())
+        .select_from(Match)
+        .where(Match.user_id == profile_id)
+        .where(Match.score.isnot(None))
+    ) or 0
+
+    if not force and not search_refine.should_refresh(cached, match_count):
+        return list(cached.get("searches", [])) if cached else []
+
+    searches = search_refine.refine(profile, candidates, active_keywords)
+    if not searches:
+        # Don't poison the cache with a failure — fall through to the mined
+        # list now and retry on the next request.
+        return list(cached.get("searches", [])) if cached else []
+
+    set_preferences(
+        db,
+        profile_id,
+        {"llm_search_suggestions_cache": {"searches": searches, "match_count": match_count}},
+    )
+    return searches
 
 
 @app.get("/jobs/{job_id}")
@@ -935,23 +1148,47 @@ def regenerate(
 
 
 @app.delete("/jobs")
-def bulk_delete_jobs(
+def bulk_hide_jobs(
     below_score: float,
     profile_id: int = 1,
     db: Session = Depends(get_db),
 ) -> dict:
-    """Delete all job listings whose match score for a profile is below ``below_score``."""
-    jobs = db.scalars(
-        select(JobListing)
-        .join(Match, Match.job_id == JobListing.id)
+    """Hide every match for a profile scoring below ``below_score``.
+
+    A *soft* delete, despite the verb: the match row survives with
+    ``hidden_at`` stamped, and only ``raw_description`` — the bulk of the
+    storage — is discarded. The user sees the same thing either way (the job
+    leaves every list in the sidebar), but the score survives, and the score is
+    what the suggestion miner needs.
+
+    Hard-deleting these was actively harmful. Phrase ranking is
+    ``(shrunk_mean - baseline) * log1p(support)``, so the low scorers are the
+    contrast that makes a good phrase measurably good; deleting them raised the
+    dev profile's baseline from 69.4 to 82.5 in one click and flattened the
+    signal. ``GET /jobs/search-performance`` needs them for the same reason —
+    a query's yield is meaningless if the misses are erased and only the hits
+    remain.
+
+    Idempotent: already-hidden matches are skipped, so re-running it at the
+    same threshold reports 0.
+    """
+    rows = db.execute(
+        select(Match, JobListing)
+        .join(JobListing, Match.job_id == JobListing.id)
         .where(Match.user_id == profile_id)
         .where(Match.score < below_score)
+        .where(Match.hidden_at.is_(None))
     ).all()
-    count = len(jobs)
-    for job in jobs:
-        db.delete(job)
+
+    now = datetime.now(timezone.utc)
+    for match, job in rows:
+        match.hidden_at = now
+        # Reclaim the space. Keeping the description would make this a
+        # storage no-op, and nothing downstream reads it once a match exists:
+        # the idle loop only picks up jobs that have no match row at all.
+        job.raw_description = None
     db.commit()
-    return {"deleted": count}
+    return {"deleted": len(rows), "hidden": len(rows)}
 
 
 @app.delete("/jobs/{job_id}")
@@ -1049,3 +1286,20 @@ def update_profile(
     db.commit()
 
     return {"id": profile.id, "name": profile.name, "email": profile.email}
+
+
+@app.get("/profile/{profile_id}/preferences")
+def read_preferences(profile_id: int, db: Session = Depends(get_db)) -> dict:
+    if db.get(Profile, profile_id) is None:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    return get_preferences(db, profile_id)
+
+
+@app.put("/profile/{profile_id}/preferences")
+def update_preferences(
+    profile_id: int, body: PreferencesUpdate, db: Session = Depends(get_db)
+) -> dict:
+    """Partial update: only the keys present in the body change."""
+    if db.get(Profile, profile_id) is None:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    return set_preferences(db, profile_id, body.model_dump(exclude_none=True))
