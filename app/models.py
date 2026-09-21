@@ -71,6 +71,14 @@ class Profile(Base):
     target_role: Mapped[str | None] = mapped_column(Text)
     target_location: Mapped[str | None] = mapped_column(Text)
     preferences: Mapped[str | None] = mapped_column(Text)  # JSON object; see app/preferences.py
+    # Explicit "my profile changed" marker. The suggestion miner already derives
+    # a revision time from MAX(updated_at) over experiences/skills/qualifications
+    # (see app/retention.py::profile_revised_at), but that cannot see a DELETION
+    # — removing a skill leaves nothing behind to have a newer timestamp. Bump
+    # this from any code path that deletes profile content.
+    profile_revised_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -436,6 +444,14 @@ class Match(Base):
         nullable=False,
     )
     score: Mapped[Decimal | None] = mapped_column(Numeric)  # 0-100, source of truth
+    # When ``score`` was last WRITTEN (match_job / quick-screen). Distinct from
+    # created_at: a job re-scored against an updated profile keeps its old
+    # created_at but must stop counting as stale, which is what the miner's
+    # post-profile-update weighting keys off. NULL on rows from before this
+    # column existed; read those as created_at.
+    scored_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
     reasoning: Mapped[str | None] = mapped_column(Text)
     gaps: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(
@@ -459,6 +475,10 @@ class Match(Base):
     # app/api/main.py. screenshot_path is relative to the app dir (served under
     # /screenshots); overwritten (old file deleted) on repeat capture, so it's
     # always the latest screenshot for this match, not a history of all of them.
+    # Screenshots expire (see app/retention.py): the FILE is deleted and
+    # screenshot_path nulled after SCREENSHOT_TTL_DAYS, but screenshot_taken_at
+    # is kept, so "path NULL + taken_at set" means "captured, since expired" and
+    # the application record still shows that evidence once existed.
     screenshot_path: Mapped[str | None] = mapped_column(Text)
     screenshot_taken_at: Mapped[datetime.datetime | None] = mapped_column(
         DateTime(timezone=True)
@@ -488,6 +508,7 @@ class Match(Base):
         UniqueConstraint("user_id", "job_id", name="uq_matches_user_job"),
         Index("idx_matches_user_score", "user_id", score.desc()),  # ranked dashboard
         Index("idx_matches_status", "status"),
+        Index("idx_matches_created", "created_at"),  # retention sweep / miner window
     )
 
 

@@ -472,8 +472,35 @@ function renderAppliedRow(job) {
   meta.textContent = [job.company, job.location].filter(Boolean).join(' · ') || '—';
   li.appendChild(meta);
 
+  const evidence = evidenceNote(job);
+  if (evidence) li.appendChild(evidence);
+
   li.addEventListener('click', () => chrome.tabs.create({ url: job.url }));
   return li;
+}
+
+// Screenshot files are deleted after a fixed TTL (30 days by default) while the
+// application record stays. Say so on the card rather than letting the image
+// vanish silently: an expiry date, a warning inside the last week, and a
+// distinct 'expired' state (screenshot_taken_at kept, no file).
+function evidenceNote(job) {
+  const fmt = iso => new Date(iso).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
+  const note = document.createElement('div');
+  note.className = 'evidence-note';
+  if (job.screenshot_url && job.screenshot_expires_at) {
+    const daysLeft = (new Date(job.screenshot_expires_at) - Date.now()) / 86400000;
+    note.textContent = `Screenshot kept until ${fmt(job.screenshot_expires_at)}`;
+    if (daysLeft <= 7) {
+      note.classList.add('soon');
+      note.textContent += ' — export it first';
+    }
+    return note;
+  }
+  if (job.screenshot_taken_at) {
+    note.textContent = `Screenshot taken ${fmt(job.screenshot_taken_at)} — file since expired`;
+    return note;
+  }
+  return null;
 }
 
 function csvEscape(val) {
@@ -490,7 +517,9 @@ document.getElementById('export-applied-btn').addEventListener('click', () => {
       job.company || '',
       job.location || '',
       job.url || '',
-      job.screenshot_taken_at ? job.screenshot_taken_at.slice(0, 10) : 'No',
+      // taken_at outlives the file, so distinguish expired from never-captured.
+      job.screenshot_url ? job.screenshot_taken_at.slice(0, 10)
+        : job.screenshot_taken_at ? `${job.screenshot_taken_at.slice(0, 10)} (file expired)` : 'No',
     ]);
   }
   const csv = rows.map(r => r.map(csvEscape).join(',')).join('\r\n');
@@ -501,6 +530,21 @@ document.getElementById('export-applied-btn').addEventListener('click', () => {
   a.download = `applied-jobs-${new Date().toISOString().slice(0, 10)}.csv`;
   a.click();
   URL.revokeObjectURL(url);
+});
+
+document.getElementById('export-evidence-btn').addEventListener('click', async () => {
+  try {
+    const res = await fetch(`${BACKEND}/jobs/evidence-export?profile_id=${PROFILE_ID}`);
+    if (!res.ok) throw new Error(res.status);
+    const url = URL.createObjectURL(await res.blob());
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `application-evidence-${new Date().toISOString().slice(0, 10)}.zip`;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    alert('Could not export evidence — is the backend running?');
+  }
 });
 
 // ---------------------------------------------------------------------------

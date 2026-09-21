@@ -233,6 +233,41 @@ guesswork — pick these up, or a new priority the user names:
    selectors if the JSON-LD path ever stops covering it.
 
 
+✅ COMPLETED: Rolling retention + post-profile-update weighting — 2026-09-21
+
+Age-based deletion for the match history the suggestion miner learns from,
+without moving its baseline. New `app/retention.py` + `app/screenshots.py`,
+migration `a7d2c9e15b48` (`matches.scored_at`, `profiles.profile_revised_at`,
+index on `matches.created_at`). Full reasoning in docs/database-schema.md
+(*Retention* under `matches`); the load-bearing decisions:
+- **Delete by age, never by score.** Age is uncorrelated with score so the
+  baseline survives; score-based deletion is what `hidden_at` soft-deletes
+  exist to avoid. Don't turn the bulk hide into a real DELETE.
+- **122-day window + 150-match floor**, one function (`effective_cutoff`)
+  shared by the daily sweep AND the miner's read, so applied matches (kept
+  forever, skew high) can't inflate the baseline. Only `status='new'` with
+  `applied_at IS NULL` is purgeable — a whitelist. Applied = Centrelink
+  evidence, never deleted.
+- **Screenshots**: file deleted 30 days after capture, `screenshot_taken_at`
+  kept ("captured, since expired"); downscaled to 1200px on upload;
+  `GET /jobs/evidence-export` zips CSV + surviving files; Applied cards show
+  the expiry date.
+- **Profile drift**: matches scored before the profile last changed get
+  weight 0.35 in the miner (baseline weighted too) — but only when a fresh
+  match exists to prefer (`relative_weights`); uniform discounting re-ordered
+  the live suggestions with no new information.
+- The sweep runs at the TOP of `_processing_idle_loop` (not the tail — LLM
+  phases `continue` and would starve it), once/24h, on the single worker.
+Not built: the "re-score against updated profile" button (item 10), and
+nothing yet bumps `profiles.profile_revised_at` on a deletion because no
+profile-edit endpoint exists for experiences/skills. Tunables live in
+`profiles.preferences`; the sidebar does not expose them.
+Verified: `python -m pytest` (175 passed, 43 new in tests/test_retention.py),
+migration applied to the dev DB, live-data ranking unchanged. NOT verified:
+the sweep against a real aged DB (dev data is all <1 day old, so it purged
+nothing), and the sidebar's new expiry note / evidence button in Chrome.
+
+
 ✅ COMPLETED: Search-suggestion overhaul — 4-layer pipeline — 2026-09-21
 
 Replaced the frequency-based suggested-searches miner, which ranked by how

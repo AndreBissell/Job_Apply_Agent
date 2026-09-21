@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timezone
 
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -299,6 +300,7 @@ def match_job(
             existing.reasoning = reasoning
             existing.gaps = gaps_json
             existing.status = "new"
+            existing.scored_at = datetime.now(timezone.utc)
         else:
             db.add(
                 Match(
@@ -308,6 +310,7 @@ def match_job(
                     reasoning=reasoning,
                     gaps=gaps_json,
                     status="new",
+                    scored_at=datetime.now(timezone.utc),
                 )
             )
 

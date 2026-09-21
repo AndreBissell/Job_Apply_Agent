@@ -5,6 +5,33 @@ one block per milestone.
 
 ---
 
+## 2026-09-21 — Rolling retention + post-profile-update weighting — DONE ✅
+
+**Goal:** hard-deleting low scorers had been fixed with soft deletes, which
+leaves the history growing forever; and after a profile edit the miner kept
+learning from matches scored against the *old* profile.
+
+**Built:** `app/retention.py` (window, floor, sweep, weights) and
+`app/screenshots.py` (downscale, expiry). Daily sweep at the top of the idle
+loop deletes `status='new'` / not-applied matches older than 122 days
+(newest 150 always kept); screenshot files expire at 30 days with
+`screenshot_taken_at` retained; `GET /jobs/evidence-export` zips the CSV +
+surviving screenshots; Applied cards show the expiry date. The miner and
+`/jobs/search-performance` read the same window the sweep keeps and weight
+post-profile-change matches 1.0 vs 0.35 for stale ones. Migration
+`a7d2c9e15b48`. The LLM suggestion cache now also invalidates on a profile
+change, and `should_refresh` uses `abs()` because the count can now shrink.
+
+**Found on live data:** the dev profile was re-seeded today, so all 16
+matches read as stale; uniform 0.35 weights flipped the top suggestion back
+to `software engineer` (the original bug). Fixed with `relative_weights` —
+discount only when a fresh match exists to prefer.
+
+**Verified:** 175 tests pass. **Not verified:** the sweep on a genuinely aged
+DB, and the sidebar changes in a loaded Chrome extension.
+
+---
+
 ## 2026-09-21 — Search-suggestion overhaul: 4-layer pipeline — DONE ✅
 
 **Goal:** the suggested-searches banner was offering "Administration Assistant

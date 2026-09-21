@@ -197,6 +197,7 @@ def quick_screen(
                 existing.reasoning = reasoning
                 existing.gaps = "[]"
                 existing.status = "new"
+                existing.scored_at = datetime.datetime.now(datetime.timezone.utc)
             else:
                 db.add(
                     Match(
@@ -206,6 +207,7 @@ def quick_screen(
                         reasoning=reasoning,
                         gaps="[]",
                         status="new",
+                        scored_at=datetime.datetime.now(datetime.timezone.utc),
                     )
                 )
             db.commit()

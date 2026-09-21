@@ -71,6 +71,8 @@
       border-radius: 10px; padding: 2px 8px; flex: none;
     }
     .job-meta { font-size: 12px; color: #6b7280; margin-top: 2px; }
+    .evidence-note { font-size: 11px; color: #6b7280; margin-top: 2px; }
+    .evidence-note.soon { color: #b45309; font-weight: 600; }
     .del-btn {
       background: none; border: none; cursor: pointer; color: #9ca3af;
       padding: 3px; border-radius: 5px; line-height: 0; flex: none;
@@ -429,6 +431,7 @@
     <div id="applied-bar">
       <span style="font-size:12px;color:#6b7280;">For Centrelink mutual-obligation reporting</span>
       <button class="btn" id="export-applied-btn">Export CSV</button>
+      <button class="btn" id="export-evidence-btn" title="CSV plus every screenshot that still exists. Screenshot files are deleted 30 days after capture; the application record is kept.">Export evidence (zip)</button>
     </div>
     <div id="applied-status">Loading…</div>
     <ul id="applied-list"></ul>

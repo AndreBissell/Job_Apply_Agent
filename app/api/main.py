@@ -13,27 +13,30 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import csv
 import functools
+import io
 import json
 import logging
 import re
+import zipfile
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Iterator
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from app import search_suggest
+from app import retention, search_suggest
 from app.api.profile_ui import router as profile_ui_router
 from app.db import SessionLocal
 from app.llm import search_refine
@@ -55,6 +58,7 @@ from app.models import (
     UserCv,
 )
 from app.preferences import get_auto_letter_min_score, get_preferences, set_preferences
+from app.screenshots import downscale_png, unlink_screenshot
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +96,17 @@ def broadcast_from_thread(event: str, data: dict) -> None:
     asyncio.run_coroutine_threadsafe(_broadcast(event, data), _event_loop)
 
 
+def _retention_tick() -> None:
+    """Run the retention sweep for every profile that is due. Never raises: a
+    sweep failure must not take the LLM idle loop down with it."""
+    try:
+        with SessionLocal() as db:
+            for profile_id in db.scalars(select(Profile.id)).all():
+                retention.run_sweep_if_due(db, profile_id, _screenshots_dir)
+    except Exception:
+        logger.exception("Retention sweep failed")
+
+
 async def _processing_idle_loop() -> None:
     """Single idle loop handling all LLM work, serialised through _bg_executor.
 
@@ -115,6 +130,14 @@ async def _processing_idle_loop() -> None:
     while True:
         try:
             loop = asyncio.get_running_loop()
+
+            # ── Retention sweep ───────────────────────────────────────────────
+            # Checked every iteration rather than only when idle: the LLM phases
+            # `continue` while there is any backlog, so a tail-of-loop sweep
+            # could starve indefinitely. It is a no-op except once per 24h
+            # (retention.SWEEP_INTERVAL), and runs on the single worker so it
+            # never interleaves with an LLM job writing to the same DB.
+            await loop.run_in_executor(_bg_executor, _retention_tick)
 
             # ── Phase 2: cover letters (checked first — see docstring) ────────
             cl_job_id: int | None = None
@@ -340,6 +363,13 @@ class ProfileUpdate(BaseModel):
 class PreferencesUpdate(BaseModel):
     auto_cover_letter_min_score: int | None = Field(default=None, ge=0, le=100)
     llm_search_suggestions: bool | None = None
+    # Retention tunables — see app/retention.py. Bounds keep a typo from
+    # turning the sweep into "delete everything" (window >= 7 days) or the
+    # screenshot TTL into "delete evidence immediately" (>= 1 day).
+    retention_window_days: int | None = Field(default=None, ge=7, le=730)
+    retention_floor_matches: int | None = Field(default=None, ge=0, le=5000)
+    screenshot_ttl_days: int | None = Field(default=None, ge=1, le=365)
+    stale_profile_weight: float | None = Field(default=None, gt=0, le=1)
 
 
 class StatusUpdate(BaseModel):
@@ -637,6 +667,7 @@ def list_jobs(
             query = query.where(JobListing.expired_detected_at.is_(None))
         query = query.order_by(Match.score.desc())
     rows = db.execute(query.limit(limit).offset(offset)).all()
+    ttl = timedelta(days=retention.screenshot_ttl_days(get_preferences(db, profile_id)))
 
     return [
         {
@@ -657,6 +688,12 @@ def list_jobs(
             "screenshot_url": (
                 f"/screenshots/{Path(match.screenshot_path).name}"
                 if match.screenshot_path else None
+            ),
+            # When the FILE will be deleted (null once it already has been:
+            # screenshot_taken_at set with no screenshot_url means "expired").
+            "screenshot_expires_at": (
+                (retention.utc(match.screenshot_taken_at) + ttl).isoformat()
+                if match.screenshot_path and match.screenshot_taken_at else None
             ),
             "extracted_at": job.extracted_at.isoformat() if job.extracted_at else None,
             "top_skills": [
@@ -713,36 +750,50 @@ def _search_performance(db: Session, profile_id: int) -> list[dict]:
 
     Only counts jobs captured since migration c5b21d7f4e3a — earlier rows have
     no ``discovered_query`` and are invisible here by design.
+
+    Reads the same rolling window as the suggestion miner, and per query
+    prefers matches scored AFTER the profile last changed: a query that
+    under-performed for the old profile should not demote phrases for the new
+    one. It falls back to the whole window while a query has fewer than
+    ``_YIELD_MIN_VOLUME`` post-update matches, so a fresh profile edit doesn't
+    blank the table.
     """
-    rows = db.execute(
-        select(JobListing.discovered_query, Match.score)
+    prefs = get_preferences(db, profile_id)
+    cutoff = retention.effective_cutoff(db, profile_id, retention.now_utc(), prefs)
+    revised = retention.profile_revised_at(db, profile_id)
+
+    query = (
+        select(JobListing.discovered_query, Match.score, Match.scored_at, Match.created_at)
         .join(Match, Match.job_id == JobListing.id)
         .where(Match.user_id == profile_id)
         .where(JobListing.discovered_query.isnot(None))
-    ).all()
+    )
+    if cutoff is not None:
+        query = query.where(Match.created_at >= cutoff)
 
-    totals: Counter[str] = Counter()
-    hits: Counter[str] = Counter()
-    for query, score in rows:
-        key = (query or "").strip()
+    # query -> [(score, scored_against_current_profile)]
+    by_query: dict[str, list[tuple[float | None, bool]]] = {}
+    for search, score, scored_at, created_at in db.execute(query).all():
+        key = (search or "").strip()
         if not key:
             continue
-        totals[key] += 1
-        if score is not None and float(score) >= COVER_LETTER_THRESHOLD:
-            hits[key] += 1
+        fresh = retention.match_weight(scored_at, created_at, revised) == 1.0
+        by_query.setdefault(key, []).append((None if score is None else float(score), fresh))
 
-    return sorted(
-        (
+    performance = []
+    for search, entries in by_query.items():
+        fresh_entries = [e for e in entries if e[1]]
+        used = fresh_entries if len(fresh_entries) >= _YIELD_MIN_VOLUME else entries
+        hits = sum(1 for score, _f in used if score is not None and score >= COVER_LETTER_THRESHOLD)
+        performance.append(
             {
-                "query": query,
-                "volume": volume,
-                "hits": hits[query],
-                "yield": round(hits[query] / volume, 3),
+                "query": search,
+                "volume": len(used),
+                "hits": hits,
+                "yield": round(hits / len(used), 3),
             }
-            for query, volume in totals.items()
-        ),
-        key=lambda r: (-r["yield"], -r["volume"]),
-    )
+        )
+    return sorted(performance, key=lambda r: (-r["yield"], -r["volume"]))
 
 
 def _underperforming_queries(performance: list[dict]) -> list[str]:
@@ -769,6 +820,76 @@ def search_performance(profile_id: int = 1, db: Session = Depends(get_db)) -> di
         "min_volume": _YIELD_MIN_VOLUME,
         "low_yield_threshold": _YIELD_LOW_THRESHOLD,
     }
+
+
+def _csv_safe(value: object) -> str:
+    """Neutralise spreadsheet formula injection. Titles/employers come from
+    scraped pages, and a cell starting with = + - @ is executed by Excel."""
+    text = "" if value is None else str(value)
+    return "'" + text if text[:1] in ("=", "+", "-", "@", "\t", "\r") else text
+
+
+@app.get("/jobs/evidence-export")
+def evidence_export(profile_id: int = 1, db: Session = Depends(get_db)) -> Response:
+    """Zip of every applied job's record plus whichever screenshots still exist.
+
+    The safety net for screenshot expiry (``screenshot_ttl_days``): the image
+    files are deleted after their TTL, so this is how the user takes a copy
+    first. The CSV always lists every application; ``Screenshot`` says
+    "yes", "expired" (taken, file since deleted) or "no" (never captured), and
+    the screenshots themselves sit alongside it under ``screenshots/``.
+
+    Registered before ``/jobs/{job_id}`` so the literal path wins the match.
+    """
+    rows = db.execute(
+        select(Match, JobListing)
+        .join(JobListing, Match.job_id == JobListing.id)
+        .where(Match.user_id == profile_id)
+        .where(Match.status == "applied")
+        .order_by(Match.applied_at.desc())
+    ).all()
+
+    csv_buf = io.StringIO()
+    writer = csv.writer(csv_buf)
+    writer.writerow(
+        ["Date Applied", "Job Title", "Employer", "Location", "Source URL",
+         "Screenshot", "Screenshot Taken", "Screenshot File"]
+    )
+    files: list[tuple[str, Path]] = []
+    for match, job in rows:
+        path = (
+            _screenshots_dir / Path(match.screenshot_path).name
+            if match.screenshot_path else None
+        )
+        on_disk = path is not None and path.is_file()
+        if on_disk:
+            files.append((f"screenshots/{path.name}", path))
+        if on_disk:
+            state = "yes"
+        elif match.screenshot_taken_at:
+            state = "expired"
+        else:
+            state = "no"
+        writer.writerow([
+            match.applied_at.date().isoformat() if match.applied_at else "",
+            _csv_safe(job.title), _csv_safe(job.company), _csv_safe(job.location), job.url,
+            state,
+            match.screenshot_taken_at.date().isoformat() if match.screenshot_taken_at else "",
+            f"screenshots/{path.name}" if on_disk else "",
+        ])
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("applied-jobs.csv", csv_buf.getvalue())
+        for arcname, path in files:
+            zf.write(path, arcname)
+
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="application-evidence-{stamp}.zip"'},
+    )
 
 
 @app.get("/jobs/suggested-searches")
@@ -810,15 +931,31 @@ def suggested_searches(
     )
 
     # The whole distribution, not just the good matches: the low scores are
-    # what make the baseline meaningful (see search_suggest.rank_phrases).
+    # what make the baseline meaningful (see search_suggest.rank_phrases) —
+    # but only the rolling window of it (retention.effective_cutoff, the same
+    # rule the sweep deletes by), so applied matches that outlive the sweep
+    # can't drag the baseline upward. Each match carries a weight: 1.0 if it
+    # was scored against the current profile, less if scored before the
+    # profile last changed.
+    prefs = get_preferences(db, profile_id)
+    cutoff = retention.effective_cutoff(db, profile_id, retention.now_utc(), prefs)
+    revised = retention.profile_revised_at(db, profile_id)
+    stale = retention.stale_weight(prefs)
+    titles_query = (
+        select(JobListing.title, Match.score, Match.scored_at, Match.created_at)
+        .join(Match, Match.job_id == JobListing.id)
+        .where(Match.user_id == profile_id)
+        .where(Match.score.isnot(None))
+    )
+    if cutoff is not None:
+        titles_query = titles_query.where(Match.created_at >= cutoff)
+    title_rows = db.execute(titles_query).all()
+    weights = retention.relative_weights(
+        [retention.match_weight(sa, ca, revised, stale) for _t, _s, sa, ca in title_rows]
+    )
     scored_titles = [
-        (title, float(score))
-        for title, score in db.execute(
-            select(JobListing.title, Match.score)
-            .join(Match, Match.job_id == JobListing.id)
-            .where(Match.user_id == profile_id)
-            .where(Match.score.isnot(None))
-        ).all()
+        (title, float(score), weight)
+        for (title, score, _sa, _ca), weight in zip(title_rows, weights)
     ]
 
     active_keywords = {
@@ -864,11 +1001,7 @@ def suggested_searches(
             _add(phrase.title())
 
     candidates = [stat.as_dict() for stat in stats]
-    llm_enabled = (
-        get_preferences(db, profile_id).get("llm_search_suggestions", False)
-        if use_llm is None
-        else use_llm
-    )
+    llm_enabled = prefs.get("llm_search_suggestions", False) if use_llm is None else use_llm
     llm_used = False
     if llm_enabled and candidates:
         refined = _refined_suggestions(
@@ -926,7 +1059,13 @@ def _refined_suggestions(
         .where(Match.score.isnot(None))
     ) or 0
 
-    if not force and not search_refine.should_refresh(cached, match_count):
+    # A profile edit changes what the best searches are without changing the
+    # match count, so the count-based debounce alone would serve a stale list.
+    revised = retention.profile_revised_at(db, profile_id)
+    revised_key = revised.isoformat() if revised else None
+    profile_changed = bool(cached) and cached.get("revised_at") != revised_key
+
+    if not force and not profile_changed and not search_refine.should_refresh(cached, match_count):
         return list(cached.get("searches", [])) if cached else []
 
     searches = search_refine.refine(profile, candidates, active_keywords)
@@ -938,7 +1077,13 @@ def _refined_suggestions(
     set_preferences(
         db,
         profile_id,
-        {"llm_search_suggestions_cache": {"searches": searches, "match_count": match_count}},
+        {
+            "llm_search_suggestions_cache": {
+                "searches": searches,
+                "match_count": match_count,
+                "revised_at": revised_key,
+            }
+        },
     )
     return searches
 
@@ -1084,6 +1229,8 @@ def upload_screenshot(
     chrome.tabs.captureVisibleTab — no multipart re-encode needed. Overwrites
     (deletes) any previous screenshot file for this match so repeat captures
     don't grow disk usage unbounded; one screenshot per match, latest wins.
+    Files expire after ``screenshot_ttl_days`` (default 30) — see
+    app/retention.py; the application record itself never does.
     """
     match = db.scalar(
         select(Match).where(Match.user_id == profile_id, Match.job_id == job_id)
@@ -1101,8 +1248,10 @@ def upload_screenshot(
     if not png_bytes:
         raise HTTPException(status_code=400, detail="Empty image data")
 
-    if match.screenshot_path:
-        (_screenshots_dir / Path(match.screenshot_path).name).unlink(missing_ok=True)
+    # Store at <=1200px wide; falls back to the untouched bytes on any failure.
+    png_bytes = downscale_png(png_bytes)
+
+    unlink_screenshot(_screenshots_dir, match.screenshot_path)
 
     ts = datetime.now(timezone.utc)
     filename = f"{job_id}-{profile_id}-{ts.strftime('%Y%m%dT%H%M%SZ')}.png"

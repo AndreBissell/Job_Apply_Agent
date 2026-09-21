@@ -87,7 +87,9 @@ def should_refresh(cached: dict | None, scored_match_count: int) -> bool:
     previous = cached.get("match_count")
     if not isinstance(previous, int):
         return True
-    return scored_match_count - previous >= REFRESH_AFTER_NEW_MATCHES
+    # abs(): the retention sweep deletes old matches, so the count can fall as
+    # well as rise, and a corpus that shrank by N is as changed as one that grew.
+    return abs(scored_match_count - previous) >= REFRESH_AFTER_NEW_MATCHES
 
 
 def _profile_block(profile) -> str:

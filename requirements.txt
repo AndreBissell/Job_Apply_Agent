@@ -14,6 +14,10 @@ aiofiles>=23.0   # required by FastAPI StaticFiles
 httpx>=0.27  # used by tests / for hitting the API
 pytest>=8.0  # test runner
 
+# Screenshot downscale on capture (app/screenshots.py). Optional at runtime: a
+# missing Pillow just stores the original PNG.
+pillow>=10.0
+
 # LLM layer: all calls go through app/llm/client.py; provider/model/key from .env.
 # OpenAI — active provider (gpt-5-nano for extraction/matching, gpt-5-mini for
 # cover letters; see app/llm/client.py docstring).

@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 # Tokens stripped from a title before phrases are built. Three groups, all
@@ -103,14 +104,23 @@ class PhraseStat:
     """
 
     phrase: str
-    support: int = 0            # how many scored titles contain it
+    support: int = 0            # how many scored titles contain it (raw count)
     scores: list[float] = field(default_factory=list)
+    weights: list[float] = field(default_factory=list)  # parallel to ``scores``
     rank: float = 0.0           # shrunk lift x log support
     shrunk_mean: float = 0.0
 
     @property
+    def effective_support(self) -> float:
+        """Sum of weights — what ``support`` is worth once stale evidence is discounted."""
+        return sum(self.weights)
+
+    @property
     def mean(self) -> float:
-        return sum(self.scores) / len(self.scores) if self.scores else 0.0
+        total = self.effective_support
+        if not total:
+            return 0.0
+        return sum(s * w for s, w in zip(self.scores, self.weights)) / total
 
     def as_dict(self) -> dict:
         return {
@@ -146,7 +156,7 @@ def phrases_in_title(title: str) -> set[str]:
 
 
 def rank_phrases(
-    scored_titles: list[tuple[str, float]],
+    scored_titles: Sequence[tuple],
     *,
     shrinkage_k: float = SHRINKAGE_K,
 ) -> list[PhraseStat]:
@@ -156,26 +166,41 @@ def rank_phrases(
     distribution, not just the good ones. The low scores are what make the
     baseline meaningful; filtering to score>=75 first would leave every phrase
     looking above average.
+
+    Each item is ``(title, score)`` or ``(title, score, weight)``; a missing
+    weight is 1.0. Weights discount matches scored against an out-of-date
+    profile (see ``app/retention.py``). They enter everywhere a count or a mean
+    did: ``support`` becomes the sum of weights, and the baseline is weighted
+    with the SAME weights — otherwise a discounted phrase mean would be
+    compared to an undiscounted baseline and every phrase would drift down
+    together. With all weights 1.0 this is exactly the unweighted formula.
     """
-    if not scored_titles:
+    entries = [
+        (item[0], float(item[1]), float(item[2]) if len(item) > 2 else 1.0)
+        for item in scored_titles
+    ]
+    entries = [e for e in entries if e[2] > 0]
+    total_weight = sum(w for _t, _s, w in entries)
+    if not total_weight:
         return []
 
-    baseline = sum(score for _title, score in scored_titles) / len(scored_titles)
+    baseline = sum(score * w for _t, score, w in entries) / total_weight
 
     stats: dict[str, PhraseStat] = {}
-    for title, score in scored_titles:
+    for title, score, weight in entries:
         for phrase in phrases_in_title(title):
             stat = stats.setdefault(phrase, PhraseStat(phrase=phrase))
             stat.scores.append(score)
+            stat.weights.append(weight)
             stat.support += 1
 
     for stat in stats.values():
         # Bayesian shrink toward the baseline: a phrase seen once is mostly
         # prior, a phrase seen often is mostly its own mean.
-        stat.shrunk_mean = (sum(stat.scores) + shrinkage_k * baseline) / (
-            stat.support + shrinkage_k
-        )
-        stat.rank = (stat.shrunk_mean - baseline) * math.log1p(stat.support)
+        weight = stat.effective_support
+        weighted_sum = sum(s * w for s, w in zip(stat.scores, stat.weights))
+        stat.shrunk_mean = (weighted_sum + shrinkage_k * baseline) / (weight + shrinkage_k)
+        stat.rank = (stat.shrunk_mean - baseline) * math.log1p(weight)
 
     ranked = sorted(stats.values(), key=lambda s: (-s.rank, -s.support, s.phrase))
     return [s for s in ranked if s.rank > 0]
@@ -206,6 +231,6 @@ def deduplicate(stats: list[PhraseStat]) -> list[PhraseStat]:
     return families
 
 
-def mine(scored_titles: list[tuple[str, float]]) -> list[PhraseStat]:
+def mine(scored_titles: Sequence[tuple]) -> list[PhraseStat]:
     """``rank_phrases`` then ``deduplicate`` — the whole Layer-1 pipeline."""
     return deduplicate(rank_phrases(scored_titles))
