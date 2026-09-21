@@ -1,10 +1,12 @@
 # Local database
 app.db
+real.db
 *.sqlite
 *.sqlite3
 
 # Captured Centrelink-evidence screenshots (local evidence files, not for git)
 screenshots/
+screenshots_real/
 
 # Environment / secrets
 .env

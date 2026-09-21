@@ -20,7 +20,7 @@ from pydantic import BaseModel
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.db import SessionLocal
+from app.db import SessionLocal, app_env
 from app.models import Experience, Profile, Qualification, Skill
 
 router = APIRouter()
@@ -267,7 +267,16 @@ def put_profile_data(body: ProfileData, db: Session = Depends(get_db)) -> dict:
 
 @router.delete("/profile-ui/data")
 def delete_profile_data(db: Session = Depends(get_db)) -> dict:
-    """Delete the profile and all its children (used by --reset flag in loader script)."""
+    """Delete the profile and all its children (used by --reset flag in loader script).
+
+    Refused in the real environment: the profile's matches carry ``applied_at``
+    and screenshots — Centrelink evidence — and cascade-delete with it.
+    """
+    if app_env() == "real":
+        raise HTTPException(
+            status_code=403,
+            detail="Deleting the profile is disabled in the real environment.",
+        )
     profile = db.scalars(select(Profile).limit(1)).first()
     if profile is not None:
         db.delete(profile)

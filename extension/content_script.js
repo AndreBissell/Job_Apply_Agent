@@ -2,7 +2,7 @@
 // DOM and POSTs the job data to the local backend. Makes NO request to Seek — it
 // only reads the page the user is already viewing.
 
-const BACKEND = 'http://localhost:8000';
+// BACKEND comes from config.js (real vs test environment).
 
 async function ingest(listings) {
   try {
@@ -450,4 +450,4 @@ async function main() {
   }
 }
 
-main();
+backendReady.then(main);

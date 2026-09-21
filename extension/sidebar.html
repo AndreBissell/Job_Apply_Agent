@@ -18,6 +18,17 @@
     }
     header h1 { font-size: 14px; margin: 0; }
     #hdr-jobs-btns { display: flex; gap: 6px; }
+    .hdr-title { display: flex; align-items: center; gap: 8px; }
+
+    /* Environment switch (real.db vs the fake test profile). Deliberately loud
+       in TEST mode — the header turns orange so it's never mistaken for real. */
+    #env-pill {
+      font-size: 10px; font-weight: 700; letter-spacing: .04em; padding: 2px 8px;
+      border-radius: 999px; border: 1px solid; cursor: pointer; line-height: 1.4;
+      color: #047857; background: #ecfdf5; border-color: #6ee7b7;
+    }
+    body.env-test header { background: #fff7ed; border-bottom-color: #fb923c; }
+    body.env-test #env-pill { color: #c2410c; background: #ffedd5; border-color: #fb923c; }
 
     /* Tabs */
     nav#tabs {
@@ -290,6 +301,11 @@
       outline: none; border-color: #2557a7; box-shadow: 0 0 0 2px #dbeafe;
     }
     .field > textarea { resize: vertical; min-height: 60px; }
+    /* Experience description: grows with its text so the whole thing is readable
+       without scrolling inside the box, then caps and scrolls. Pure CSS
+       (Chrome 123+); on anything older it just stays a fixed-size box. */
+    .field > textarea.f-desc { field-sizing: content; max-height: 320px; }
+    .field > input.month-input.invalid { border-color: #dc2626; background: #fef2f2; }
 
     .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 
@@ -358,11 +374,25 @@
     }
 
     #save-profile-btn { width: 100%; padding: 9px; }
+
+    /* Pinned to the bottom of the panel so Save is always in reach, and shouts
+       when there are edits that only exist in the form (nothing is stored until
+       Save — "Done" on a card just collapses it). */
+    #save-bar {
+      position: sticky; bottom: 0; z-index: 8; margin: 12px -14px -24px;
+      padding: 8px 14px 12px; background: #f7f8fa; border-top: 1px solid #e5e7eb;
+    }
+    #dirty-note { display: block; font-size: 12px; font-weight: 600; color: #b45309; margin-bottom: 6px; }
+    #dirty-note[hidden] { display: none; }
+    #save-bar.dirty #save-profile-btn { box-shadow: 0 0 0 3px #fde68a; }
   </style>
 </head>
 <body>
   <header>
-    <h1>Seek Job Assistant</h1>
+    <div class="hdr-title">
+      <h1>Seek Job Assistant</h1>
+      <button id="env-pill" title="Click to switch between your real profile and the test profile"></button>
+    </div>
     <div id="hdr-jobs-btns">
       <button class="btn" id="scan-btn">Scan Page</button>
       <button class="btn" id="refresh-btn">Refresh</button>
@@ -402,6 +432,15 @@
           <input id="auto-letter-min" type="number" min="0" max="100" value="75">
           <button class="btn" id="auto-letter-save">Save</button>
         </div>
+        <div class="pref-row">
+          <span>Job pages opened per Scan Page</span>
+          <input id="scan-pages" type="number" min="1" max="25" value="10">
+          <button class="btn" id="scan-pages-save">Save</button>
+        </div>
+        <p class="pref-note">
+          Max 25. Each page is opened 5 seconds after the last, so a scan takes
+          roughly 5s × this number. Already-captured jobs are skipped and don't count.
+        </p>
         <div class="pref-row">
           <label class="pref-check" for="llm-suggest">
             <input id="llm-suggest" type="checkbox">
@@ -500,9 +539,13 @@
       </div>
     </div>
 
-    <button class="btn btn-primary" id="save-profile-btn">Save Profile</button>
+    <div id="save-bar">
+      <span id="dirty-note" hidden>● Unsaved changes — not stored until you click Save Profile</span>
+      <button class="btn btn-primary" id="save-profile-btn">Save Profile</button>
+    </div>
   </div>
 
+  <script src="config.js"></script>
   <script src="sidebar.js"></script>
 </body>
 </html>

@@ -22,6 +22,16 @@ load_dotenv()
 DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///app.db")
 
 
+def app_env() -> str:
+    """Which environment this process serves: ``"real"`` or ``"test"``.
+
+    Set by ``scripts/run_api.py`` alongside DATABASE_URL. Defaults to ``"test"``
+    so anything that starts the app without the launcher (pytest, ad-hoc uvicorn,
+    alembic) can never be mistaken for — or write to — the real environment.
+    """
+    return "real" if os.environ.get("APP_ENV") == "real" else "test"
+
+
 class Base(DeclarativeBase):
     """Declarative base shared by every model and by Alembic's metadata."""
 

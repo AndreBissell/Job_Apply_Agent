@@ -78,6 +78,16 @@ class TestPreferences:
         _profile(db)
         assert client.put("/profile/1/preferences", json={"auto_cover_letter_min_score": 101}).status_code == 422
 
+    def test_scan_max_pages_default_roundtrip_and_cap(self, client, db):
+        _profile(db)
+        assert client.get("/profile/1/preferences").json()["scan_max_pages"] == 10
+        assert client.put("/profile/1/preferences", json={"scan_max_pages": 20}).json()["scan_max_pages"] == 20
+        assert client.get("/profile/1/preferences").json()["scan_max_pages"] == 20
+        # Bounds are the Seek access policy's cap — 0 and 26 must both be refused.
+        for bad in (0, 26):
+            assert client.put("/profile/1/preferences", json={"scan_max_pages": bad}).status_code == 422
+        assert client.get("/profile/1/preferences").json()["scan_max_pages"] == 20
+
     def test_unknown_profile_404(self, client):
         assert client.get("/profile/99/preferences").status_code == 404
 

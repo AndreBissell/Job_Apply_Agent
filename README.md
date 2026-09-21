@@ -363,9 +363,17 @@ python -m venv .venv
 # 3. Seed a test profile (id 1) + a saved search
 .venv\Scripts\python.exe scripts\seed_saved_search.py
 
-# 4. Run the backend (leave it running)
-.venv\Scripts\python.exe scripts\run_api.py      # → http://127.0.0.1:8000
+# 4. Run the backend (leave it running). Pick an environment — see "Real vs test" below.
+.venv\Scripts\python.exe scripts\run_api.py real   # → :8000, real.db (your real profile)
+.venv\Scripts\python.exe scripts\run_api.py test   # → :8001, app.db  (the fake profile)
 ```
+
+**Real vs test.** Two fully isolated environments — separate database, screenshots
+folder and port — so test churn can never touch real applications or Centrelink
+evidence. The sidebar header has a **REAL / TEST** pill; click it to switch (TEST turns
+the header orange). Start the backend for whichever one you're using. Run one at a
+time: both share the OpenAI key and rate limit. The real environment refuses
+`DELETE /profile-ui/data`.
 
 **Load the extension:** Chrome → `chrome://extensions` → enable **Developer mode** →
 **Load unpacked** → select the `extension/` folder.

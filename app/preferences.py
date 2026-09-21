@@ -26,6 +26,10 @@ DEFAULTS: dict = {
     # one that spends an LLM call, so it should never switch itself on. See
     # app/llm/search_refine.py.
     "llm_search_suggestions": False,
+    # How many job pages one "Scan Page" opens (the 1-hop scan, paced at 5s each).
+    # User-tunable, but the API hard-caps it (PreferencesUpdate, le=25) — the cap
+    # is the Seek access policy's "capped, never removed" rule, not a suggestion.
+    "scan_max_pages": 10,
     # Cached refine output: {"searches": [...], "match_count": int}. Lives here
     # rather than in its own table because it is small, per-user, and
     # disposable — losing it costs one LLM call.

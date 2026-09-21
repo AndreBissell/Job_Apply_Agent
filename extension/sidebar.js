@@ -1,7 +1,9 @@
 // Side panel: tabbed Jobs + Profile editor.
-// Vanilla JS, no build step. Talks to the FastAPI backend on localhost:8000.
+// Vanilla JS, no build step. Talks to the FastAPI backend — BACKEND comes from
+// config.js and is either the real (8000) or test (8001) environment.
 
-const BACKEND = 'http://localhost:8000';
+// Each environment is its own database with exactly one profile, and that
+// profile is id 1 in both — so this constant is correct for either.
 const PROFILE_ID = 1;
 
 // Score tiers (docs/extension-revamp-plan.md §1) — purely visual colouring.
@@ -37,6 +39,47 @@ function fmtDate(ym) {
   return new Date(Number(y), Number(m) - 1, 1)
     .toLocaleDateString('en-AU', { month: 'short', year: 'numeric' });
 }
+
+// Month fields are plain text ("YYYY-MM"), not <input type="month">: the native
+// control makes you scroll or click through segments to change a year, where a
+// typed field lets you just retype it. The value stays "YYYY-MM", so the
+// save/load code is unchanged.
+function monthInputHtml(cls) {
+  return `<input class="${cls} month-input" type="text" inputmode="numeric" maxlength="7" placeholder="YYYY-MM" autocomplete="off">`;
+}
+
+// "2025-3" / "2025-03" -> "2025-03"; anything else (incl. month 13) -> null.
+function normaliseMonth(raw) {
+  const m = /^(\d{4})-(\d{1,2})$/.exec((raw || '').trim());
+  if (!m) return null;
+  const month = Number(m[2]);
+  return month >= 1 && month <= 12 ? `${m[1]}-${String(month).padStart(2, '0')}` : null;
+}
+
+// The value to save/summarise for a month input: valid "YYYY-MM" or ''. A
+// half-typed or invalid date is treated as empty rather than sent to the backend.
+function monthValue(input) {
+  return normaliseMonth(input.value) || '';
+}
+
+document.addEventListener('input', (e) => {
+  const el = e.target;
+  if (!el.classList?.contains('month-input')) return;
+  if (/[^\d-]/.test(el.value)) el.value = el.value.replace(/[^\d-]/g, '');
+  // Add the dash as the 4th digit is typed at the end. Never on delete or
+  // mid-string, so fixing the year in place ("2026-03" -> "2025-03") isn't
+  // reformatted under the caret.
+  if (e.inputType === 'insertText' && /^\d{4}$/.test(el.value)) el.value += '-';
+  el.classList.remove('invalid');
+});
+
+document.addEventListener('focusout', (e) => {
+  const el = e.target;
+  if (!el.classList?.contains('month-input')) return;
+  const normalised = normaliseMonth(el.value);
+  if (normalised) el.value = normalised;
+  el.classList.toggle('invalid', !!el.value.trim() && !normalised);
+});
 
 function truncate(str, n) {
   if (!str || str.length <= n) return str;
@@ -612,9 +655,13 @@ document.getElementById('sugg-close').addEventListener('click', async () => {
 // ---------------------------------------------------------------------------
 // Scan Page (1-hop rule: links from a page the user opened, ≥5s apart, capped)
 // ---------------------------------------------------------------------------
-// MAX_SCAN_PAGES is now mostly a safety ceiling, not the primary cost control —
-// WEAK_STREAK_LIMIT below does the real work of cutting a bad search short.
-const MAX_SCAN_PAGES = 10;
+// How many job pages one scan opens. User-tunable in "Personalise metrics"
+// (stored server-side as scan_max_pages) between 1 and SCAN_PAGES_CEILING; the
+// ceiling mirrors the API's own validation and is the policy cap — the setting
+// can move under it but never past it. WEAK_STREAK_LIMIT below still does the
+// real work of cutting a bad search short.
+const SCAN_PAGES_CEILING = 25;
+let scanMaxPages = 10;
 const SCAN_DELAY_MS = 5000;
 
 // Early-exit: if this many consecutive scraped jobs come back weak on the
@@ -743,7 +790,7 @@ async function scanPage() {
 
     const newUrls = allUrls.filter(u => !knownIds.has(extractJobId(u)));
     const skipped = allUrls.length - newUrls.length;
-    const urls = newUrls.slice(0, MAX_SCAN_PAGES);
+    const urls = newUrls.slice(0, scanMaxPages);
 
     if (skipped) scanLog(`Skipped ${skipped} already-captured job(s).`);
     if (!urls.length) { scanNotice('All jobs on this page already captured.'); return; }
@@ -849,6 +896,8 @@ const personaliseToggle = document.getElementById('personalise-toggle');
 const personalisePanel = document.getElementById('personalise-panel');
 const autoLetterInput = document.getElementById('auto-letter-min');
 const autoLetterSaveBtn = document.getElementById('auto-letter-save');
+const scanPagesInput = document.getElementById('scan-pages');
+const scanPagesSaveBtn = document.getElementById('scan-pages-save');
 const llmSuggestCheckbox = document.getElementById('llm-suggest');
 const llmSuggestRefreshBtn = document.getElementById('llm-suggest-refresh');
 
@@ -869,6 +918,11 @@ async function loadPreferences() {
       autoLetterMin = prefs.auto_cover_letter_min_score;
       autoLetterInput.value = autoLetterMin;
     }
+    if (Number.isInteger(prefs.scan_max_pages)
+        && prefs.scan_max_pages >= 1 && prefs.scan_max_pages <= SCAN_PAGES_CEILING) {
+      scanMaxPages = prefs.scan_max_pages;
+    }
+    scanPagesInput.value = scanMaxPages;
     llmSuggestCheckbox.checked = prefs.llm_search_suggestions === true;
   } catch { /* backend down — keep defaults; loadJobs shows its own error */ }
 }
@@ -895,6 +949,29 @@ autoLetterSaveBtn.addEventListener('click', async () => {
     autoLetterSaveBtn.textContent = 'Error';
   }
   setTimeout(() => { autoLetterSaveBtn.textContent = 'Save'; autoLetterSaveBtn.disabled = false; }, 1500);
+});
+
+scanPagesSaveBtn.addEventListener('click', async () => {
+  const value = parseInt(scanPagesInput.value, 10);
+  if (!Number.isInteger(value) || value < 1 || value > SCAN_PAGES_CEILING) {
+    scanPagesInput.value = scanMaxPages; // out of range — snap back, don't save
+    return;
+  }
+  scanPagesSaveBtn.disabled = true;
+  scanPagesSaveBtn.textContent = '…';
+  try {
+    const res = await fetch(`${BACKEND}/profile/${PROFILE_ID}/preferences`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scan_max_pages: value }),
+    });
+    if (!res.ok) throw new Error();
+    scanMaxPages = value;
+    scanPagesSaveBtn.textContent = 'Saved ✓';
+  } catch {
+    scanPagesSaveBtn.textContent = 'Error';
+  }
+  setTimeout(() => { scanPagesSaveBtn.textContent = 'Save'; scanPagesSaveBtn.disabled = false; }, 1500);
 });
 
 // Layer 4 opt-in. Unticked, /jobs/suggested-searches never reaches the LLM;
@@ -1013,11 +1090,36 @@ document.getElementById('bulk-delete-btn').addEventListener('click', async () =>
 // ---------------------------------------------------------------------------
 const profileMsg = document.getElementById('profile-msg');
 
-function showMsg(text, type) {
+function showMsg(text, type, ms = 3000) {
   profileMsg.textContent = text;
   profileMsg.className = type;
-  setTimeout(() => { profileMsg.className = ''; }, 3000);
+  setTimeout(() => { profileMsg.className = ''; }, ms);
 }
+
+// Unsaved-changes tracking. The profile form is only persisted by Save Profile
+// (a card's "Done" merely collapses it), so any edit — typing, adding/removing a
+// card or skill, or an import — flips this on until the next successful save
+// or a fresh load from the backend.
+const dirtyNote = document.getElementById('dirty-note');
+const saveBar = document.getElementById('save-bar');
+
+function setProfileDirty(dirty) {
+  dirtyNote.hidden = !dirty;
+  saveBar.classList.toggle('dirty', dirty);
+}
+
+// Called after the form is (re)filled from the backend or saved: discard the
+// mutation records our own rendering just queued, then clear the flag.
+function markProfileClean() {
+  profileObserver.takeRecords();
+  setProfileDirty(false);
+}
+
+const profileObserver = new MutationObserver(() => setProfileDirty(true));
+const profileSectionEl = document.getElementById('profile-section');
+profileObserver.observe(profileSectionEl, { childList: true, subtree: true });
+profileSectionEl.addEventListener('input', () => setProfileDirty(true));
+profileSectionEl.addEventListener('change', () => setProfileDirty(true));
 
 // -- Qualification card --
 
@@ -1067,8 +1169,8 @@ function makeQualCard(data = {}, isNew = false) {
       </label>
     </div>
     <div class="two-col">
-      <label class="field"><span>Start</span><input class="f-start" type="month"></label>
-      <label class="field"><span>End</span><input class="f-end" type="month"></label>
+      <label class="field"><span>Start</span>${monthInputHtml('f-start')}</label>
+      <label class="field"><span>End</span>${monthInputHtml('f-end')}</label>
     </div>
     <label class="field"><span>Status</span>
       <select class="f-status">
@@ -1101,8 +1203,8 @@ function makeQualCard(data = {}, isNew = false) {
     const title  = formEl.querySelector('.f-title').value || '(untitled)';
     const inst   = formEl.querySelector('.f-institution').value;
     const field  = formEl.querySelector('.f-field').value;
-    const start  = formEl.querySelector('.f-start').value;
-    const end    = formEl.querySelector('.f-end').value;
+    const start  = monthValue(formEl.querySelector('.f-start'));
+    const end    = monthValue(formEl.querySelector('.f-end'));
     const status = formEl.querySelector('.f-status').value;
 
     summaryEl.querySelector('.summary-title').textContent = title;
@@ -1137,8 +1239,8 @@ function readQualCard(card) {
     institution:        card.querySelector('.f-institution').value.trim() || null,
     field_of_study:     card.querySelector('.f-field').value.trim() || null,
     grade:              card.querySelector('.f-grade').value.trim() || null,
-    start_date:         card.querySelector('.f-start').value || null,
-    end_date:           card.querySelector('.f-end').value || null,
+    start_date:         monthValue(card.querySelector('.f-start')) || null,
+    end_date:           monthValue(card.querySelector('.f-end')) || null,
     status:             card.querySelector('.f-status').value,
   };
 }
@@ -1183,8 +1285,8 @@ function makeExpCard(data = {}, isNew = false) {
       <input class="f-org" type="text" placeholder="Company or project name">
     </label>
     <div class="two-col">
-      <label class="field"><span>Start</span><input class="f-start" type="month"></label>
-      <label class="field f-end-label"><span>End</span><input class="f-end" type="month"></label>
+      <label class="field"><span>Start</span>${monthInputHtml('f-start')}</label>
+      <label class="field f-end-label"><span>End</span>${monthInputHtml('f-end')}</label>
     </div>
     <div class="check-row">
       <input class="f-current" type="checkbox"><label>Current role</label>
@@ -1228,8 +1330,8 @@ function makeExpCard(data = {}, isNew = false) {
     const type   = formEl.querySelector('.f-type').value;
     const title  = formEl.querySelector('.f-title').value || '(untitled)';
     const org    = formEl.querySelector('.f-org').value;
-    const start  = formEl.querySelector('.f-start').value;
-    const end    = formEl.querySelector('.f-end').value;
+    const start  = monthValue(formEl.querySelector('.f-start'));
+    const end    = monthValue(formEl.querySelector('.f-end'));
     const isCur  = formEl.querySelector('.f-current').checked;
     const desc   = formEl.querySelector('.f-desc').value;
 
@@ -1268,8 +1370,8 @@ function readExpCard(card) {
     experience_type: card.querySelector('.f-type').value,
     title:           card.querySelector('.f-title').value.trim(),
     organization:    card.querySelector('.f-org').value.trim() || null,
-    start_date:      card.querySelector('.f-start').value || null,
-    end_date:        isCurrent ? null : (card.querySelector('.f-end').value || null),
+    start_date:      monthValue(card.querySelector('.f-start')) || null,
+    end_date:        isCurrent ? null : (monthValue(card.querySelector('.f-end')) || null),
     is_current:      isCurrent,
     description:     card.querySelector('.f-desc').value.trim() || null,
     skills:          card.querySelector('.f-skills').value.split(',').map(s => s.trim()).filter(Boolean),
@@ -1342,17 +1444,22 @@ function populateForm(data) {
 
   skillsData = data.skills || [];
   renderSkillPills();
+  markProfileClean();
 }
 
 async function saveProfile() {
   const btn = document.getElementById('save-profile-btn');
   btn.disabled = true;
   btn.textContent = 'Saving…';
+  let savedLabel = 'Save Profile';
   try {
-    const quals = [...document.querySelectorAll('#quals-list .entry-card')]
-      .map(readQualCard).filter(q => q.title);
-    const exps = [...document.querySelectorAll('#exps-list .entry-card')]
-      .map(readExpCard).filter(e => e.title);
+    const qualCards = [...document.querySelectorAll('#quals-list .entry-card')];
+    const expCards  = [...document.querySelectorAll('#exps-list .entry-card')];
+    const quals = qualCards.map(readQualCard).filter(q => q.title);
+    const exps  = expCards.map(readExpCard).filter(e => e.title);
+    // A card with no title can't be stored (the backend skips it too) — say so
+    // instead of letting it vanish on the next load.
+    const dropped = (qualCards.length - quals.length) + (expCards.length - exps.length);
     const skills = [...skillsData];
 
     const body = {
@@ -1376,12 +1483,24 @@ async function saveProfile() {
       body: JSON.stringify(body),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    showMsg('Profile saved.', 'ok');
+    markProfileClean();
+    if (dropped) {
+      // Left dirty on purpose: the untitled cards are still in the form, unsaved.
+      setProfileDirty(true);
+      showMsg(`Saved — but ${dropped} entr${dropped === 1 ? 'y' : 'ies'} with no title ${dropped === 1 ? 'was' : 'were'} skipped. Give ${dropped === 1 ? 'it' : 'them'} a title and save again.`, 'err', 8000);
+    } else {
+      showMsg('Profile saved.', 'ok');
+    }
+    savedLabel = dropped ? 'Save Profile' : 'Saved ✓';
   } catch (e) {
     showMsg(`Save failed: ${e.message}`, 'err');
+    savedLabel = 'Save failed — retry';
   } finally {
+    // The message above renders at the TOP of the panel, off-screen when you
+    // click the pinned button at the bottom — so the button itself confirms.
     btn.disabled = false;
-    btn.textContent = 'Save Profile';
+    btn.textContent = savedLabel;
+    if (savedLabel !== 'Save Profile') setTimeout(() => { btn.textContent = 'Save Profile'; }, 2500);
   }
 }
 
@@ -1477,6 +1596,7 @@ async function seekProfileExtract() {
   const out = {
     name: null, location: null, email: null, summary: null,
     experiences: [], qualifications: [], skills: [],
+    unrecognised: {},  // read-* sections seen on the page but not imported: { 'read-x': count }
   };
 
   // ── Personal details ──────────────────────────────────────────────────────
@@ -1539,6 +1659,53 @@ async function seekProfileExtract() {
       field_of_study: '', grade: '',
       start_date: startDate, end_date: endDate, status: 'completed',
     });
+  });
+
+  // ── Other sections (projects, volunteering, certifications, …) ────────────
+  // NOT confirmed against live HTML: only read-role / read-qualification have
+  // been seen. Seek's profile sections appear to share the read-<thing> naming
+  // and the h4 + time layout, so any OTHER read-* block is parsed the same way
+  // when its name says what it is (below). Anything whose name doesn't say — and
+  // any block with no h4/h3 title — is left out of the import and reported by
+  // name in `unrecognised`, so the status line tells us exactly what to add
+  // rather than silently dropping it.
+  const KNOWN_READ = new Set(['read-role', 'read-qualification']);
+  const EXP_TYPE_BY_NAME  = [[/volunteer/i, 'volunteer'], [/intern/i, 'internship'], [/project/i, 'project']];
+  const CERT_NAME = /licen[cs]e|certif|course|training/i;
+
+  document.querySelectorAll('[data-automation^="read-"]').forEach(item => {
+    const key = item.getAttribute('data-automation');
+    if (KNOWN_READ.has(key)) return;
+
+    const title = item.querySelector('h4, h3')?.innerText?.trim() || '';
+    const expType = EXP_TYPE_BY_NAME.find(([re]) => re.test(key))?.[1] || null;
+    const isCert  = CERT_NAME.test(key);
+    if (!title || (!expType && !isCert)) {
+      out.unrecognised[key] = (out.unrecognised[key] || 0) + 1;
+      return;
+    }
+
+    const dateRaw = item.querySelector('time')?.innerText?.trim() || '';
+    const [startDate, endDate, isCurrent] = parseDateRange(dateRaw);
+    const descEl = item.querySelector(':not([aria-hidden="true"]) [data-hj-masked]')
+                || item.querySelector('[data-hj-masked]');
+    const description = descEl?.innerText?.trim().replace(/^[•·]\s*/, '') || '';
+    const rest = cleanText(item, `h4, h3, time, [data-hj-masked], ${NOISE}`)
+      .split('\n')[0]?.trim() || '';
+
+    if (expType) {
+      out.experiences.push({
+        experience_type: expType, title, organization: rest,
+        start_date: startDate, end_date: endDate, is_current: isCurrent,
+        description, skills: [],
+      });
+    } else {
+      out.qualifications.push({
+        qualification_type: 'certificate', title, institution: rest,
+        field_of_study: '', grade: '',
+        start_date: startDate, end_date: endDate, status: 'completed',
+      });
+    }
   });
 
   // ── Skills ────────────────────────────────────────────────────────────────
@@ -1609,15 +1776,24 @@ async function importFromSeekProfile() {
     for (const s of (p.skills || [])) addSkill(s);
 
     const counts = [
-      p.experiences?.length && `${p.experiences.length} role(s)`,
+      p.experiences?.length && `${p.experiences.length} experience(s)`,
       p.qualifications?.length && `${p.qualifications.length} qualification(s)`,
       p.skills?.length && `${p.skills.length} skill(s)`,
     ].filter(Boolean);
 
+    // Sections the page has that the importer couldn't classify — surfaced by
+    // name (not silently dropped) so the right selector can be added.
+    const skippedSections = Object.entries(p.unrecognised || {})
+      .map(([k, n]) => `${k} ×${n}`).join(', ');
+
     if (!p.name && !counts.length) {
       setImportStatus('Nothing extracted — page may not have rendered. Check browser console (F12).', '#d97706');
     } else {
-      setImportStatus(`Imported: ${[p.name && 'name', ...counts].filter(Boolean).join(', ')}. Review & save.`, '#059669');
+      const skipped = skippedSections ? ` Not imported (unrecognised): ${skippedSections}.` : '';
+      setImportStatus(
+        `Imported: ${[p.name && 'name', ...counts].filter(Boolean).join(', ')}. Review & save.${skipped}`,
+        skippedSections ? '#d97706' : '#059669',
+      );
     }
   } catch (e) {
     console.error('[SeekImport] Error:', e);
@@ -1685,5 +1861,24 @@ function connectEvents() {
 // ---------------------------------------------------------------------------
 // Init
 // ---------------------------------------------------------------------------
-loadPreferences().then(loadJobs);
-connectEvents();
+const envPill = document.getElementById('env-pill');
+
+function renderEnvPill() {
+  envPill.textContent = BACKEND_ENV.toUpperCase();
+  document.body.classList.toggle('env-test', BACKEND_ENV === 'test');
+}
+
+// Flipping the switch swaps the whole data set (a different database), so
+// reload the panel rather than patch state in place — nothing from the old
+// environment can linger on screen.
+envPill.addEventListener('click', async () => {
+  const next = BACKEND_ENV === 'real' ? 'test' : 'real';
+  await chrome.storage.local.set({ backendEnv: next });
+  location.reload();
+});
+
+backendReady.then(() => {
+  renderEnvPill();
+  loadPreferences().then(loadJobs);
+  connectEvents();
+});

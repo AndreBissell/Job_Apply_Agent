@@ -1,8 +1,9 @@
 // Popup logic: show backend health + session count, and open the side panel.
 
-const BACKEND = 'http://localhost:8000';
+// BACKEND / BACKEND_ENV come from config.js.
 
 async function checkBackend() {
+  await backendReady;
   const dot = document.getElementById('dot');
   const label = document.getElementById('backend');
   try {
@@ -10,13 +11,13 @@ async function checkBackend() {
     const data = await res.json();
     if (data.status === 'ok') {
       dot.classList.add('ok');
-      label.textContent = `Backend running (profile ${data.profile_id ?? '—'})`;
+      label.textContent = `${BACKEND_ENV.toUpperCase()} backend running (profile ${data.profile_id ?? '—'})`;
       return;
     }
     throw new Error('unexpected response');
   } catch (e) {
     dot.classList.add('bad');
-    label.textContent = 'Backend not running — start run_api.py';
+    label.textContent = `${BACKEND_ENV.toUpperCase()} backend not running — python scripts/run_api.py ${BACKEND_ENV}`;
   }
 }
 

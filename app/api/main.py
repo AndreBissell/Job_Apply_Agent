@@ -38,7 +38,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app import retention, search_suggest
 from app.api.profile_ui import router as profile_ui_router
-from app.db import SessionLocal
+from app.db import SessionLocal, app_env
 from app.llm import search_refine
 from app.llm.client import DailyQuotaError
 from app.llm.cover_letter import THRESHOLD as COVER_LETTER_THRESHOLD
@@ -317,7 +317,11 @@ app.include_router(profile_ui_router)
 _static_dir = Path(__file__).parent.parent / "static"
 app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
 
-_screenshots_dir = Path(__file__).parent.parent / "screenshots"
+# Per-environment, so the real instance's evidence files never share a folder
+# (or a retention sweep) with the test instance's.
+_screenshots_dir = Path(__file__).parent.parent / (
+    "screenshots_real" if app_env() == "real" else "screenshots"
+)
 _screenshots_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/screenshots", StaticFiles(directory=str(_screenshots_dir)), name="screenshots")
 
@@ -363,6 +367,9 @@ class ProfileUpdate(BaseModel):
 class PreferencesUpdate(BaseModel):
     auto_cover_letter_min_score: int | None = Field(default=None, ge=0, le=100)
     llm_search_suggestions: bool | None = None
+    # Job pages opened per Scan Page. The upper bound is the Seek access policy's
+    # standing cap (CLAUDE.md) — raise it deliberately, don't remove it.
+    scan_max_pages: int | None = Field(default=None, ge=1, le=25)
     # Retention tunables — see app/retention.py. Bounds keep a typo from
     # turning the sweep into "delete everything" (window >= 7 days) or the
     # screenshot TTL into "delete evidence immediately" (>= 1 day).
@@ -466,7 +473,7 @@ def _process_listing(
 def health(db: Session = Depends(get_db)) -> dict:
     """Liveness check the extension uses to confirm the backend is up."""
     profile_id = db.scalar(select(Profile.id).order_by(Profile.id).limit(1))
-    return {"status": "ok", "profile_id": profile_id}
+    return {"status": "ok", "profile_id": profile_id, "env": app_env()}
 
 
 @app.post("/ingest")

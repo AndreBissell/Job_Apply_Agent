@@ -40,8 +40,10 @@ Auto-navigate the user's active tab to job links that already appear on a page t
 user opened — i.e. links on the opened search-results page are fair game. This is
 1 hop: the page the user opened → the listings linked from it.
 Paced and capped so it stays a trickle, not a crawl: ≥5s between pages
-(SCAN_DELAY_MS = 5000), and a sane per-scan cap (MAX_SCAN_PAGES, currently 3 —
-raise deliberately if needed, don't remove the cap).
+(SCAN_DELAY_MS = 5000), and a per-scan cap. The cap is now user-tunable in the
+sidebar's Personalise panel (`scan_max_pages`, default 10) but hard-bounded at 25
+by both the API (PreferencesUpdate le=25) and the sidebar (SCAN_PAGES_CEILING) —
+that ceiling is the policy cap: raise it deliberately if needed, don't remove it.
 
 
 The hard line that still holds — no second hop:
@@ -220,6 +222,25 @@ BOOLEAN, nor false()/true(), which don't exist in SQLite). ORM
 relationships set passive_deletes=True so deletes rely on DB-level cascade.
 
 
+
+TWO ENVIRONMENTS — real vs test (2026-09-21)
+
+`python scripts/run_api.py real|test` (the argument is required). Each environment
+is a separate SQLite file, screenshots folder and port, and holds exactly ONE
+profile, which is id 1 in both — so the hardcoded `profile_id=1` / `user_id == 1`
+in the API, idle loop and extension stay correct. Do not put two profiles in one
+DB without first removing those assumptions (`/profile-ui/data` uses
+`select(Profile).limit(1)`, and `DELETE /profile-ui/data` would delete whichever
+profile is first).
+  real → real.db,  port 8000, app/screenshots_real/   (the profile you apply from)
+  test → app.db,   port 8001, app/screenshots/        (fake "bob john" profile)
+`app_env()` in app/db.py reads APP_ENV (set by run_api.py) and defaults to "test",
+so pytest / bare uvicorn can never act as real. /health returns `env`. In real,
+DELETE /profile-ui/data is a 403 (applied matches are Centrelink evidence), and
+scripts/load_test_profile.py refuses to run unless /health says env=test.
+Extension: extension/config.js defines BACKEND from chrome.storage.local
+(`backendEnv`, default real); every context awaits `backendReady` first. The
+sidebar's REAL/TEST pill flips it and reloads. Not verified in a loaded Chrome.
 
 🔄 CURRENT TASK: TBD
 

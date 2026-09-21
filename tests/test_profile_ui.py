@@ -569,6 +569,28 @@ class TestDeleteProfileData:
         assert r.status_code == 200
         assert r.json()["ok"] is True
 
+    def test_refused_in_real_environment(self, client, db, monkeypatch):
+        """The real profile's matches are Centrelink evidence — never deletable."""
+        monkeypatch.setenv("APP_ENV", "real")
+        client.put("/profile-ui/data", json=_body())
+        r = client.delete("/profile-ui/data")
+        assert r.status_code == 403
+        assert len(db.scalars(select(Profile)).all()) == 1
+
+
+class TestEnvironment:
+    def test_health_reports_test_by_default(self, client, monkeypatch):
+        monkeypatch.delenv("APP_ENV", raising=False)
+        assert client.get("/health").json()["env"] == "test"
+
+    def test_health_reports_real_when_configured(self, client, monkeypatch):
+        monkeypatch.setenv("APP_ENV", "real")
+        assert client.get("/health").json()["env"] == "real"
+
+    def test_unrecognised_value_falls_back_to_test(self, client, monkeypatch):
+        monkeypatch.setenv("APP_ENV", "prod")
+        assert client.get("/health").json()["env"] == "test"
+
     def test_children_cascade_on_delete(self, client, db):
         body = _body(
             skills=["Python"],
