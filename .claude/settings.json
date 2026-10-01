@@ -108,7 +108,11 @@
       "Bash(python -m pytest tests/test_screenshot_upload.py -v)",
       "Bash(echo \"Run from here \\(repo root\\), not from inside scripts\\\\\\\\\")",
       "Bash(python scripts/_verify_scan_endpoints.py)",
-      "Bash(rtk curl *)"
+      "Bash(rtk curl *)",
+      "Bash(rtk grep *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push *)"
     ],
     "additionalDirectories": [
       "C:\\Users\\andre\\Job_Apply_Agent",
