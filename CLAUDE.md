@@ -242,10 +242,17 @@ Extension: extension/config.js defines BACKEND from chrome.storage.local
 (`backendEnv`, default real); every context awaits `backendReady` first. The
 sidebar's REAL/TEST pill flips it and reloads. Not verified in a loaded Chrome.
 
-🔄 CURRENT TASK: TBD
+🔄 CURRENT TASK: Cover-letter refinement loops + Gemini migration
 
-Two fast-follows are outstanding, both needing a live Seek session rather than
-guesswork — pick these up, or a new priority the user names:
+Living plan: docs/cover-letter-loop-plan.md (DRAFT. Expect it to change as
+testing teaches us things; update its Decision log when it does). Next up is
+Phase 0 (confirm the new $300 trial's expiry + model IDs on the key), then
+Phase 1 (switch client.py to Gemini with small/critic/writer tiers, llm_usage
+cost logging, budget guard). The LLM Layer section above still describes
+OpenAI because that is what runs today. Rewrite it when Phase 1 lands, not
+before.
+
+Parked fast-follows. Both need a live Seek session rather than guesswork:
 1. §5.2's apply-flow detection (see the extension-revamp entry below).
 2. Verify the classification capture added 2026-09-21. readJsonLdJobPosting()
    is the primary source and should work, but SELECTORS.DETAIL_CLASSIFICATION /

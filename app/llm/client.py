@@ -53,8 +53,13 @@ GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
 # Gemini (dormant fallback)
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+# Vertex AI via Application Default Credentials — no API key. Needed when the
+# Cloud organization disallows API keys (the $300 trial project does).
+GEMINI_USE_VERTEX = os.environ.get("GOOGLE_GENAI_USE_VERTEXAI", "").lower() in ("1", "true", "yes")
+GOOGLE_CLOUD_PROJECT = os.environ.get("GOOGLE_CLOUD_PROJECT")
+GOOGLE_CLOUD_LOCATION = os.environ.get("GOOGLE_CLOUD_LOCATION", "global")
 
 try:
     LLM_RPM = max(1, int(os.environ.get("LLM_RPM", "8")))
@@ -318,10 +323,18 @@ def _get_gemini_client():
     global _gemini_client
     if _gemini_client is not None:
         return _gemini_client
-    if not GEMINI_API_KEY:
-        raise LLMError("No API key — set GEMINI_API_KEY (or GOOGLE_API_KEY) in .env")
     _inject_truststore()
     from google import genai
+    if GEMINI_USE_VERTEX:
+        if not GOOGLE_CLOUD_PROJECT:
+            raise LLMError("Vertex mode needs GOOGLE_CLOUD_PROJECT in .env")
+        # Credentials come from ADC (`gcloud auth application-default login`).
+        _gemini_client = genai.Client(
+            vertexai=True, project=GOOGLE_CLOUD_PROJECT, location=GOOGLE_CLOUD_LOCATION
+        )
+        return _gemini_client
+    if not GEMINI_API_KEY:
+        raise LLMError("No API key — set GEMINI_API_KEY (or GOOGLE_API_KEY) in .env")
     _gemini_client = genai.Client(api_key=GEMINI_API_KEY)
     return _gemini_client
 

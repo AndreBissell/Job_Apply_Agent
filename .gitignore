@@ -29,3 +29,6 @@ dev_data/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Local DB backups
+backups/
