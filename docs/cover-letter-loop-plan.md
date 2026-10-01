@@ -1,442 +1,666 @@
-# Cover-letter refinement loops + Gemini migration — PLAN (living document)
+# Cover-letter agent + Gemini migration — PLAN (living document)
 
-> **Status: DRAFT v0.2 — 2026-10-01. Open to change.**
+> **Status: DRAFT v0.3 — 2026-10-01. Rebased onto an agent design. Open to change.**
 > **Budget window:** new Google Cloud $300 trial, ~2026-10-01 → ~2026-12-30.
 > That ends before Gemini Flash prices double on 2027-01-01, so the intro
 > prices in §3 hold for the whole trial.
-> This is a starting base, not a spec. Nothing here is locked in until it has
-> been tested on real jobs. Every section marked 🧪 is an experiment whose
-> outcome may rewrite the section. Every number marked *(est.)* is a guess to
-> be replaced by real measurements from Phase 1's usage logging. When a
-> decision is made or a test changes the plan, edit this file and add a line
-> to the **Decision log** at the bottom. Don't let it go stale.
+>
+> v0.2 planned two hard-coded review loops (employer critic, then style critic,
+> then one writer). v0.3 replaces that with **one agent that calls tools** until
+> a letter passes the requirements and claim checks, or a budget runs out. The
+> design basis is "Job Application Agent: Design Plan" (2026-10-01). This file
+> fits that design onto this codebase.
+>
+> This is a starting point, not a spec. Sections marked 🧪 are experiments
+> whose results may rewrite them. Numbers marked *(est.)* are guesses until
+> Phase 1's usage logging replaces them. When a decision is made or a test
+> changes the plan, edit this file and add a line to the **Decision log**.
 
 ---
 
 ## 1. Goals
 
-1. **Better cover letters, tailored to the specific employer.** Today one
-   `complete_text` call writes each letter and nothing checks it. The letter
-   should answer as many of the job's stated requirements as the profile can
-   *honestly* support, and should read as well-written and like the user, not
-   like an AI.
-2. **Two review agents running in a loop** after the first draft:
-   - **Employer agent**: reads the letter as the hiring manager would.
-     "Which of my requirements did this letter answer? Which did it miss?"
-   - **Cover-letter perfectionist** (writing agent): grammar, structure,
-     formatting, how the candidate comes across, AI tells, the user's voice.
-3. **Move all LLM calls to Google Gemini.** This uses the $300 Google Cloud
-   trial credit. See open question Q1 about when the trial expires.
-4. **Stay cost-aware.** The budget is generous, but we will do a lot of
-   testing. Use the strongest model only where it changes the result, and
-   measure every call.
-5. **Resume tailoring notes** (advice, not a rewritten CV), behind their
-   own on/off toggle. See §5.4.
+1. **Better, employer-specific cover letters that never overclaim.** The
+   letter covers every must-have the profile can *honestly* support, and makes
+   no claim the profile does not support. It reads like the user wrote it.
+2. **The model decides the path; code enforces the rules.** An orchestrating
+   model picks which tool to call next. Anything that must always hold (no
+   unsupported claims, a draft limit, both checks passing before finish) is
+   checked in code and never left to the model.
+3. **Build the workflow first, then the agent, and compare them.** The same
+   tool functions run in both a fixed workflow and the agent loop. An eval set
+   and a pass/fail rubric decide which one ships (§9). The workflow may win for
+   the letter itself, and that would be a useful finding.
+4. **Move all LLM calls to Google Gemini**, using the $300 trial credit.
+5. **Stay cost-aware.** Use the strong model only where it changes the result,
+   and log every call.
+6. **Side outputs**, each behind its own toggle: answers to screening
+   questions, learning suggestions for real gaps, and resume tailoring notes.
 
 ### Non-goals (for now)
-- Auto-submitting anything. The user still reviews and submits every
-  application.
-- Generating a new CV document per job. `user_cvs` is user-level by design
-  (see docs/database-schema.md). Decided 2026-10-01: notes only (§5.4).
-- Optimising against an "AI-detector %" as the main target (see §5.3).
+- Auto-submitting anything. The user reviews and submits every application.
+- Generating a per-job CV. `user_cvs` is user-level by design. Resume help is
+  advice only (§5.6).
+- Optimising against an "AI-detector %". Detectors are unreliable, and chasing
+  them makes writing worse. The targets are specific, true, and sounds like the
+  user. The user's own final read is the last check.
+- Adopting an agent framework (LangGraph etc.). Write the loop by hand first,
+  so we understand what a framework would do for us.
 
 ---
 
-## 2. What exists today (baseline we're improving)
+## 2. What exists today (the baseline)
 
 | Piece | Today |
 |---|---|
 | Provider | OpenAI: `gpt-5-nano` (JSON tasks), `gpt-5-mini` (letters) |
-| Letter generation | `app/llm/cover_letter.py`: one `complete_text` call, no review |
-| Letter input | name, quals, experiences + evidence map, job **summary / responsibilities / skills** (extracted), match reasoning + gaps |
-| Letter input — missing | **the raw job ad text** (`raw_description`), company context, any sample of the user's own writing |
-| When | Idle loop Phase 2, automatically for matches ≥ `auto_cover_letter_min_score` (default 75); or `/jobs/{id}/regenerate` |
+| Letter generation | `app/llm/cover_letter.py`: one `complete_text` call, no checks |
+| Letter input | name, quals, experiences + `experience_skills` evidence map, extracted job **summary / responsibilities / skills**, match reasoning + gaps |
+| Letter input, missing | **the raw job ad** (`raw_description`), company context, samples of the user's own writing |
+| Job analysis | `extract.py` (small model, every scanned job): `job_skills`, requirements JSON, seniority, summary |
+| Matching | `match.py`: one score + reasoning + a `gaps` list. No per-requirement evidence |
+| When | Idle loop: letters for matches ≥ `auto_cover_letter_min_score` (75), or `/jobs/{id}/regenerate` |
 | Storage | `cover_letters` (one per match): `generated_content`, `edited_content`, `status` |
-| Cost tracking | None. `client.py` does not record token usage |
+| Cost tracking | None. `client.py` records no token usage |
+| Tool calling | None. `client.py` only has `complete_json` / `complete_text` |
 
-The current letter prompt never sees the original job ad, only our own
-extracted summary of it. Employer wording and stated "must-haves" are lost
-before the letter is written. Fixing this is part of Phase 2 and costs almost
-nothing.
+The current letter prompt never sees the original job ad, only our summary of
+it, so the employer's wording and must-haves are lost before writing.
+`analyze_job` (§5.2) fixes this.
 
 ---
 
 ## 3. Model selection (Gemini)
 
-Prices are from https://ai.google.dev/gemini-api/docs/pricing, checked
-2026-10-01, paid tier, prompts ≤200k tokens, per 1M tokens. **Re-check before
-locking in.** Introductory prices on the 3.6–3.8 Flash models **double on
-2027-01-01**. Thinking tokens are billed as output.
+Prices from https://ai.google.dev/gemini-api/docs/pricing, checked 2026-10-01,
+paid tier, prompts ≤200k tokens, per 1M tokens. **Re-check before locking in.**
+Intro prices on 3.6–3.8 Flash **double on 2027-01-01**. Thinking tokens are
+billed as output.
 
 | Model ID | Status | In / Out per 1M | Notes |
 |---|---|---|---|
 | `gemini-3.1-flash-lite` | Stable | $0.25 / $1.50 | Shutdown 2027-05-07 → `gemini-3.5-flash-lite` ($0.30 / $2.50) |
 | `gemini-3.8-flash` | Stable | $0.75 / $3.75 (intro) | Newest Flash; $1.50 / $7.50 from 2027-01-01 |
-| `gemini-3.1-pro-preview` | **Preview** | $2.00 / $12.00 | Strongest model; preview = may change or rate-limit |
-| `gemini-2.5-*` | Stable but restricted | — | "Limited to existing users"; don't build on it |
+| `gemini-3.1-pro-preview` | **Preview** | $2.00 / $12.00 | Strongest; preview, so it may change or be rate-limited |
+| `gemini-2.5-*` | Restricted | — | "Limited to existing users"; don't build on it |
 
-Also available: Batch API at 50% off (latency up to hours); context caching;
-Google Search grounding (5,000 free requests/month across 3.x, then $14 per
-1,000).
+Also available: Batch API (50% off, latency up to hours), context caching,
+Google Search grounding (5,000 free requests/month, then $14 per 1,000).
 
-### Proposed tier mapping (🧪 to be validated in Phase 2)
+### Tiers (🧪 validate in Phases 2–6)
 
-| Tier (env var) | Default model | Used by | Why |
-|---|---|---|---|
-| `GEMINI_MODEL_SMALL` | `gemini-3.1-flash-lite` | quick-screen, extraction, matching, search re-rank | High-volume structured JSON. Replaces `gpt-5-nano` |
-| `GEMINI_MODEL_CRITIC` | `gemini-3.8-flash` | employer agent, writing agent, employer rubric | Needs real reading judgement, runs several times per letter, structured output |
-| `GEMINI_MODEL_WRITER` | `gemini-3.1-pro-preview` | first draft + each revision | The only text an employer reads. Fallback: `gemini-3.8-flash` |
+The v0.2 tiers were `small / critic / writer`. The agent design moves the
+checks to the cheap model, so a "critic" tier no longer fits. New names:
 
-Things to test before trusting this mapping:
-- **Matching on Flash-Lite vs 3.8 Flash.** The match score decides which jobs
-  get letters. Run `scripts/check_matching.py` on both and compare against the
-  expected bands. If Flash-Lite is noticeably worse, give matching the critic
-  tier (≈$0.004/job *(est.)*, still small).
-- **Writer: Pro vs 3.8 Flash.** If a looped Flash letter is as good as a
-  looped Pro letter in a blind comparison, use Flash and save ~3×.
-- **Critic ≠ writer.** Using a different model to judge than to write reduces
-  "grading your own homework" bias. Keep them different unless tests say
-  otherwise.
-
----
-
-## 4. Phase 1: Switch the provider to Gemini (with tiers + cost logging)
-
-All of this lives in `app/llm/client.py`, still the **one** place that knows
-about providers and models.
-
-1. **Tiers instead of one model per provider.** Add a `tier` argument:
-   `complete_json(..., tier="small")`, `complete_text(..., tier="writer")`.
-   Valid tiers are `small` / `critic` / `writer`. Each provider maps tiers to
-   models from env (`GEMINI_MODEL_SMALL/CRITIC/WRITER`). OpenAI keeps its two
-   vars as a dormant fallback (`critic` maps to `OPENAI_MODEL_SMALL`).
-   Callers name a tier and never name a model.
-2. **Default provider = `gemini`.** Update `.env.example`, `CLAUDE.md` (LLM
-   Layer section), and `scripts/check_llm.py` so it checks all three tiers.
-3. **Structured output.** Keep the existing Gemini `response_schema` path
-   (Pydantic). Callers keep calling `schema.model_validate()`.
-4. **Temperature and thinking.** ⚠️ *Verify against current docs:* Gemini 3
-   guidance has been to leave temperature at the default 1.0, because lowering
-   it can cause looping or degraded output. If that still holds, drop
-   `temperature` for 3.x the same way `_generate_openai` already does for
-   GPT-5. Set a **thinking level/budget per tier**: low for `small`, medium for
-   `critic`, high for `writer`. Thinking tokens are billed as output, so this
-   is the biggest cost lever.
-5. **Usage + cost logging (new, essential).** Every call records task, tier,
-   model, input / output / thinking / cached tokens, estimated USD and
-   timestamp into a new `llm_usage` table. Prices sit in one dict in
-   `client.py`. This replaces every *(est.)* in this file with real numbers.
-6. **Budget guard.** `profiles.preferences` gets `llm_daily_budget_usd` and
-   `llm_total_budget_usd`. When a cap is hit, `writer` and `critic` calls raise
-   a `BudgetExceededError`. The idle loop treats it like `DailyQuotaError`
-   (back off) and the sidebar shows a banner. The `small` tier keeps running
-   so scanning still works. This protects against a runaway loop bug, which
-   is a bigger risk than normal spend.
-7. **Rate limit.** `LLM_RPM=8` was sized for the old free tier. Paid-tier
-   limits are much higher. Raise it (e.g. 30) after checking the project's
-   real quota in the Cloud console. Keep the single-worker executor.
-8. **Prompt order for implicit caching.** Put the identical blocks (profile,
-   then job ad) first and the per-call instructions last, so repeated calls in
-   one loop hit Gemini's implicit prefix cache. Free win; verify with the
-   `cached` token counts from step 5.
-9. **Score drift on switchover.** Gemini scores will be calibrated
-   differently from gpt-5-nano scores. The suggestion miner and the 75
-   threshold both depend on that scale. Options:
-   (a) bump `profiles.profile_revised_at` at switchover, which reuses the
-   existing 0.35 down-weighting of older scores for free;
-   (b) re-score recent matches;
-   (c) accept the drift.
-   Leaning towards (a). Decide in Phase 1.
-
-**Done when:** pytest passes; `check_llm.py` passes on all 3 tiers;
-`check_matching.py` bands hold on Gemini; one real scan → extract → match →
-letter run shows rows in `llm_usage` with plausible costs.
-
----
-
-## 5. The two agents
-
-### Design principle: critics critique, one writer writes
-
-Neither agent edits the letter directly. Both return **structured critiques**
-(JSON). A single **writer** call per round applies both critiques together.
-
-Why: if each agent rewrote the letter itself, they would fight. The employer
-agent adds a requirement-heavy sentence, the writing agent trims it for flow,
-and the next round puts it back. One writer that sees both critiques can make
-trade-offs. It is also cheaper: one expensive writer call per round, not two.
-
-### 5.1 Employer agent ("hiring manager")
-
-**Step A: Employer rubric (once per job, cached, critic tier).**
-Built from the **raw job ad** plus extracted fields. Output (JSON):
-- `must_haves[]`, `nice_to_haves[]`: each requirement stated in the
-  employer's own wording.
-- `what_they_really_want`: 2–3 sentences reading between the lines.
-- `tone`: e.g. corporate, startup, public sector.
-- `keywords_to_mirror[]`: terms that recruiter/ATS screening looks for.
-
-The rubric is cached per job (new column or table, see §7) and reused every
-round and every regeneration.
-
-**Step B: Critique (each round, critic tier).**
-Input: rubric + profile evidence + current letter. Output (JSON):
-- For each requirement, a `status`:
-  - `addressed_strongly`: specific evidence given.
-  - `addressed_weakly`: mentioned, but no concrete evidence.
-  - `missed_but_supported`: the profile has evidence and the letter doesn't
-    use it. **This is the main fix target.**
-  - `not_supported`: the profile has no evidence. Leave it out, or frame it
-    honestly as eagerness to learn. **Never invent.**
-- `unsupported_claims[]`: anything in the letter not backed by the profile.
-  **Hard gate:** any entry here must be fixed before the letter can pass.
-- `coverage_score` 0–100: share of requirements the profile can support that
-  the letter actually covers.
-- `would_interview` 0–100 plus one sentence of reasoning, from the hiring
-  manager's perspective.
-- `top_fixes[]`: at most 3, ranked.
-
-⚠️ **Fabrication risk.** "Answer as many requirements as possible" pushes the
-writer to stretch the truth. The `not_supported` status and the
-`unsupported_claims` gate exist to counter that. A letter that honestly skips
-a requirement beats one that fakes it, because the claim may come up in the
-interview.
-
-### 5.2 Cover-letter perfectionist (writing agent)
-
-**Step A: Free deterministic lint (pure Python, no LLM call).**
-`app/llm/style_lint.py`:
-- A banned/overused phrase list: "I am excited to apply", "delve",
-  "tapestry", "I am confident that", "proven track record", "fast-paced
-  environment", "leverage", etc. The list grows as we spot new ones.
-- Em-dash count, word count (target ~250–400 🧪), paragraph count, sentence
-  length variance (low variance is a strong AI tell).
-- Every paragraph opening with "I".
-- Sign-off and name present, no placeholders like `[Company]`.
-
-Output is a list of flags passed into the critique and the writer prompt.
-
-**Step B: Critique (each round, critic tier).** Output (JSON):
-- `issues[]`: `{quote, problem, suggestion}` for grammar, clarity, awkward
-  phrasing and formatting.
-- `ai_tells[]`: generic or template-feeling passages, quoted.
-- `voice_match` 0–100: how close it sounds to the user's writing samples (§5.3).
-- `impression`: one or two sentences on how the candidate comes across
-  (confident vs arrogant, specific vs vague).
-- `writing_score` 0–100.
-- `top_fixes[]`: at most 3.
-
-### 5.3 "AI %" and "sounds like me": honest constraints
-
-- **AI-detector scores are unreliable.** They produce false positives on human
-  writing, and an LLM cannot measure "AI %" of text. Optimising a letter
-  against a detector makes it worse, not more human. Plan: use the lint (§5.2A)
-  plus the critic's `ai_tells` as the main signal. 🧪 Optionally call one
-  external detector (e.g. GPTZero/Sapling, paid API, cost TBD) to **report**
-  a score, never as a loop target. Q6.
-- **Voice needs examples of the user's writing.** The profile currently holds
-  none. Two sources:
-  1. **Writing samples** (Q5): 2–3 things the user wrote themselves (an old
-     cover letter, a uni essay intro, a long email). Stored in
-     `profiles.preferences` or a small new table. Fed to the writer and critic.
-  2. **The user's own edits (free, grows over time).** Every time the user
-     edits a letter, `generated_content` vs `edited_content` shows what they
-     change. 🧪 Later: summarise recurring edits into a "style notes" block,
-     e.g. "cuts adjectives, prefers 'I built' over 'I was responsible for'".
-
-### 5.4 Resume tailoring notes (decided 2026-10-01)
-
-Advice only. The tool never rewrites or stores a per-job CV, so `user_cvs`
-is unchanged.
-
-- **Toggle:** `resume_advice_enabled` (bool, default `True`) in the
-  Personalise panel. When it is off, no notes are generated and **no LLM call
-  is made**, so you can choose cover-letter-only.
-- **Source:** the employer agent already knows the requirements and what the
-  letter did or didn't cover. Its final pass outputs a `resume_notes`
-  object 🧪. If folding it into the critique hurts critique quality, use one
-  separate critic-tier call on the final letter instead:
-  - `lead_with[]`: CV experiences/bullets to move to the top for this job.
-  - `keywords_to_mirror[]`: employer wording to reuse (ATS screening).
-  - `consider_cutting[]`: content that is irrelevant for this role.
-  - `gaps_to_address[]`: requirements a CV line could cover better than the
-    letter can.
-- **Grounding:** notes can only reference experience that exists in the
-  profile, the same "never invent" rule as the letter. If a CV is stored in
-  `user_cvs` it is used as input; without one, the notes work from profile
-  experiences.
-- **Display:** a collapsible "Resume tips" section on the job card and the
-  Quick-Apply overlay (Phase 6).
-
----
-
-## 6. The loop
-
-```
-                ┌──────────── employer rubric (once per job, cached) ────────────┐
-                ▼                                                                │
-  DRAFT (writer) ──► round r = 1..MAX_ROUNDS                                     │
-                       ├─ style_lint(letter)            (free)                   │
-                       ├─ employer_critique(letter)     (critic) ◄───────────────┘
-                       ├─ writing_critique(letter)      (critic)
-                       ├─ STOP if passes (see below)
-                       ├─ STOP if no improvement vs best so far (plateau)
-                       └─ REVISE (writer) using both critiques' top_fixes + lint flags
-  FINAL = best-scoring version seen (not necessarily the last)
-```
-
-Starting stop rules 🧪 (all are tunables in `profiles.preferences`):
-- **Pass:** `coverage_score ≥ 80` AND `writing_score ≥ 85` AND
-  `unsupported_claims` empty AND no lint errors.
-- **Max rounds:** 3. The hypothesis is that round 1 captures most of the gain.
-  Phase 2 testing should confirm or kill this.
-- **Plateau:** combined score improves by less than 3 points over the best so
-  far, so stop.
-- **Keep best, not last.** Revisions can make a letter worse, so return the
-  highest-scoring version.
-
-Revision prompt rules: apply the fixes; keep anything the critiques praised;
-never add claims missing from the profile; keep within the word-count range.
-
-### When the loop runs (decided 2026-10-01)
-Both settings live in `profiles.preferences` and are editable in the
-sidebar's Personalise panel:
-- **`letter_loop_enabled`** (bool, default `True`): master on/off switch,
-  shown as a clear toggle. When it is off, every letter stays a single-shot
-  draft and the agents never run.
-- **`letter_loop_min_score`** (int 0–100, default `85`): matches at or above
-  this score get the full loop automatically, in the idle loop's
-  cover-letter phase.
-- **Interaction with the existing threshold.** A letter only exists at or
-  above `auto_cover_letter_min_score` (default 75). Matches between 75 and 84
-  get a one-shot draft; 85+ get the loop. If the loop threshold is set *below*
-  the letter threshold, the effective bar is the higher of the two, because
-  there is no letter to polish below it. The sidebar should explain this next
-  to the control.
-- *Nice-to-have, not committed:* a per-letter **"Polish"** button to run the
-  loop on demand for a job below the bar.
-
-### Cost per letter *(est.)*. Replace with real numbers after Phase 1
-Assumes the critic is 3.8 Flash, the writer is 3.1 Pro, and moderate thinking.
-
-| Step | Calls | ≈ Cost |
+| Tier (env var) | Default model | Used by |
 |---|---|---|
-| Employer rubric | 1 (cached per job) | $0.01 |
-| Draft | 1 Pro | $0.04 |
-| Each round: 2 critiques + 1 revise | 2 Flash + 1 Pro | $0.065 |
-| **Full loop, 3 rounds** | ~11 calls | **≈ $0.25** |
-| Typical (stops after 1–2 rounds) | 6–8 calls | ≈ $0.12–0.18 |
-| For comparison: everything on 3.8 Flash, 3 rounds | | ≈ $0.07 |
-| Pipeline per scanned job (screen + extract + match, Flash-Lite) | 3 | ≈ $0.004 |
+| `small` (`GEMINI_MODEL_SMALL`) | `gemini-3.1-flash-lite` | quick-screen, extract, match score, search re-rank, `check_claims`, `check_requirements`, `suggest_learning` |
+| `mid` (`GEMINI_MODEL_MID`) | `gemini-3.8-flash` | orchestrator, `analyze_job`, `match_profile`, `answer_screening`, resume notes |
+| `strong` (`GEMINI_MODEL_STRONG`) | `gemini-3.1-pro-preview` | `generate_letter`, `revise_letter` |
+| (code) | — | `style_lint`, `finish`, `ask_user`, all guardrails |
 
-Rough 90-day envelope: 3,600 scanned jobs ≈ $15, 300 looped letters ≈ $75,
-testing ≈ $50–100. That is well under $300. Money is less of a risk than a
-looping bug, which is why the budget guard comes first.
-
-Run times *(est.)*: one looped letter is 1–5 minutes on the single worker. That
-is fine for background work, but the sidebar should show progress (§8).
+The design basis puts `analyze_job`, `match_profile` and the orchestrator on
+the strong model. Here they start on `mid` because they produce structured
+output and run more often. Things to test:
+- **`analyze_job` / `match_profile`: mid vs strong.** Compare requirement
+  lists and evidence mapping on the eval set. If mid misses must-haves or maps
+  weak evidence, move them up.
+- **Orchestrator: mid vs strong.** It makes a call at every step, so it is the
+  biggest overhead cost. Its context is a state *summary* (§5.4), so mid
+  should be enough. Check that it picks sensible next steps.
+- **Checks on `small`.** Claim checking takes judgement. Flash-Lite may be
+  too lenient. Measure how many planted false claims it catches (§9); if it
+  misses them, move `check_claims` to `mid`.
+- **Writer: strong vs mid.** If a checked and revised Flash letter is as good
+  as a Pro letter in a blind read, use Flash and save about 3×.
+- **The checker is not the writer.** A different model checks than writes, to
+  reduce self-grading bias.
 
 ---
 
-## 7. Data model changes (draft; docs/database-schema.md must be updated FIRST)
+## 4. Phase 1: Switch the provider to Gemini (tiers, tool calling, cost logging)
 
-Per CLAUDE.md, the schema doc is the source of truth. Add these there
-first, then write the Alembic migrations. Use the portable column styles
-(BigInteger variant, `text("false")` defaults, CASCADE).
+All of this lives in `app/llm/client.py`, which stays the **one** place that
+knows about providers and models.
+
+1. **Tiers.** `complete_json(..., tier="small")`,
+   `complete_text(..., tier="strong")`. Valid tiers: `small` / `mid` /
+   `strong`. Each provider maps tiers to models from env. OpenAI stays a
+   dormant fallback (`small` → `OPENAI_MODEL_SMALL`, `mid` and `strong` →
+   `OPENAI_MODEL_LETTER`). Callers name a tier, never a model.
+2. **Tool calling (new).** Add `complete_tools(system, messages, tools,
+   tier)`. It returns either a tool call (name + JSON args) or text. Tool
+   definitions are provider-neutral (name, description, JSON schema) and
+   `client.py` translates them into Gemini function declarations. Nothing
+   outside `client.py` imports a provider SDK. This could wait until Phase 7,
+   but putting it here means one provider rewrite instead of two.
+3. **Default provider = `gemini`.** Update `.env.example`, CLAUDE.md's LLM
+   Layer section, and `scripts/check_llm.py` (check all three tiers and one
+   tool call).
+4. **Structured output.** Keep the Gemini `response_schema` path (Pydantic).
+5. **Temperature and thinking.** ⚠️ *Verify against current docs:* Gemini 3
+   guidance has been to leave temperature at the default 1.0, because lowering
+   it can cause looping. If that still holds, drop `temperature` for 3.x as
+   `_generate_openai` already does for GPT-5. Set thinking per tier: low for
+   `small`, medium for `mid`, high for `strong`. Thinking is the biggest cost
+   lever.
+6. **Usage and cost logging.** Every call records task, tier, model, input /
+   output / thinking / cached tokens, estimated USD, duration and timestamp in
+   a new `llm_usage` table, with an optional `run_id` so per-run cost can be
+   summed (§7). Prices sit in one dict in `client.py`.
+7. **Budget guard.** `llm_daily_budget_usd` / `llm_total_budget_usd` in
+   `profiles.preferences`. When a cap is hit, `mid` and `strong` calls raise
+   `BudgetExceededError`. The idle loop backs off as it does for
+   `DailyQuotaError`, and the sidebar shows a banner. `small` keeps running so
+   scanning still works. This protects against a runaway loop, which is a
+   bigger risk than normal spend.
+8. **Rate limit.** Raise `LLM_RPM` (e.g. 30) after checking the real quota in
+   the Cloud console. Keep the single-worker executor.
+9. **Prompt order for caching.** Put the identical blocks first (system
+   prompt, tool definitions, profile, job ad) and the per-call content last,
+   so repeated calls in one run hit Gemini's implicit prefix cache. Check this
+   with the `cached` token counts.
+10. **Score drift on switchover.** Gemini will score on a different scale from
+    gpt-5-nano, and the suggestion miner and the 75 threshold depend on that
+    scale. Leaning towards bumping `profiles.profile_revised_at` at switchover,
+    which reuses the existing 0.35 down-weighting of older scores. Decide in
+    Phase 1.
+
+**Done when:** pytest passes; `check_llm.py` passes on all tiers and one tool
+call; `check_matching.py` bands hold on Gemini; one real scan → extract →
+match → letter run writes `llm_usage` rows with plausible costs.
+
+---
+
+## 5. The agent design
+
+### 5.1 Core concepts
+
+| Term | Meaning | Here |
+|---|---|---|
+| **Workflow** | Code decides the order of steps. Predictable, cheap, easy to debug | v0.2's two loops; the Phase 6 baseline |
+| **Agent** | A model decides the order, calling tools until a goal is met. Flexible, but costs more and varies between runs | Phase 7 |
+| **Tool** | A function the agent can call: name, description, typed inputs, structured output. It may call an LLM or just run code | `generate_letter`, `check_claims`, `style_lint`, … |
+| **Skill** | Instructions and reference material loaded when relevant. Not a function; it shapes *how* something is done | The cover-letter style guide + voice samples |
+| **State** | One object every tool reads and writes. The run's memory | `LetterState` (§5.3), persisted per run |
+
+**The split that matters most:** the model decides the path; code enforces the
+rules (§5.7).
+
+### 5.2 Tools
+
+Each step that v0.2 handled as a loop stage becomes one tool with one job, on
+the cheapest implementation that works.
+
+| Tool | Job | Reads | Writes | Runs on | Maps to existing code |
+|---|---|---|---|---|---|
+| `analyze_job` | Turn the ad into a requirements checklist (id, text in the employer's words, `must`/`should`), plus tone, keywords to mirror, and any screening questions in the ad | `raw_description` + extracted fields | `requirements`, `job.*` | mid, structured | Builds on `extract.py`. **Cached on the job** (it depends only on the job), so it runs once per job, not once per run |
+| `match_profile` | For each requirement, find evidence pointers into the profile and mark it `supported` / `partial` / `gap` | requirements, profile | `requirements[].evidence`, `.status` | mid, structured | New. `match.py` stays the cheap whole-job score that decides *whether* to write a letter |
+| `ask_user` | Ask the user about must-have gaps or unclear facts | gap requirements | `user_questions`, `user_decision` | code + sidebar UI | New. Pauses the run (§5.5) |
+| `generate_letter` | Write the first draft from supported evidence only, with the style skill loaded. Returns the text **and** a list of claims, each with its source pointer | evidence, decisions, style skill | new `drafts[]` entry | strong | Replaces the one-shot prompt in `cover_letter.py` |
+| `revise_letter` | Make targeted fixes to the latest draft for the failed checks only. An edit, not a rewrite | latest draft, failed checks | new `drafts[]` entry | strong | New |
+| `check_claims` | Verify every factual claim against the profile (two-stage, below) | latest draft, profile | `checks.claims` | code + small | New |
+| `check_requirements` | Confirm every supported must-have is still addressed | latest draft, requirements | `checks.requirements` | small | New |
+| `style_lint` | Em dashes, banned phrases, word count, paragraph count, sentence-length variance, every paragraph starting with "I", placeholders like `[Company]`, sign-off present | latest draft | `checks.style` | **code only** | New: `style_lint.py` |
+| `answer_screening` | Draft answers to screening questions from the profile | questions, profile | `side_outputs.screening_answers` | mid | New. **Usually blocked:** Seek shows most screening questions in the apply flow, not the ad (§10 Q10) |
+| `suggest_learning` | Suggest ways to close real gaps (e.g. a Power BI course) | confirmed gaps | `side_outputs.learning_suggestions` | small | New |
+| `suggest_resume_tweaks` | Resume tailoring notes (§5.6) | requirements, evidence, final draft | `side_outputs.resume_notes` | mid | Was v0.2 §5.4 |
+| `finish` | End the run. Accepted only if the guardrails pass | whole state | final output | **code only** | — |
+
+**`check_claims` in two stages.** The writer's own claims list is
+self-reported, so the checker must not rely on it alone:
+1. *Code:* every declared claim must have a source pointer that resolves to a
+   real profile field. A missing or unresolved source fails immediately. This
+   part is a lookup and makes no LLM call.
+2. *Small model:* extract the factual claims from the letter text
+   independently, match each one to a declared claim, and judge whether the
+   pointed-to profile text supports it. An undeclared or unsupported claim
+   fails. For example, "presented to executives" when the profile says
+   "presented weekly reports to team leads".
+
+**What a good tool definition needs** (this is the core skill of agent design):
+- A verb name that says what the tool does.
+- A description written for the model that says when to use the tool *and when
+  not to*. For example, `revise_letter`: "Use after a check fails. Fix only the
+  listed issues. Do not use for the first draft."
+- Typed inputs and structured JSON outputs.
+- Errors that explain themselves. A refused `finish` says why
+  ("check_claims has not run on draft 3") so the agent can recover.
+
+`answer_screening`, `suggest_learning` and `suggest_resume_tweaks` do not
+depend on the letter. The agent can call them at any point, or code can run
+them in parallel after `match_profile`.
+
+### 5.3 The state object (`LetterState`)
+
+A Pydantic model, serialised to JSON and persisted per run (§7). It replaces
+passing prose critiques between loops, which is how v0.2's loops could drop
+each other's content.
+
+```json
+{
+  "job": {
+    "job_id": 412, "title": "Data Analyst", "company": "Example Pty Ltd",
+    "tone": "corporate", "keywords": ["stakeholder reporting", "SQL"],
+    "screening_questions": []
+  },
+  "requirements": [
+    {"id": "R1", "text": "Experience with Power BI", "priority": "must",
+     "evidence": [], "status": "gap",
+     "user_decision": {"choice": "adjacent", "note": "1 yr Tableau, no Power BI", "source": "user"}},
+    {"id": "R2", "text": "Strong SQL", "priority": "must",
+     "evidence": ["experience:12#s3", "skill:7"], "status": "supported", "user_decision": null}
+  ],
+  "drafts": [
+    {"version": 1, "text": "...",
+     "claims": [{"text": "Built SQL reports for 3 teams", "source": "experience:12#s3"}],
+     "checks": {
+       "claims": {"passed": true, "issues": []},
+       "requirements": {"passed": false, "uncovered": ["R4"]},
+       "style": {"passed": false, "blocking": ["em_dash"], "warnings": ["low_sentence_variance"]}
+     }}
+  ],
+  "user_questions": [],
+  "side_outputs": {"screening_answers": [], "learning_suggestions": [], "resume_notes": null},
+  "budget": {"drafts_used": 1, "max_drafts": 3, "tool_calls": 6, "max_tool_calls": 15, "cost_usd": 0.07}
+}
+```
+
+Design choices:
+- **Requirements are a checklist with ids, not prose.** After a revision,
+  coverage is rechecked by id instead of by rereading everything.
+- **Evidence points into the profile by stable database id, not list
+  position.** Positions shift when the profile is edited; ids don't. Pointer
+  grammar *(draft)*: `experience:<id>`, `experience:<id>#s<n>` (the n-th
+  sentence of `Experience.description`; experiences have free-text
+  descriptions, not bullets, so code splits them into sentences),
+  `qualification:<id>`, `skill:<id>`, `profile:summary`, `user_decision:<req
+  id>` (a fact the user gave via `ask_user`). A resolver in `state.py` turns a
+  pointer into text. That makes claim checking a lookup.
+- **Checks belong to a draft version.** A pass on draft 2 says nothing about
+  draft 3. The finish gate reads only the latest draft.
+- **`user_decision` records how a gap was resolved** (`have_it` /
+  `adjacent` / `leave_out`, plus a note), so a gap is never resolved by
+  invention. If the answer is `have_it`, the right fix is to add it to the
+  profile, and the `ask_user` UI should offer that.
+- **The orchestrator never sees the full state.**
+  `summary_for_orchestrator()` gives it requirement statuses, check results
+  and budget, not draft text. Tools read the full text from state themselves.
+
+### 5.4 Skill: the cover-letter style guide
+
+Style rules go into the prompt before writing (prevention) and into
+`style_lint` after writing (detection). The skill is the prevention half.
+
+`app/llm/skills/cover_letter_style/`:
+- **`SKILL.md`**: the rules. Plain, specific sentences. Real project names and
+  numbers over adjectives. No em dashes. One clear reason for wanting this
+  specific job. Around 250–350 words 🧪 (Q7). Australian spelling 🧪 (Q7).
+  `Sincerely, {name}` sign-off. Name the degree and university for recent
+  graduates (carried over from today's prompt).
+- **`banned_phrases.txt`**: "I am thrilled to apply", "proven track record",
+  "fast-paced environment", "leverage my skills", "delve", "tapestry", …
+  **The same file feeds `style_lint`**, so the rule and the check can't drift
+  apart. The list grows as we spot new ones.
+- **`voice_samples/`**: 2–3 short pieces of the user's own writing (Q5). These
+  do more against "sounds machine-written" than any check. **Gitignored**,
+  because they are personal. Move them to the DB when the app goes
+  multi-user.
+
+Later 🧪: learn from the user's edits. `generated_content` vs `edited_content`
+shows what the user changes. Summarise recurring edits into style notes (e.g.
+"cuts adjectives, prefers 'I built' over 'I was responsible for'") and append
+them to the skill.
+
+No grammar tool. Current models rarely make grammar errors. If needed, add
+LanguageTool as code inside `style_lint`.
+
+### 5.5 The orchestrator
+
+The orchestrator gets three things instead of a hard-coded sequence:
+1. **A goal:** a cover letter that addresses every must-have the profile
+   supports, with no unsupported claim.
+2. **A definition of done:** on the latest draft, `check_claims` and
+   `check_requirements` pass and `style_lint` reports no blocking issues.
+3. **A budget:** at most 3 drafts and 15 tool calls (🧪 tunables), plus the
+   USD guard. Enforced in code.
+
+System prompt sketch:
+
+```
+You are preparing a job application. Your goal is a cover letter that
+addresses every must-have requirement supported by the user's profile,
+with no unsupported claims.
+
+Work from the state summary. Start with analyze_job and match_profile.
+If a must-have is a gap with no user decision, call ask_user before
+drafting. Never resolve a gap by writing around it.
+After any draft, run check_claims, check_requirements and style_lint.
+If a check fails, use revise_letter with only the listed issues.
+Call each enabled side-output tool once.
+Call finish when all checks pass on the latest draft.
+```
+
+The loop is plain code (`app/llm/letter/agent.py`):
+
+```python
+while True:
+    step = client.complete_tools(SYSTEM, [state.summary_for_orchestrator()], TOOLS, tier="mid")
+    if step.tool == "finish":
+        ok, reason = guardrails.can_finish(state)
+        if ok:
+            break
+        state.add_tool_result("finish", error=reason)
+        continue
+    result = run_tool(step.tool, step.args, state)   # guardrails checked inside run_tool
+    state.apply(result)
+    persist(state)                                   # resumable after a crash or ask_user pause
+    if state.waiting_on_user():
+        return "waiting_user"                        # frees the worker (see below)
+    if state.budget_exceeded():
+        state.flag_for_human("Budget reached")
+        break
+```
+
+**Fitting the agent into this app:**
+- **Background, single worker.** Runs execute in the idle loop's single-worker
+  executor, like today's cover-letter phase. A run can take minutes *(est.)*,
+  so SSE progress events (`letter_run_step`) let the sidebar show what it is
+  doing.
+- **`ask_user` can't block.** Letters are generated in the background, often
+  when the user isn't looking. `ask_user` persists the questions, marks the run
+  `waiting_user`, frees the worker, and the sidebar card shows "1 question
+  before your letter". Answering resumes the run from its saved state.
+  Unanswered questions would mean top matches never get a letter, so see Q9
+  for a default.
+- **Gap decisions should be remembered across jobs** 🧪. The same gaps ("Power
+  BI") will come up across many ads. Storing decisions at profile level, keyed
+  by normalised skill name (reusing `prefilter.normalise_skill()`), means the
+  user answers once. A per-job override is still possible. See Q9.
+
+### 5.6 Side outputs
+
+- **Screening answers** (`answer_screening`): grounded in the profile, with the
+  same evidence pointers. Depends on capturing the questions (Q10).
+- **Learning suggestions** (`suggest_learning`): only for gaps the user
+  confirmed as real (`leave_out`). Short, concrete (course, cert, small
+  project).
+- **Resume tailoring notes** (`suggest_resume_tweaks`, decided 2026-10-01):
+  advice only, behind `resume_advice_enabled`. When off, no call is made.
+  Output: `lead_with[]`, `keywords_to_mirror[]`, `consider_cutting[]`,
+  `gaps_to_address[]`. It may only reference experience that exists in the
+  profile. Uses `user_cvs` if a CV is stored, otherwise profile experiences.
+- Shown as collapsible sections on the job card and the Quick-Apply overlay.
+
+### 5.7 Guardrails (enforced in code, `app/llm/letter/guardrails.py`)
+
+Models sometimes declare victory early, skip a check, or loop. These rules sit
+in code so the agent can't get around them. **The fixed workflow uses the same
+guardrails**, which keeps the comparison fair.
+
+- **Finish gate.** `finish` is refused unless `check_claims` and
+  `check_requirements` have both run and passed on the latest draft, and
+  `style_lint` has no blocking issues. The refusal names what is missing.
+- **Budget.** Stop at `max_drafts` or `max_tool_calls`, or when the USD guard
+  trips. On stop, return the **best draft so far** (claims passing first, then
+  most must-haves covered), with its open issues flagged for the user. Never
+  return a draft that failed `check_claims` as if it were clean.
+- **No silent gaps.** `generate_letter` and `revise_letter` refuse to run while
+  a must-have has status `gap` and no `user_decision`.
+- **Grounded claims only.** A claim without a resolvable source fails
+  `check_claims` automatically (stage 1, code).
+- **Revise, don't regenerate.** After draft 1, only `revise_letter` may create
+  drafts. 🧪 Optionally reject a revision that changes more than X% of the
+  text.
+- **Never submits.** The user reads, edits and submits. This hasn't changed.
+
+### 5.8 Example run (Data Analyst ad)
+
+One possible path. On another job the agent might pass on the first draft and
+stop after six calls; that flexibility is the point.
+
+| # | Tool | Result | Why |
+|---|---|---|---|
+| 1 | `analyze_job` | 6 requirements (4 must, 2 should); cache hit if the job was analysed before | Always first |
+| 2 | `match_profile` | 5 supported, 1 gap: Power BI (must) | Needs evidence before writing |
+| 3 | `ask_user` | Remembered decision: "Tableau 1 yr, no Power BI" → `adjacent` (no pause) | Must-have gap blocks drafting |
+| 4 | `suggest_learning` | Power BI fundamentals course | Real gap confirmed |
+| 5 | `generate_letter` | Draft 1, frames Tableau honestly | Gaps resolved |
+| 6–8 | `check_claims` / `check_requirements` / `style_lint` | Pass / **fail R4** (stakeholder reporting) / 1 em dash + "fast-paced environment" | Required after each draft |
+| 9 | `revise_letter` | Draft 2: adds R4, fixes style | Targeted fixes |
+| 10 | `check_claims` | **Fail:** "presented to executives" not in profile | Rechecks every draft |
+| 11 | `revise_letter` | Draft 3: "presented weekly reports to team leads" (`experience:12#s5`) | Fix only the bad claim |
+| 12 | all three checks | Pass | Run in parallel |
+| 13 | `finish` | Accepted | Done |
+
+Step 10 is the failure v0.2 was exposed to: adding content to satisfy the
+requirements check pushed the writer to overstate. Because `check_claims` runs
+on every draft, it is caught and fixed with a narrow edit.
+
+---
+
+## 6. When it runs (decided 2026-10-01, carried over from v0.2)
+
+Preferences in `profiles.preferences`, editable in the Personalise panel:
+- **`letter_loop_enabled`** (bool, default `True`): master switch. Off means
+  every letter is a one-shot `cover_letter.py` draft and no tools or agent run.
+- **`letter_loop_min_score`** (int 0–100, default `85`): matches at or above
+  this get the full pipeline automatically. 75–84 get a one-shot draft. If set
+  below `auto_cover_letter_min_score`, the effective bar is the higher of the
+  two, and the sidebar explains this next to the control.
+- **`letter_engine`** (`"workflow"` | `"agent"`, new): which pipeline runs.
+  Both share the same tools, so this also makes the §9 comparison and a quick
+  fallback possible. The default is set by the Phase 7 comparison.
+- **Side-output toggles:** `resume_advice_enabled` (True),
+  `learning_suggestions_enabled` (True), `screening_answers_enabled` (True,
+  but a no-op until questions are captured).
+- *Nice-to-have:* a per-letter **"Polish"** button to run the pipeline on
+  demand below the bar.
+
+---
+
+## 7. Data model changes (draft; update docs/database-schema.md FIRST)
+
+The schema doc is the source of truth. Add these there first, then write the
+Alembic migrations. Use the portable styles (BigInteger variant,
+`text("false")` defaults, CASCADE, JSON stored as `Text`).
 
 - **`llm_usage`** (Phase 1): `id, created_at, task, tier, model,
   input_tokens, output_tokens, thinking_tokens, cached_tokens, cost_usd,
-  job_id NULL, match_id NULL`. This feeds the budget guard and cost reports.
-  Retention: keep summaries, purge rows older than ~180 days (open).
-- **`cover_letter_revisions`** (Phase 5): `id, cover_letter_id FK CASCADE,
-  round, content, employer_critique JSON, writing_critique JSON, lint JSON,
-  coverage_score, writing_score, created_at`. Lets us see why the loop chose
-  what it chose, and is how we tune it. `cover_letters.generated_content`
-  stays the chosen final version, so nothing downstream changes.
-- **Employer rubric cache**: `job_listings.employer_rubric` (JSON text) +
-  `employer_rubric_at`. The rubric depends only on the job, not the user, so
-  it belongs on the global job row.
-- **Writing samples**: start in `profiles.preferences`. Move to a table only
-  if it grows.
-- **`resume_notes`** (JSON text, §5.4): stored with the loop output, either on
-  `cover_letters` or on the final `cover_letter_revisions` row. Decide in
-  Phase 5. NULL when resume advice is disabled.
-- **New preference keys** (no migration; `profiles.preferences` is a JSON
-  blob, so add each key to `DEFAULTS` in `app/preferences.py`):
-  `letter_loop_enabled` (True), `letter_loop_min_score` (85),
-  `resume_advice_enabled` (True), `llm_daily_budget_usd`,
-  `llm_total_budget_usd` (Q8), plus the §6 stop-rule tunables
-  (`loop_max_rounds` 3, `loop_target_coverage` 80, `loop_target_writing` 85,
-  `loop_plateau_points` 3).
+  duration_ms, job_id NULL, match_id NULL, run_id NULL`. Feeds the budget
+  guard and the per-run cost numbers. Retention: purge rows older than ~180
+  days (open).
+- **`letter_runs`** (Phase 3): `id, match_id FK CASCADE, engine
+  ('workflow'|'agent'), status ('running'|'waiting_user'|'done'|
+  'budget_stopped'|'failed'), state JSON, final_draft_version, tool_calls,
+  cost_usd, started_at, finished_at`. The persisted `LetterState`. Several
+  runs per match are allowed (regenerate, A/B), so `match_id` is not unique.
+  `cover_letters.generated_content` remains the chosen final text, so nothing
+  downstream changes. This replaces v0.2's `cover_letter_revisions`, because
+  drafts and checks live in the state JSON.
+- **`letter_run_steps`** (Phase 3): `id, run_id FK CASCADE, seq, tool, args
+  JSON, result_summary JSON, error, duration_ms, created_at`. One row per tool
+  call, for debugging ("which decision caused this?") and for eval reports.
+- **Requirements cache** (Phase 3): `job_listings.requirements_checklist`
+  (JSON text) + `requirements_checklist_at`. It is `analyze_job`'s output and
+  depends only on the job, so it belongs on the global job row. (This was
+  v0.2's `employer_rubric`.)
+- **Gap decisions** (Phase 7, if Q9 says yes): `gap_decisions(id, user_id FK
+  CASCADE, skill_key, choice, note, created_at, updated_at)`, UNIQUE
+  `(user_id, skill_key)`. `skill_key` is the normalised name and is not
+  FK'd to `skills`, consistent with `job_skills`.
+- **New preference keys** (no migration; add to `DEFAULTS` in
+  `app/preferences.py`): `letter_loop_enabled`, `letter_loop_min_score`,
+  `letter_engine`, `resume_advice_enabled`, `learning_suggestions_enabled`,
+  `screening_answers_enabled`, `llm_daily_budget_usd`,
+  `llm_total_budget_usd` (Q8), `letter_max_drafts` (3),
+  `letter_max_tool_calls` (15).
 
 ---
 
-## 8. Phases (order matters: measure before building)
+## 8. Code layout (proposed)
+
+```
+app/llm/
+  client.py              # + tiers, complete_tools, usage logging, budget guard
+  cover_letter.py        # stays: the one-shot engine (75–84, and loop off)
+  letter/
+    state.py             # LetterState, pointer resolver, summary_for_orchestrator
+    tools/               # one module per tool, each a plain function on state
+      analyze_job.py  match_profile.py  ask_user.py  generate.py  revise.py
+      check_claims.py  check_requirements.py  style_lint.py
+      screening.py  learning.py  resume_notes.py
+    registry.py          # tool name -> function + model-facing description/schema
+    guardrails.py        # can_finish, gap gate, budget, best-draft selection
+    workflow.py          # fixed sequence over the same tools (the baseline)
+    agent.py             # orchestrator loop
+  skills/cover_letter_style/
+    SKILL.md  banned_phrases.txt  voice_samples/ (gitignored)
+scripts/
+  letter_lab.py          # run eval set × engine, write rubric results + cost to markdown
+evals/
+  jobs/                  # 10–15 saved ads (fixtures; no profile data committed)
+  rubric.md
+```
+
+Tools are plain functions that take and return state. `workflow.py` and
+`agent.py` are two drivers over the same `registry.py`, so neither has its own
+copy of the logic.
+
+---
+
+## 9. Evaluation
+
+Without evals we can't tell whether a change helped or only felt like it did.
+
+- **Eval set:** 10–15 real saved jobs covering strong matches, real gaps,
+  screening questions (if any exist), and short and long ads. Snapshot their
+  `raw_description` into `evals/jobs/` so the set stays fixed even after
+  retention purges the rows.
+- **Rubric: pass/fail, not 1–10.** Models grading their own output are lenient
+  on vague scales.
+  - Every must-have the profile supports is addressed
+  - No claim lacks a profile source
+  - No banned phrases or em dashes
+  - At least one specific detail about the company or role
+  - Within the word limit
+  - Would the user send it with light edits? (the user's judgement)
+- **Planted-claim test** for `check_claims`: take passing letters, insert
+  1–2 false claims, and measure the catch rate. This decides whether the check
+  stays on `small`.
+- **Logging:** every call goes to `llm_usage` + `letter_run_steps`.
+- **Comparison table** (filled in by `letter_lab.py`):
+
+| Measure | One-shot (today) | Workflow | Agent |
+|---|---|---|---|
+| Rubric pass rate | | | |
+| Avg tokens / run | | | |
+| Avg cost / run | | | |
+| Avg time / run | | | |
+| Runs that hit the budget cap | | | |
+| Runs where the user had to fix a factual error | | | |
+
+The agent pays an orchestrator call at every step, so measure that overhead.
+A likely result is that the workflow wins for the letter itself, and agency
+pays off on open-ended tasks such as company research or choosing which
+listings to apply for. Either answer is worth having.
+
+### Cost per letter *(est.)*. Replace with real numbers after Phase 1
+Assumes mid = 3.8 Flash, strong = 3.1 Pro, small = Flash-Lite, moderate
+thinking, implicit caching on the shared prefix.
+
+| Step | ≈ Cost |
+|---|---|
+| `analyze_job` (once per job, cached) | $0.01 |
+| `match_profile` | $0.01 |
+| Draft or revision (strong) | $0.04 each |
+| Three checks (code + small ×2) | $0.003 |
+| Orchestrator call (mid, summary context) | ~$0.003 each × 8–15 |
+| **Workflow, 3 drafts** | **≈ $0.15** |
+| **Agent, 3 drafts** | **≈ $0.18–0.20** |
+| Pipeline per scanned job (screen + extract + match, small) | ≈ $0.004 |
+
+Rough 90-day envelope: 3,600 scanned jobs ≈ $15, 300 full-pipeline letters
+≈ $60, eval runs (≈15 jobs × 3 engines × several iterations) ≈ $50–100. Well
+under $300. A looping bug is a bigger risk than normal spend, which is why the
+budget guard comes in Phase 1.
+
+---
+
+## 10. Phases (order matters: each step testable before the next)
 
 | # | Phase | Output | Depends on |
 |---|---|---|---|
-| 0 | **Decisions + checks** | Answers to the remaining §10 questions (Q5–Q8); confirm the new trial's credit + exact expiry in Cloud Billing; confirm model IDs via `client.models.list()` on the new key | — |
-| 1 | **Gemini migration** (§4) | Tiers, `llm_usage`, budget guard, all callers on Gemini | 0 |
-| 2 | **Test harness + baseline** 🧪 | `scripts/letter_lab.py`: fixed eval set of 5–8 real saved jobs. Run one-shot letters (Flash vs Pro, with/without raw job ad). Write every output + cost to a markdown file for a blind side-by-side read | 1 |
-| 3 | **Employer agent** | Rubric + critique modules + Pydantic schemas; tested on the eval set | 2 |
-| 4 | **Writing agent** | `style_lint.py` + critique; writing samples wired in | 2 |
-| 5 | **Loop orchestrator** | `app/llm/letter_loop.py`, `cover_letter_revisions`, stop rules; harness compares one-shot vs 1/2/3 rounds | 3, 4 |
-| 6 | **Integration** | Idle-loop trigger gated on `letter_loop_enabled` + `letter_loop_min_score` (§6); SSE progress events; sidebar shows coverage + writing score, the "not supported" list (what the letter deliberately didn't claim), and Resume tips (§5.4). Personalise-panel controls: loop toggle, loop threshold, resume-advice toggle, budget caps. Wired like the existing settings: `DEFAULTS` in `app/preferences.py` → typed field on `PreferencesUpdate` (`app/api/main.py`, `ge=0, le=100` on the threshold) → load/save handlers like `auto_cover_letter_min_score` / `llm_search_suggestions` in `extension/sidebar.js` | 5 |
-| 7 | **Later / optional** | Company research experiment (Q3); learn-from-edits style notes; "Polish" button; Batch API (50% off) for the extract/match backlog | 6 |
+| 0 | **Decisions + checks** | Answers to Q5–Q10; confirm trial credit + expiry in Cloud Billing; confirm model IDs via `client.models.list()` | — |
+| 1 | **Gemini migration** (§4) | Tiers, `complete_tools`, `llm_usage`, budget guard, all callers on Gemini | 0 |
+| 2 | **State, eval set, baseline** | `LetterState` + pointer resolver; `evals/` set + rubric; `letter_lab.py`; score today's one-shot letters as the first baseline | 1 |
+| 3 | **`analyze_job` + `match_profile`** | Structured outputs, requirements cache, `letter_runs` / `letter_run_steps` tables; checked by hand on the eval set | 2 |
+| 4 | **Style skill + `style_lint`** | Skill folder, banned list shared by prompt and lint, voice samples wired in | 2 |
+| 5 | **Draft + check tools** | `generate_letter`, `check_claims` (both stages), `check_requirements`, `revise_letter`; planted-claim test | 3, 4 |
+| 6 | **Fixed workflow = baseline** | `workflow.py`: analyze → match → (gap default) → draft → checks → revise ≤2 → finish, with the guardrails. Run evals. **Usable on its own; could ship here** | 5 |
+| 7 | **Agent** | `ask_user` (+ sidebar question UI, resume), gap memory (Q9), side-output tools, tool descriptions, orchestrator prompt, `agent.py`. Run evals and fill in the comparison table. Set the `letter_engine` default from the result | 6 |
+| 8 | **Integration** | Idle-loop trigger (§6), SSE progress, sidebar: final letter + open issues, "not claimed" list, side-output sections, Personalise controls (wired like `auto_cover_letter_min_score`: `DEFAULTS` → `PreferencesUpdate` with bounds → `sidebar.js`) | 7 (or 6 if the workflow ships first) |
+| 9 | **Later / optional** | `research_company` tool with search grounding (where agency clearly helps; recruiter-posted ads are a risk); learn-from-edits style notes; "Polish" button; Batch API for the extract/match backlog | 8 |
 
-Phase 2 comes before the agents on purpose. Without a baseline and a
-side-by-side harness, we can't tell whether the loop beats a single
-well-prompted Pro call. It might not, and that would be worth knowing before
-spending money on it.
+The baseline and harness come before any agent work on purpose. Without them we
+can't tell whether checks, revisions or an orchestrator beat one
+well-prompted Pro call.
 
 ---
 
-## 9. Risks / things to watch
+## 11. Risks / things to watch
 
-- **Fabrication creep**: see §5.1. The `unsupported_claims` gate is
+- **Fabrication creep.** "Cover every requirement" pushes the writer to
+  stretch. The no-silent-gaps rule and code-level claim grounding are
   non-negotiable.
-- **Over-polish / sameness**: loops tend to converge on smooth, generic
-  prose, which is itself an AI tell. Watch for this in Phase 5 and stop early
-  if it shows up.
-- **Preview model churn**: `gemini-3.1-pro-preview` may change behaviour or be
-  replaced. The writer tier is one env var, so falling back to 3.8 Flash is a
-  config change.
-- **Price changes on 2027-01-01**: Flash prices double. Re-check the
-  envelope if the project outlives the trial.
-- **Trial expiry (~2026-12-30)**: when credit runs out or the trial ends,
-  calls fail unless billing is upgraded. Keep the OpenAI path working as a
-  fallback, and re-check model prices before continuing past the trial.
-- **Privacy**: profile data goes to Google. Check the paid-tier Gemini API
-  data-use terms (paid tier is not used for training, per Google's terms at
-  time of writing — verify).
+- **Lenient checker.** A small-model claim checker that waves through
+  overstatements makes the whole design look safe when it isn't. The
+  planted-claim test measures this.
+- **Agent overhead and variance.** Orchestrator calls add cost and time, and
+  two runs on one job can take different paths. The step log and the
+  comparison table make this visible.
+- **Over-polish / sameness.** Past 2–3 drafts, letters tend to get more
+  generic. Keep the draft cap low and watch for this in evals.
+- **Paused runs pile up.** If questions go unanswered, high-scoring matches
+  wait for letters. Q9's default and gap memory address this.
+- **Preview model churn.** `gemini-3.1-pro-preview` may change. `strong` is one
+  env var; falling back to 3.8 Flash is a config change.
+- **Price change 2027-01-01** (Flash doubles) and **trial expiry
+  ~2026-12-30**. Keep the OpenAI path working as a fallback, and re-check
+  prices before continuing past the trial.
+- **Privacy.** Profile data and voice samples go to Google. Verify the
+  paid-tier data-use terms (not used for training at time of writing).
+  Voice samples are gitignored.
 
 ---
 
-## 10. Open questions (answers will reshape this plan)
+## 12. Open questions
 
-**Resolved 2026-10-01:**
-- ~~Q1 Trial timing~~: a **new** trial with fresh credit, running ~2026-10-01
-  → ~2026-12-30. Confirm the exact expiry in Cloud Billing during Phase 0.
-- ~~Q2 Loop trigger~~: automatic at **≥85**, with the threshold
-  personalisable (`letter_loop_min_score`) and a master on/off toggle
-  (`letter_loop_enabled`). See §6.
-- ~~Q3 Company research~~: **later, as an experiment** (Phase 7). Risk to
-  test then: Seek ads are often posted by recruiters, and a wrong company
-  fact is worse than none.
-- ~~Q4 Resume scope~~: **tailoring notes only**, behind a
-  `resume_advice_enabled` toggle so the user can choose cover-letter-only. See
-  §5.4. Still to check: whether `user_cvs` has a CV stored today; the notes
-  work either way.
+**Resolved 2026-10-01 (from v0.2, still valid):**
+- ~~Q1 Trial timing~~: new trial, ~2026-10-01 → ~2026-12-30. Confirm the
+  expiry in Phase 0.
+- ~~Q2 Trigger~~: automatic at ≥85, tunable, with a master toggle (§6).
+- ~~Q3 Company research~~: later, as an experiment (Phase 9).
+- ~~Q4 Resume scope~~: tailoring notes only, behind a toggle (§5.6).
 
 **Still open:**
-- **Q5 Writing samples.** Can you provide 2–3 pieces of your own writing for
-  voice matching?
-- **Q6 AI detector.** Report-only external detector score (paid API), or rely
-  on the lint + critic only?
-- **Q7 Letter shape.** Target length, and Australian spelling (likely yes,
-  given Seek AU)? Address to a named contact when the ad has one?
-- **Q8 Budget caps.** Daily / total USD caps for the guard. Suggested starting
-  values: $5/day, $200 total.
+- **Q5 Voice samples.** Can you provide 2–3 pieces of your own writing (an
+  old cover letter, a uni essay intro, a long email)?
+- **Q6 AI detector.** Drop it entirely (leaning this way, per the design
+  basis), or keep a report-only score?
+- **Q7 Letter shape.** 250–350 words? Australian spelling? Address a named
+  contact when the ad has one?
+- **Q8 Budget caps.** Suggested: $5/day, $200 total. Per-run cap? Suggested:
+  $0.50.
+- **Q9 Unanswered gaps.** When a must-have gap has no decision, should the
+  run (a) pause until you answer, or (b) assume `leave_out`, which is always
+  honest, write the letter, and show the question so answering triggers a
+  re-run? Leaning towards (b) plus profile-level gap memory, so automatic
+  letters don't stall.
+- **Q10 Screening questions.** Seek shows most of them in the Quick Apply
+  flow, not the ad. Capturing them depends on the parked §5.2 apply-flow
+  detection (CLAUDE.md), which needs a live session. Until then,
+  `answer_screening` only covers questions written into the ad itself.
 
 ---
 
@@ -444,9 +668,15 @@ spending money on it.
 
 | Date | Decision | Why |
 |---|---|---|
-| 2026-10-01 | Plan drafted. Critics critique, one writer revises | Avoid agents undoing each other's edits; fewer expensive calls |
-| 2026-10-01 | Measure (Phase 2 harness) before building the loop | We don't yet know the loop beats one good Pro call |
-| 2026-10-01 | Budget window = new $300 trial, ~2026-10-01 → ~2026-12-30 | User started a fresh trial; it ends before the 2027-01-01 Flash price rise |
-| 2026-10-01 | Loop runs automatically at ≥85; threshold is a preference; master on/off toggle | User wants polished top matches, a tunable bar, and an easy way to turn the loops off |
-| 2026-10-01 | Resume = tailoring notes only, with their own on/off toggle | Cheap, no schema change; user may want cover-letter-only |
-| 2026-10-01 | Company research deferred to Phase 7 as an experiment | Recruiter-posted ads make company facts risky; prove the core loop first |
+| 2026-10-01 | v0.2: critics critique, one writer revises | Avoid agents undoing each other's edits; fewer expensive calls. *Superseded by v0.3* |
+| 2026-10-01 | Measure (harness + baseline) before building | We don't yet know the loop beats one good Pro call. *Still holds* |
+| 2026-10-01 | Budget window = new $300 trial, ~2026-10-01 → ~2026-12-30 | Fresh trial; ends before the 2027-01-01 Flash price rise |
+| 2026-10-01 | Runs automatically at ≥85; threshold is a preference; master toggle | Polished top matches, tunable bar, easy off switch |
+| 2026-10-01 | Resume = tailoring notes only, own toggle | Cheap, no CV storage change; cover-letter-only is possible |
+| 2026-10-01 | Company research deferred, experiment only | Recruiter-posted ads make company facts risky |
+| 2026-10-01 | **v0.3: rebased onto an agent design** (tools + shared state + orchestrator + code guardrails) | In v0.2 the fixed loops fought, and style edits dropped content the employer loop had added. One state object and per-draft checks prevent that |
+| 2026-10-01 | Build the workflow first over the same tools, then the agent; ship whichever wins the comparison | Learn when agency pays for itself; the workflow is a usable fallback |
+| 2026-10-01 | Tiers renamed `small / mid / strong`; checks on `small`, orchestrator + analysis on `mid` | The "critic" tier no longer exists; analysis and orchestration start on Flash until evals say otherwise |
+| 2026-10-01 | Evidence pointers use stable DB ids (`experience:12#s3`), not list indices | Indices shift when the profile is edited |
+| 2026-10-01 | `check_claims` = code source check + independent small-model extraction | The writer's own claims list is self-reported and can't be the only check |
+| 2026-10-01 | No agent framework yet; hand-written loop | Understand the plumbing before adopting LangGraph or similar |

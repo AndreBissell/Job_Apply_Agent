@@ -242,13 +242,15 @@ Extension: extension/config.js defines BACKEND from chrome.storage.local
 (`backendEnv`, default real); every context awaits `backendReady` first. The
 sidebar's REAL/TEST pill flips it and reloads. Not verified in a loaded Chrome.
 
-🔄 CURRENT TASK: Cover-letter refinement loops + Gemini migration
+🔄 CURRENT TASK: Cover-letter agent + Gemini migration
 
-Living plan: docs/cover-letter-loop-plan.md (DRAFT. Expect it to change as
-testing teaches us things; update its Decision log when it does). Next up is
-Phase 0 (confirm the new $300 trial's expiry + model IDs on the key), then
-Phase 1 (switch client.py to Gemini with small/critic/writer tiers, llm_usage
-cost logging, budget guard). The LLM Layer section above still describes
+Living plan: docs/cover-letter-loop-plan.md (DRAFT v0.3, rebased 2026-10-01
+from two fixed review loops onto a tool-calling agent with a shared state
+object and code-enforced guardrails; workflow baseline first, then agent,
+compared on an eval set. Expect it to change; update its Decision log when it
+does). Next up is Phase 0 (confirm the new $300 trial's expiry + model IDs on
+the key), then Phase 1 (switch client.py to Gemini with small/mid/strong
+tiers, complete_tools for tool calling, llm_usage cost logging, budget guard). The LLM Layer section above still describes
 OpenAI because that is what runs today. Rewrite it when Phase 1 lands, not
 before.
 
