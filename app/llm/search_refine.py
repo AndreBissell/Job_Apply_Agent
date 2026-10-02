@@ -136,7 +136,8 @@ def refine(profile, candidates: list[dict], active_keywords: list[str]) -> list[
 
     try:
         data = complete_json(
-            _SYSTEM_PROMPT, prompt, schema=RefinedSearches, temperature=0.1
+            _SYSTEM_PROMPT, prompt, schema=RefinedSearches, temperature=0.1,
+            tier="small", task="search_refine",
         )
         result = RefinedSearches.model_validate(data)
     except Exception:  # noqa: BLE001 — suggestions are a nicety, never fatal

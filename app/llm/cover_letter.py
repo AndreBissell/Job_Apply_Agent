@@ -215,7 +215,10 @@ def generate_cover_letter(
             return None
 
         prompt = _build_prompt(profile, job, match)
-        content = complete_text(_SYSTEM_PROMPT, prompt, temperature=0.7)
+        content = complete_text(
+            _SYSTEM_PROMPT, prompt, temperature=0.7,
+            tier="strong", task="cover_letter", job_id=job_id, match_id=match.id,
+        )
 
         existing = match.cover_letter
         if existing is not None:

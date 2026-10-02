@@ -66,6 +66,10 @@
       background: none; border: none; cursor: pointer; color: #92400e;
       font-size: 13px; padding: 0 2px; flex: none;
     }
+    #budget-banner {
+      font-size: 12px; color: #7f1d1d; background: #fef2f2;
+      border-bottom: 1px solid #fecaca; padding: 6px 14px;
+    }
     #scanlog { font-size: 12px; color: #374151; padding: 0 14px; }
     #job-status { font-size: 12px; color: #6b7280; padding: 8px 14px; }
     #job-status:empty { display: none; }
@@ -407,6 +411,7 @@
 
   <!-- ── Jobs tab ─────────────────────────────────────── -->
   <div id="jobs-section">
+    <div id="budget-banner" hidden></div>
     <div id="suggestion-banner" hidden>
       <span>💡 Try searching:</span>
       <span class="sugg-links" id="sugg-links"></span>

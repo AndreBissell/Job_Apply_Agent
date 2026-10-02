@@ -541,3 +541,37 @@ class CoverLetter(Base):
     match: Mapped["Match"] = relationship(back_populates="cover_letter")
 
     __table_args__ = (UniqueConstraint("match_id", name="uq_cover_letters_match"),)
+
+
+# ---------------------------------------------------------------------------
+# LLM cost tracking
+# ---------------------------------------------------------------------------
+class LlmUsage(Base):
+    """One row per LLM call: tokens + estimated USD. Feeds the budget guard.
+
+    ``job_id`` / ``match_id`` / ``run_id`` are plain labels, deliberately NOT
+    foreign keys: the spend log must outlive the rows it describes (a retention
+    purge or a deleted match must not erase what was already spent, or the
+    total-budget cap would quietly reset).
+    """
+
+    __tablename__ = "llm_usage"
+
+    id: Mapped[int] = mapped_column(BIG_INT_PK, primary_key=True)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    task: Mapped[str] = mapped_column(Text, nullable=False)  # 'extract', 'match', ...
+    tier: Mapped[str] = mapped_column(Text, nullable=False)  # 'small' | 'mid' | 'strong'
+    model: Mapped[str] = mapped_column(Text, nullable=False)
+    input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    thinking_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    cached_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    cost_usd: Mapped[Decimal] = mapped_column(Numeric(12, 6), nullable=False, server_default="0")
+    duration_ms: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    job_id: Mapped[int | None] = mapped_column(BIG_INT_FK)
+    match_id: Mapped[int | None] = mapped_column(BIG_INT_FK)
+    run_id: Mapped[int | None] = mapped_column(BIG_INT_FK)
+
+    __table_args__ = (Index("idx_llm_usage_created", "created_at"),)

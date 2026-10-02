@@ -32,3 +32,10 @@ Thumbs.db
 
 # Local DB backups
 backups/
+
+# Cover-letter evals: ad text, the real profile and letters written as the user
+# stay local. Only the rubric/README and the result summaries are committed.
+evals/jobs/
+evals/runs/
+evals/eval.db
+evals/set.json

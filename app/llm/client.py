@@ -1,25 +1,32 @@
 """LLM provider abstraction — the ONE place the model/provider is configured.
 
-Every LLM call in the app goes through ``complete_json`` (structured extraction)
-or ``complete_text`` (prose). The provider, model, key, and rate limit all come
-from the environment (see CLAUDE.md "LLM Layer"), so swapping providers or models
-is a config change, never an edit to extract.py / match.py / cover-letter code.
+Every LLM call in the app goes through ``complete_json`` (structured extraction),
+``complete_text`` (prose) or ``complete_tools`` (tool calling). The provider,
+models, credentials and rate limit all come from the environment, so swapping
+providers or models is a config change, never an edit to extract.py / match.py /
+cover-letter code. Callers name a *tier*, never a model.
+
+Tiers (see docs/cover-letter-loop-plan.md §3):
+  * ``small``  — cheap structured work: quick-screen, extract, match, checks.
+  * ``mid``    — orchestration, job analysis, evidence mapping.
+  * ``strong`` — the prose a human actually reads: cover letters, revisions.
 
 Supported providers (set LLM_PROVIDER in .env):
-  * "openai" — OpenAI. Active default. Two models, split by task cost/quality:
-    OPENAI_MODEL_SMALL (default gpt-5-nano) for complete_json — extraction and
-    matching are structured, low-complexity tasks. OPENAI_MODEL_LETTER (default
-    gpt-5-mini) for complete_text — cover letters are the one output a human
-    actually reads, so they get the better model even though the volume-driven
-    cost difference is negligible either way.
-  * "groq"   — Groq Cloud. Dormant fallback (kept working, not required).
-  * "gemini" — Google Gemini. Dormant fallback (kept working, not required).
+  * "gemini" — Google Gemini via Vertex AI (ADC, no key) or an API key. Active
+    default. GEMINI_MODEL_SMALL / _MID / _STRONG map the tiers.
+  * "openai" — dormant fallback. small -> OPENAI_MODEL_SMALL; mid and strong ->
+    OPENAI_MODEL_LETTER.
+  * "groq"   — dormant fallback (JSON + text only, no tool calling).
 
-Rate limiting + retries live here so callers don't reimplement them:
-  * a simple in-process throttle keeps us under ``LLM_RPM`` requests/minute;
-  * 429s and transient 5xx retry, preferring the server's retry-after hint;
-  * only a 429 whose retry delay exceeds ``_DAILY_RETRY_SECS`` (5 min) is treated
-    as a genuine daily exhaustion and raises ``DailyQuotaError`` to stop a batch.
+Cross-cutting behaviour that lives here so callers don't reimplement it:
+  * an in-process throttle keeps us under ``LLM_RPM`` requests/minute;
+  * 429s and transient 5xx retry, preferring the server's retry-after hint; only
+    a 429 whose delay exceeds ``_DAILY_RETRY_SECS`` (5 min) is a genuine daily
+    exhaustion and raises ``DailyQuotaError``;
+  * every call is logged to ``llm_usage`` (tokens + estimated USD);
+  * ``mid`` / ``strong`` calls are refused with ``BudgetExceededError`` once the
+    daily or total USD cap in ``profiles.preferences`` is reached. ``small``
+    keeps running so scanning still works.
 """
 
 from __future__ import annotations
@@ -30,7 +37,8 @@ import os
 import re
 import threading
 import time
-from typing import Any
+from dataclasses import dataclass, field
+from typing import Any, Literal
 
 from dotenv import load_dotenv
 
@@ -41,9 +49,12 @@ load_dotenv()
 # ---------------------------------------------------------------------------
 # Config (read once at import; all from env, nothing hardcoded as truth)
 # ---------------------------------------------------------------------------
-LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "openai").lower()
+LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "gemini").lower()
 
-# OpenAI (active default) — split by task, see module docstring.
+Tier = Literal["small", "mid", "strong"]
+TIERS: tuple[str, ...] = ("small", "mid", "strong")
+
+# OpenAI (dormant fallback) — small, and one better model for mid + strong.
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 OPENAI_MODEL_SMALL = os.environ.get("OPENAI_MODEL_SMALL", "gpt-5-nano")
 OPENAI_MODEL_LETTER = os.environ.get("OPENAI_MODEL_LETTER", "gpt-5-mini")
@@ -52,14 +63,23 @@ OPENAI_MODEL_LETTER = os.environ.get("OPENAI_MODEL_LETTER", "gpt-5-mini")
 GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
-# Gemini (dormant fallback)
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite")
+# Gemini (active). GEMINI_MODEL is the pre-tier name for the small model; still
+# honoured so an older .env keeps working.
+GEMINI_MODEL_SMALL = (
+    os.environ.get("GEMINI_MODEL_SMALL") or os.environ.get("GEMINI_MODEL") or "gemini-3.1-flash-lite"
+)
+GEMINI_MODEL_MID = os.environ.get("GEMINI_MODEL_MID", "gemini-3.8-flash")
+GEMINI_MODEL_STRONG = os.environ.get("GEMINI_MODEL_STRONG", "gemini-3.1-pro-preview")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
 # Vertex AI via Application Default Credentials — no API key. Needed when the
 # Cloud organization disallows API keys (the $300 trial project does).
 GEMINI_USE_VERTEX = os.environ.get("GOOGLE_GENAI_USE_VERTEXAI", "").lower() in ("1", "true", "yes")
 GOOGLE_CLOUD_PROJECT = os.environ.get("GOOGLE_CLOUD_PROJECT")
 GOOGLE_CLOUD_LOCATION = os.environ.get("GOOGLE_CLOUD_LOCATION", "global")
+
+# Gemini 3 thinking level per tier — thinking tokens are billed as output, so this
+# is the biggest cost lever. Override with GEMINI_THINKING_SMALL / _MID / _STRONG.
+_THINKING_DEFAULTS = {"small": "low", "mid": "medium", "strong": "high"}
 
 try:
     LLM_RPM = max(1, int(os.environ.get("LLM_RPM", "8")))
@@ -79,6 +99,185 @@ class LLMError(RuntimeError):
 
 class DailyQuotaError(LLMError):
     """Raised on a daily-quota 429 that a short retry won't clear — stop the batch."""
+
+
+class BudgetExceededError(LLMError):
+    """Raised before a mid/strong call when the daily or total USD cap is reached.
+
+    Raised *before* any request is made, so nothing is spent. Callers treat it
+    like ``DailyQuotaError`` (stop and back off); ``small`` calls are never
+    blocked by it.
+    """
+
+
+# ---------------------------------------------------------------------------
+# Tiers -> models
+# ---------------------------------------------------------------------------
+def _check_tier(tier: str) -> str:
+    if tier not in TIERS:
+        raise LLMError(f"Unknown tier {tier!r} (expected one of {TIERS})")
+    return tier
+
+
+def model_for(tier: str, provider: str | None = None) -> str:
+    """The model a tier resolves to under ``provider`` (default: the active one)."""
+    _check_tier(tier)
+    provider = provider or LLM_PROVIDER
+    if provider == "gemini":
+        return {"small": GEMINI_MODEL_SMALL, "mid": GEMINI_MODEL_MID, "strong": GEMINI_MODEL_STRONG}[tier]
+    if provider == "openai":
+        return OPENAI_MODEL_SMALL if tier == "small" else OPENAI_MODEL_LETTER
+    if provider == "groq":
+        return GROQ_MODEL
+    raise LLMError(f"Unknown LLM_PROVIDER={provider!r}")
+
+
+def _thinking_level(tier: str) -> str:
+    level = os.environ.get(f"GEMINI_THINKING_{tier.upper()}", _THINKING_DEFAULTS[tier]).lower()
+    return level if level in ("minimal", "low", "medium", "high") else _THINKING_DEFAULTS[tier]
+
+
+# ---------------------------------------------------------------------------
+# Prices — USD per 1M tokens: (input, output, cached input). The ONE place.
+# Gemini figures are the Gemini API list prices checked 2026-10-01 (prompts
+# <=200k tokens; Pro's >200k tier is not modelled). Vertex AI bills close to but
+# not exactly these, so treat the logged USD as an estimate and compare it to
+# Cloud Billing. 3.6-3.8 Flash are intro prices that double on 2027-01-01 (the
+# trial ends first); 3.1 and 3.5 stay flat. Thinking tokens bill as output.
+# An unknown model logs cost 0 and a warning rather than failing the call.
+# ---------------------------------------------------------------------------
+PRICES: dict[str, tuple[float, float, float]] = {
+    "gemini-3.1-flash-lite": (0.25, 1.50, 0.025),
+    "gemini-3.5-flash-lite": (0.30, 2.50, 0.03),
+    "gemini-3.5-flash": (1.50, 9.00, 0.15),
+    "gemini-3.6-flash": (0.75, 3.75, 0.075),
+    "gemini-3.7-flash": (0.75, 3.75, 0.075),
+    "gemini-3.8-flash": (0.75, 3.75, 0.075),
+    "gemini-3.1-pro-preview": (2.00, 12.00, 0.20),
+    # Dormant OpenAI fallback (approximate).
+    "gpt-5-nano": (0.05, 0.40, 0.005),
+    "gpt-5-mini": (0.25, 2.00, 0.025),
+}
+
+
+@dataclass
+class Usage:
+    """Token counts for one call. ``input_tokens`` includes ``cached_tokens``;
+    ``output_tokens`` excludes ``thinking_tokens`` (both bill at the output rate)."""
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    thinking_tokens: int = 0
+    cached_tokens: int = 0
+
+
+def estimate_cost_usd(model: str, usage: Usage) -> float:
+    price = PRICES.get(model)
+    if price is None:
+        logger.warning("No price for model %r — logging cost as 0", model)
+        return 0.0
+    p_in, p_out, p_cached = price
+    fresh_in = max(0, usage.input_tokens - usage.cached_tokens)
+    total = (
+        fresh_in * p_in
+        + usage.cached_tokens * p_cached
+        + (usage.output_tokens + usage.thinking_tokens) * p_out
+    )
+    return total / 1_000_000
+
+
+def _usage_from_gemini(resp: Any) -> Usage:
+    m = getattr(resp, "usage_metadata", None)
+    if m is None:
+        return Usage()
+    g = lambda name: int(getattr(m, name, None) or 0)  # noqa: E731
+    return Usage(
+        input_tokens=g("prompt_token_count"),
+        output_tokens=g("candidates_token_count"),
+        thinking_tokens=g("thoughts_token_count"),
+        cached_tokens=g("cached_content_token_count"),
+    )
+
+
+def _usage_from_openai(resp: Any) -> Usage:
+    u = getattr(resp, "usage", None)
+    if u is None:
+        return Usage()
+    completion = int(getattr(u, "completion_tokens", 0) or 0)
+    reasoning = int(getattr(getattr(u, "completion_tokens_details", None), "reasoning_tokens", 0) or 0)
+    cached = int(getattr(getattr(u, "prompt_tokens_details", None), "cached_tokens", 0) or 0)
+    return Usage(
+        input_tokens=int(getattr(u, "prompt_tokens", 0) or 0),
+        output_tokens=max(0, completion - reasoning),
+        thinking_tokens=reasoning,
+        cached_tokens=cached,
+    )
+
+
+def _usage_session():
+    """A DB session for usage logging / the budget guard (patched in tests)."""
+    from app.db import SessionLocal
+
+    return SessionLocal()
+
+
+def _record_usage(
+    *,
+    task: str,
+    tier: str,
+    model: str,
+    usage: Usage,
+    duration_ms: int,
+    job_id: int | None,
+    match_id: int | None,
+    run_id: int | None,
+) -> None:
+    """Write one ``llm_usage`` row. Never raises — logging must not fail a call
+    that already succeeded (and already cost money)."""
+    try:
+        from app.models import LlmUsage
+
+        with _usage_session() as db:
+            db.add(
+                LlmUsage(
+                    task=task,
+                    tier=tier,
+                    model=model,
+                    input_tokens=usage.input_tokens,
+                    output_tokens=usage.output_tokens,
+                    thinking_tokens=usage.thinking_tokens,
+                    cached_tokens=usage.cached_tokens,
+                    cost_usd=estimate_cost_usd(model, usage),
+                    duration_ms=duration_ms,
+                    job_id=job_id,
+                    match_id=match_id,
+                    run_id=run_id,
+                )
+            )
+            db.commit()
+    except Exception:  # noqa: BLE001
+        logger.warning("Could not record llm_usage for task %r", task, exc_info=True)
+
+
+def _check_budget(tier: str) -> None:
+    """Refuse a mid/strong call once a USD cap is hit. ``small`` is never blocked.
+
+    Fails *open* if the usage table can't be read (e.g. migration not applied):
+    the RPM throttle still bounds spend, and a broken guard shouldn't take the
+    whole pipeline down.
+    """
+    if tier == "small":
+        return
+    try:
+        from app.llm.usage import budget_status
+
+        with _usage_session() as db:
+            status = budget_status(db)
+    except Exception:  # noqa: BLE001
+        logger.warning("Budget check unavailable — allowing the call", exc_info=True)
+        return
+    if status["blocked"]:
+        raise BudgetExceededError(status["reason"])
 
 
 # ---------------------------------------------------------------------------
@@ -314,7 +513,7 @@ def _generate_groq(system_prompt: str, user_content: str, config_kwargs: dict[st
 
 
 # ---------------------------------------------------------------------------
-# Gemini backend (fallback)
+# Gemini backend (active)
 # ---------------------------------------------------------------------------
 _gemini_client = None
 
@@ -339,22 +538,37 @@ def _get_gemini_client():
     return _gemini_client
 
 
-def _generate_gemini(system_prompt: str, user_content: str, config_kwargs: dict[str, Any]):
-    """Single Gemini call with throttle + retry/backoff."""
+def _gemini_config(
+    system_prompt: str, model: str, tier: str, temperature: float | None, **extra: Any
+):
+    """Build the request config for ``model``.
+
+    Gemini 3 guidance is to leave temperature at its default of 1.0 (lowering it
+    can cause looping on complex tasks), so it is dropped there and the thinking
+    level — set per tier — is the quality/cost dial instead. Older models keep
+    the caller's temperature and have no thinking level.
+    """
     from google.genai import types
 
+    kwargs: dict[str, Any] = dict(extra)
+    if model.startswith("gemini-3"):
+        kwargs["thinking_config"] = types.ThinkingConfig(
+            thinking_level=types.ThinkingLevel(_thinking_level(tier).upper())
+        )
+    elif temperature is not None:
+        kwargs["temperature"] = temperature
+    return types.GenerateContentConfig(system_instruction=system_prompt, **kwargs)
+
+
+def _generate_gemini(model: str, contents: Any, config: Any):
+    """Single Gemini call with throttle + retry/backoff."""
     client = _get_gemini_client()
-    config = types.GenerateContentConfig(
-        system_instruction=system_prompt, **config_kwargs
-    )
 
     last_exc: Exception | None = None
     for attempt in range(_MAX_RETRIES + 1):
         _throttle()
         try:
-            return client.models.generate_content(
-                model=GEMINI_MODEL, contents=user_content, config=config
-            )
+            return client.models.generate_content(model=model, contents=contents, config=config)
         except Exception as exc:
             last_exc = exc
             is_429 = _is_quota_429(exc)
@@ -385,23 +599,99 @@ def _generate_gemini(system_prompt: str, user_content: str, config_kwargs: dict[
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+@dataclass(frozen=True)
+class ToolSpec:
+    """A provider-neutral tool definition. ``parameters`` is a JSON-schema object."""
+
+    name: str
+    description: str
+    parameters: dict[str, Any] = field(default_factory=lambda: {"type": "object", "properties": {}})
+
+
+@dataclass
+class ToolStep:
+    """What the model did on one ``complete_tools`` turn: a tool call, or text."""
+
+    tool: str | None = None
+    args: dict[str, Any] = field(default_factory=dict)
+    text: str | None = None
+
+
+def _logged_call(
+    *,
+    tier: str,
+    task: str,
+    job_id: int | None,
+    match_id: int | None,
+    run_id: int | None,
+    call,
+    usage_of,
+):
+    """Budget-check, run ``call()``, then log its usage. Returns the raw response."""
+    _check_tier(tier)
+    _check_budget(tier)
+    start = time.monotonic()
+    resp = call()
+    _record_usage(
+        task=task,
+        tier=tier,
+        model=model_for(tier),
+        usage=usage_of(resp),
+        duration_ms=int((time.monotonic() - start) * 1000),
+        job_id=job_id,
+        match_id=match_id,
+        run_id=run_id,
+    )
+    return resp
+
+
 def complete_json(
     system_prompt: str,
     user_content: str,
     schema: Any,
     temperature: float = 0.1,
+    *,
+    tier: Tier = "small",
+    task: str = "complete_json",
+    job_id: int | None = None,
+    match_id: int | None = None,
+    run_id: int | None = None,
 ) -> dict[str, Any]:
     """Structured extraction — returns parsed JSON conforming to ``schema``.
 
-    For OpenAI: native Structured Outputs (chat.completions.parse) constrains
-    decoding to ``schema`` — see ``_generate_openai_structured`` for why this
-    matters. For Groq: the JSON schema is appended to the system prompt and
-    JSON mode is enabled via response_format. For Gemini: response_schema
-    constrains decoding. The caller validates the result with
-    ``schema.model_validate()`` regardless of provider.
+    For Gemini: ``response_schema`` constrains decoding. For OpenAI: native
+    Structured Outputs (chat.completions.parse) — see
+    ``_generate_openai_structured`` for why. For Groq: the JSON schema is
+    appended to the system prompt and JSON mode is enabled. The caller validates
+    the result with ``schema.model_validate()`` regardless of provider.
+
+    ``task`` / ``job_id`` / ``match_id`` / ``run_id`` only label the ``llm_usage`` row.
     """
+    model = model_for(tier)
+    ids = dict(tier=tier, task=task, job_id=job_id, match_id=match_id, run_id=run_id)
+
+    if LLM_PROVIDER == "gemini":
+        config = _gemini_config(
+            system_prompt, model, tier, temperature,
+            response_mime_type="application/json", response_schema=schema,
+        )
+        resp = _logged_call(
+            **ids, call=lambda: _generate_gemini(model, user_content, config),
+            usage_of=_usage_from_gemini,
+        )
+        text = (getattr(resp, "text", None) or "").strip()
+        if not text:
+            raise LLMError("Empty response from Gemini (no JSON text)")
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise LLMError(f"Gemini returned non-JSON: {exc}: {text[:200]!r}") from exc
+
     if LLM_PROVIDER == "openai":
-        resp = _generate_openai_structured(system_prompt, user_content, OPENAI_MODEL_SMALL, schema)
+        resp = _logged_call(
+            **ids, call=lambda: _generate_openai_structured(system_prompt, user_content, model, schema),
+            usage_of=_usage_from_openai,
+        )
         message = resp.choices[0].message
         if getattr(message, "refusal", None):
             raise LLMError(f"OpenAI refused: {message.refusal}")
@@ -419,7 +709,10 @@ def complete_json(
             "temperature": temperature,
             "response_format": {"type": "json_object"},
         }
-        resp = _generate_groq(enhanced_system, user_content, config_kwargs)
+        resp = _logged_call(
+            **ids, call=lambda: _generate_groq(enhanced_system, user_content, config_kwargs),
+            usage_of=_usage_from_openai,
+        )
         text = (resp.choices[0].message.content or "").strip()
         if not text:
             raise LLMError("Empty response from Groq (no JSON text)")
@@ -428,24 +721,6 @@ def complete_json(
         except json.JSONDecodeError as exc:
             raise LLMError(f"Groq returned non-JSON: {exc}: {text[:200]!r}") from exc
 
-    if LLM_PROVIDER == "gemini":
-        resp = _generate_gemini(
-            system_prompt,
-            user_content,
-            {
-                "temperature": temperature,
-                "response_mime_type": "application/json",
-                "response_schema": schema,
-            },
-        )
-        text = (getattr(resp, "text", None) or "").strip()
-        if not text:
-            raise LLMError("Empty response from Gemini (no JSON text)")
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError as exc:
-            raise LLMError(f"Gemini returned non-JSON: {exc}: {text[:200]!r}") from exc
-
     raise LLMError(f"Unknown LLM_PROVIDER={LLM_PROVIDER!r}")
 
 
@@ -453,11 +728,33 @@ def complete_text(
     system_prompt: str,
     user_content: str,
     temperature: float = 0.7,
+    *,
+    tier: Tier = "strong",
+    task: str = "complete_text",
+    job_id: int | None = None,
+    match_id: int | None = None,
+    run_id: int | None = None,
 ) -> str:
     """Prose generation (e.g. cover letters). Returns the model's text output."""
+    model = model_for(tier)
+    ids = dict(tier=tier, task=task, job_id=job_id, match_id=match_id, run_id=run_id)
+
+    if LLM_PROVIDER == "gemini":
+        config = _gemini_config(system_prompt, model, tier, temperature)
+        resp = _logged_call(
+            **ids, call=lambda: _generate_gemini(model, user_content, config),
+            usage_of=_usage_from_gemini,
+        )
+        text = (getattr(resp, "text", None) or "").strip()
+        if not text:
+            raise LLMError("Empty response from Gemini (no text)")
+        return text
+
     if LLM_PROVIDER == "openai":
-        resp = _generate_openai(
-            system_prompt, user_content, OPENAI_MODEL_LETTER, {"temperature": temperature}
+        resp = _logged_call(
+            **ids,
+            call=lambda: _generate_openai(system_prompt, user_content, model, {"temperature": temperature}),
+            usage_of=_usage_from_openai,
         )
         text = (resp.choices[0].message.content or "").strip()
         if not text:
@@ -465,17 +762,123 @@ def complete_text(
         return text
 
     if LLM_PROVIDER == "groq":
-        resp = _generate_groq(system_prompt, user_content, {"temperature": temperature})
+        resp = _logged_call(
+            **ids,
+            call=lambda: _generate_groq(system_prompt, user_content, {"temperature": temperature}),
+            usage_of=_usage_from_openai,
+        )
         text = (resp.choices[0].message.content or "").strip()
         if not text:
             raise LLMError("Empty response from Groq (no text)")
         return text
 
+    raise LLMError(f"Unknown LLM_PROVIDER={LLM_PROVIDER!r}")
+
+
+def complete_tools(
+    system_prompt: str,
+    messages: list[dict[str, str]],
+    tools: list[ToolSpec],
+    *,
+    tier: Tier = "mid",
+    require_tool: bool = True,
+    task: str = "complete_tools",
+    job_id: int | None = None,
+    match_id: int | None = None,
+    run_id: int | None = None,
+) -> ToolStep:
+    """One tool-calling turn: returns the tool the model chose (name + JSON args),
+    or its text if it answered instead.
+
+    ``messages`` is a list of ``{"role": "user" | "assistant", "content": str}``
+    text turns. The agent loop is stateless by design (the orchestrator is handed
+    a fresh state *summary* each step, plan §5.5), so tool results travel inside
+    that summary rather than as provider-specific function-response turns — which
+    also means no thought-signature replay is needed. ``require_tool`` forces a
+    tool call (Gemini mode ANY / OpenAI tool_choice "required").
+    """
+    if not tools:
+        raise LLMError("complete_tools needs at least one tool")
+    if not messages:
+        raise LLMError("complete_tools needs at least one message")
+    model = model_for(tier)
+    ids = dict(tier=tier, task=task, job_id=job_id, match_id=match_id, run_id=run_id)
+
     if LLM_PROVIDER == "gemini":
-        resp = _generate_gemini(system_prompt, user_content, {"temperature": temperature})
+        from google.genai import types
+
+        declarations = [
+            types.FunctionDeclaration(
+                name=t.name, description=t.description, parameters_json_schema=t.parameters
+            )
+            for t in tools
+        ]
+        mode = (
+            types.FunctionCallingConfigMode.ANY
+            if require_tool
+            else types.FunctionCallingConfigMode.AUTO
+        )
+        config = _gemini_config(
+            system_prompt, model, tier, None,
+            tools=[types.Tool(function_declarations=declarations)],
+            tool_config=types.ToolConfig(
+                function_calling_config=types.FunctionCallingConfig(mode=mode)
+            ),
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+        )
+        contents = [
+            types.Content(
+                role="model" if m["role"] == "assistant" else "user",
+                parts=[types.Part(text=m["content"])],
+            )
+            for m in messages
+        ]
+        resp = _logged_call(
+            **ids, call=lambda: _generate_gemini(model, contents, config),
+            usage_of=_usage_from_gemini,
+        )
+        calls = getattr(resp, "function_calls", None) or []
+        if calls:
+            return ToolStep(tool=calls[0].name, args=dict(calls[0].args or {}))
         text = (getattr(resp, "text", None) or "").strip()
         if not text:
-            raise LLMError("Empty response from Gemini (no text)")
-        return text
+            raise LLMError("Empty response from Gemini (no tool call, no text)")
+        return ToolStep(text=text)
 
-    raise LLMError(f"Unknown LLM_PROVIDER={LLM_PROVIDER!r}")
+    if LLM_PROVIDER == "openai":
+        oa_tools = [
+            {
+                "type": "function",
+                "function": {"name": t.name, "description": t.description, "parameters": t.parameters},
+            }
+            for t in tools
+        ]
+        oa_messages = [{"role": "system", "content": system_prompt}, *messages]
+        oa_client = _get_openai_client()
+        resp = _logged_call(
+            **ids,
+            call=lambda: _with_retry(
+                "OpenAI",
+                lambda: oa_client.chat.completions.create(
+                    model=model,
+                    messages=oa_messages,
+                    tools=oa_tools,
+                    tool_choice="required" if require_tool else "auto",
+                ),
+            ),
+            usage_of=_usage_from_openai,
+        )
+        message = resp.choices[0].message
+        if getattr(message, "tool_calls", None):
+            fn = message.tool_calls[0].function
+            try:
+                args = json.loads(fn.arguments or "{}")
+            except json.JSONDecodeError as exc:
+                raise LLMError(f"OpenAI returned non-JSON tool args: {exc}") from exc
+            return ToolStep(tool=fn.name, args=args)
+        text = (message.content or "").strip()
+        if not text:
+            raise LLMError("Empty response from OpenAI (no tool call, no text)")
+        return ToolStep(text=text)
+
+    raise LLMError(f"complete_tools is not supported for LLM_PROVIDER={LLM_PROVIDER!r}")

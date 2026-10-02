@@ -19,6 +19,7 @@ import io
 import json
 import logging
 import re
+import time
 import zipfile
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
@@ -40,7 +41,8 @@ from app import retention, search_suggest
 from app.api.profile_ui import router as profile_ui_router
 from app.db import SessionLocal, app_env
 from app.llm import search_refine
-from app.llm.client import DailyQuotaError
+from app.llm import usage as llm_usage
+from app.llm.client import BudgetExceededError, DailyQuotaError
 from app.llm.cover_letter import THRESHOLD as COVER_LETTER_THRESHOLD
 from app.llm.cover_letter import generate_cover_letter
 from app.llm.extract import extract_job
@@ -69,6 +71,12 @@ _bg_executor = ThreadPoolExecutor(max_workers=1)
 
 # Seconds to wait between idle cover-letter generations (respect per-minute quota).
 _IDLE_INTERVAL_S = 20
+
+# When a mid/strong call is refused by the USD budget guard, stop trying cover
+# letters for this long (monotonic seconds) so extraction/matching (`small`, never
+# blocked) keeps flowing instead of the loop re-hitting the cap every pass.
+_BUDGET_PAUSE_S = 600
+_letters_paused_until = 0.0
 
 # ---------------------------------------------------------------------------
 # SSE event broadcasting
@@ -126,6 +134,7 @@ async def _processing_idle_loop() -> None:
     Only one LLM call chain runs at a time; the client's RPM throttle adds
     per-call spacing on top, so we never burst the free-tier limit.
     """
+    global _letters_paused_until
     await asyncio.sleep(15)  # let startup settle before first query
     while True:
         try:
@@ -142,6 +151,7 @@ async def _processing_idle_loop() -> None:
             # ── Phase 2: cover letters (checked first — see docstring) ────────
             cl_job_id: int | None = None
             cl_user_id: int | None = None
+            letters_paused = time.monotonic() < _letters_paused_until
             with SessionLocal() as db:
                 # Same per-profile threshold generate_cover_letter() gates on —
                 # they must agree, or this would pick a match the gate then refuses.
@@ -158,20 +168,28 @@ async def _processing_idle_loop() -> None:
                     .order_by(Match.score.desc())
                     .limit(1)
                 ).first()
-                if row:
+                if row and not letters_paused:
                     match, job = row
                     cl_job_id, cl_user_id = job.id, match.user_id
 
             if cl_job_id is not None:
                 logger.info("Idle: cover letter for job %s", cl_job_id)
-                cl = await loop.run_in_executor(
-                    _bg_executor,
-                    functools.partial(generate_cover_letter, cl_job_id, cl_user_id),
-                )
+                try:
+                    cl = await loop.run_in_executor(
+                        _bg_executor,
+                        functools.partial(generate_cover_letter, cl_job_id, cl_user_id),
+                    )
+                except BudgetExceededError as exc:
+                    _letters_paused_until = time.monotonic() + _BUDGET_PAUSE_S
+                    logger.warning("Idle: %s Pausing cover letters for %ds.", exc, _BUDGET_PAUSE_S)
+                    await _broadcast("llm_budget_blocked", {"reason": str(exc)})
+                    cl = None
+                    cl_job_id = None
                 if cl:
                     await _broadcast("cover_letter_ready", {"job_id": cl_job_id, "content": cl.generated_content})
-                await asyncio.sleep(_IDLE_INTERVAL_S)
-                continue  # re-check the cover-letter backlog before extraction/matching
+                if cl_job_id is not None:
+                    await asyncio.sleep(_IDLE_INTERVAL_S)
+                    continue  # re-check the cover-letter backlog before extraction/matching
 
             # ── Phase 0: pre-extraction quick screen ───────────────────────────
             # Oldest job with a description that hasn't been screened yet. Cheap
@@ -474,6 +492,17 @@ def health(db: Session = Depends(get_db)) -> dict:
     """Liveness check the extension uses to confirm the backend is up."""
     profile_id = db.scalar(select(Profile.id).order_by(Profile.id).limit(1))
     return {"status": "ok", "profile_id": profile_id, "env": app_env()}
+
+
+@app.get("/llm/usage")
+def llm_usage_status(db: Session = Depends(get_db)) -> dict:
+    """LLM spend vs the budget caps, for the sidebar's budget banner.
+
+    ``blocked`` means mid/strong calls (cover letters) are refused until the
+    daily window rolls over or the cap is raised in ``profiles.preferences``;
+    quick-screen/extraction/matching (``small``) keep running regardless.
+    """
+    return llm_usage.budget_status(db)
 
 
 @app.post("/ingest")

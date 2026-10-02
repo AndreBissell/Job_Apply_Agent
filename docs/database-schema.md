@@ -41,6 +41,8 @@ profiles (the user / account)
   |-< matches               (per-user relevance for a job)
         |-1 cover_letters   (generated doc for that match, if above threshold)
 
+llm_usage (cost log: one row per LLM call; standalone, no FKs)
+
 job_listings (global pool, scraped once, shared across users)
   |-< job_skills            (extracted required skills, hard/soft)
   |-< matches               (a listing can match many users)
@@ -505,6 +507,44 @@ CREATE TABLE cover_letters (
 );
 ```
 
+### llm_usage
+
+One row per LLM call: tokens and an estimated USD cost. It feeds the budget guard
+in `app/llm/client.py` (daily / total caps in `profiles.preferences`) and the
+per-run cost figures in `docs/cover-letter-loop-plan.md`. It is a log, not part of
+the domain model, so it sits outside the profile/job graph on purpose.
+
+`job_id`, `match_id` and `run_id` are plain nullable labels, **not foreign keys**:
+the spend log must outlive the rows it describes. If they cascaded, a retention
+purge or a deleted match would erase what was already spent and quietly reset the
+total-budget cap. `cost_usd` is an estimate from the price table in `client.py`
+(Gemini list prices); Cloud Billing is the authority. `output_tokens` excludes
+`thinking_tokens`; both bill at the output rate. `input_tokens` includes
+`cached_tokens`.
+
+```sql
+CREATE TABLE llm_usage (
+    id               BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    created_at       TIMESTAMPTZ   NOT NULL DEFAULT now(),
+    task             TEXT          NOT NULL,            -- 'extract','match','quickscreen','cover_letter',...
+    tier             TEXT          NOT NULL,            -- 'small','mid','strong'
+    model            TEXT          NOT NULL,
+    input_tokens     INTEGER       NOT NULL DEFAULT 0,
+    output_tokens    INTEGER       NOT NULL DEFAULT 0,
+    thinking_tokens  INTEGER       NOT NULL DEFAULT 0,
+    cached_tokens    INTEGER       NOT NULL DEFAULT 0,
+    cost_usd         NUMERIC(12,6) NOT NULL DEFAULT 0,
+    duration_ms      INTEGER       NOT NULL DEFAULT 0,
+    job_id           BIGINT,                            -- label only, no FK
+    match_id         BIGINT,                            -- label only, no FK
+    run_id           BIGINT                             -- label only; letter_runs.id once that table exists
+);
+```
+
+Retention: none yet. Rows are small; revisit (the plan suggests ~180 days) once
+volume is known. Purging would lower the *total* spend the guard sees, so if it is
+added, keep a running total somewhere else.
+
 ---
 
 ## Indexes
@@ -528,6 +568,7 @@ CREATE INDEX idx_job_skills_name        ON job_skills(name);               -- ke
 CREATE INDEX idx_matches_user_score     ON matches(user_id, score DESC);   -- ranked dashboard
 CREATE INDEX idx_matches_status         ON matches(status);
 CREATE INDEX idx_matches_created        ON matches(created_at);            -- retention sweep / miner window
+CREATE INDEX idx_llm_usage_created      ON llm_usage(created_at);          -- daily spend sum (budget guard)
 ```
 
 ---

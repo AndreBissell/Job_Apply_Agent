@@ -1824,6 +1824,23 @@ document.getElementById('export-profile-btn').addEventListener('click', async ()
 });
 
 // ---------------------------------------------------------------------------
+// LLM budget banner — shown while the backend's USD cap is blocking cover
+// letters (mid/strong calls). Scanning, extraction and matching keep running.
+// ---------------------------------------------------------------------------
+async function refreshBudgetBanner() {
+  const banner = document.getElementById('budget-banner');
+  try {
+    const res = await fetch(`${BACKEND}/llm/usage`);
+    if (!res.ok) return;
+    const status = await res.json();
+    banner.textContent = status.blocked
+      ? `${status.reason} Cover letters are paused; scanning and scoring continue.`
+      : '';
+    banner.hidden = !status.blocked;
+  } catch { /* the banner is advisory — fail silently */ }
+}
+
+// ---------------------------------------------------------------------------
 // SSE — live updates from the backend
 // ---------------------------------------------------------------------------
 let _eventsEverOpened = false;
@@ -1853,6 +1870,11 @@ function connectEvents() {
     loadJobs();
   });
 
+  // The idle loop hit the daily/total LLM budget cap and paused cover letters.
+  source.addEventListener('llm_budget_blocked', () => {
+    refreshBudgetBanner();
+  });
+
   source.onerror = () => {
     // EventSource auto-reconnects; onopen will fire again and trigger a reload
   };
@@ -1880,5 +1902,6 @@ envPill.addEventListener('click', async () => {
 backendReady.then(() => {
   renderEnvPill();
   loadPreferences().then(loadJobs);
+  refreshBudgetBanner();
   connectEvents();
 });

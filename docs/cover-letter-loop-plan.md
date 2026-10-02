@@ -1,6 +1,7 @@
 # Cover-letter agent + Gemini migration — PLAN (living document)
 
-> **Status: DRAFT v0.3 — 2026-10-01. Rebased onto an agent design. Open to change.**
+> **Status: DRAFT v0.4 — 2026-10-01. Rebased onto an agent design; Q5–Q10
+> answered. Phases 0, 1 and 2 DONE 2026-10-01 (Phase 2 awaiting your grades). Open to change.**
 > **Budget window:** new Google Cloud $300 trial, ~2026-10-01 → ~2026-12-30.
 > That ends before Gemini Flash prices double on 2027-01-01, so the intro
 > prices in §3 hold for the whole trial.
@@ -196,13 +197,13 @@ the cheapest implementation that works.
 |---|---|---|---|---|---|
 | `analyze_job` | Turn the ad into a requirements checklist (id, text in the employer's words, `must`/`should`), plus tone, keywords to mirror, and any screening questions in the ad | `raw_description` + extracted fields | `requirements`, `job.*` | mid, structured | Builds on `extract.py`. **Cached on the job** (it depends only on the job), so it runs once per job, not once per run |
 | `match_profile` | For each requirement, find evidence pointers into the profile and mark it `supported` / `partial` / `gap` | requirements, profile | `requirements[].evidence`, `.status` | mid, structured | New. `match.py` stays the cheap whole-job score that decides *whether* to write a letter |
-| `ask_user` | Ask the user about must-have gaps or unclear facts | gap requirements | `user_questions`, `user_decision` | code + sidebar UI | New. Pauses the run (§5.5) |
+| `ask_user` | Ask the user whether they have experience that fills a must-have gap, with a text box to answer. "Yes" saves the answer to the profile as a new experience / skill / qualification; "no" means `leave_out` | gap requirements | `user_questions`, `user_decision`, **new profile rows** | code + sidebar UI (+ small model to structure the answer) | New. Pauses the run (§5.5) |
 | `generate_letter` | Write the first draft from supported evidence only, with the style skill loaded. Returns the text **and** a list of claims, each with its source pointer | evidence, decisions, style skill | new `drafts[]` entry | strong | Replaces the one-shot prompt in `cover_letter.py` |
 | `revise_letter` | Make targeted fixes to the latest draft for the failed checks only. An edit, not a rewrite | latest draft, failed checks | new `drafts[]` entry | strong | New |
 | `check_claims` | Verify every factual claim against the profile (two-stage, below) | latest draft, profile | `checks.claims` | code + small | New |
 | `check_requirements` | Confirm every supported must-have is still addressed | latest draft, requirements | `checks.requirements` | small | New |
-| `style_lint` | Em dashes, banned phrases, word count, paragraph count, sentence-length variance, every paragraph starting with "I", placeholders like `[Company]`, sign-off present | latest draft | `checks.style` | **code only** | New: `style_lint.py` |
-| `answer_screening` | Draft answers to screening questions from the profile | questions, profile | `side_outputs.screening_answers` | mid | New. **Usually blocked:** Seek shows most screening questions in the apply flow, not the ad (§10 Q10) |
+| `style_lint` | The first-version "AI detection" (Q6): em dashes, banned phrases, word count / one-page fit, paragraph count, sentence-length variance, every paragraph starting with "I", American spellings, placeholders like `[Company]`, sign-off present | latest draft | `checks.style` | **code only** | New: `style_lint.py` |
+| `answer_screening` | Draft answers to screening questions from the profile | questions, profile | `side_outputs.screening_answers` | mid | New. **Ad text only to start** (Q10): covers questions written into the ad. Reading the live Quick Apply questions is Phase 9 |
 | `suggest_learning` | Suggest ways to close real gaps (e.g. a Power BI course) | confirmed gaps | `side_outputs.learning_suggestions` | small | New |
 | `suggest_resume_tweaks` | Resume tailoring notes (§5.6) | requirements, evidence, final draft | `side_outputs.resume_notes` | mid | Was v0.2 §5.4 |
 | `finish` | End the run. Accepted only if the guardrails pass | whole state | final output | **code only** | — |
@@ -246,8 +247,12 @@ each other's content.
   },
   "requirements": [
     {"id": "R1", "text": "Experience with Power BI", "priority": "must",
+     "evidence": ["experience:31"], "status": "partial",
+     "user_decision": {"choice": "have_it", "answer": "Used Tableau for 1 year at uni, no Power BI",
+                       "saved_as": ["experience:31", "skill:44"]}},
+    {"id": "R5", "text": "Driver's licence", "priority": "must",
      "evidence": [], "status": "gap",
-     "user_decision": {"choice": "adjacent", "note": "1 yr Tableau, no Power BI", "source": "user"}},
+     "user_decision": {"choice": "leave_out", "remembered": true}},
     {"id": "R2", "text": "Strong SQL", "priority": "must",
      "evidence": ["experience:12#s3", "skill:7"], "status": "supported", "user_decision": null}
   ],
@@ -274,15 +279,18 @@ Design choices:
   grammar *(draft)*: `experience:<id>`, `experience:<id>#s<n>` (the n-th
   sentence of `Experience.description`; experiences have free-text
   descriptions, not bullets, so code splits them into sentences),
-  `qualification:<id>`, `skill:<id>`, `profile:summary`, `user_decision:<req
-  id>` (a fact the user gave via `ask_user`). A resolver in `state.py` turns a
-  pointer into text. That makes claim checking a lookup.
+  `qualification:<id>`, `skill:<id>`, `profile:summary`. A resolver in
+  `state.py` turns a pointer into text. That makes claim checking a lookup.
+  Facts the user gives through `ask_user` are saved to the profile first, so
+  they get ordinary pointers and need no special case.
 - **Checks belong to a draft version.** A pass on draft 2 says nothing about
   draft 3. The finish gate reads only the latest draft.
-- **`user_decision` records how a gap was resolved** (`have_it` /
-  `adjacent` / `leave_out`, plus a note), so a gap is never resolved by
-  invention. If the answer is `have_it`, the right fix is to add it to the
-  profile, and the `ask_user` UI should offer that.
+- **`user_decision` records how a gap was resolved**: `have_it` (the
+  answer was saved to the profile, and `saved_as` lists the new rows) or
+  `leave_out`. A gap is never resolved by invention. After a `have_it`
+  answer, `match_profile` reruns for that requirement against the new rows. It
+  may come back `partial` (e.g. Tableau for a Power BI ask), and the writer
+  then frames it honestly as related experience.
 - **The orchestrator never sees the full state.**
   `summary_for_orchestrator()` gives it requirement statuses, check results
   and budget, not draft text. Tools read the full text from state themselves.
@@ -295,17 +303,30 @@ Style rules go into the prompt before writing (prevention) and into
 `app/llm/skills/cover_letter_style/`:
 - **`SKILL.md`**: the rules. Plain, specific sentences. Real project names and
   numbers over adjectives. No em dashes. One clear reason for wanting this
-  specific job. Around 250–350 words 🧪 (Q7). Australian spelling 🧪 (Q7).
-  `Sincerely, {name}` sign-off. Name the degree and university for recent
-  graduates (carried over from today's prompt).
+  specific job. **Must fit on one page; aim for about 250–300 words** (Q7).
+  **Australian spelling** (organise, analyse, colour, programme where
+  appropriate). Open with "Dear Hiring Manager" for now; addressing a named
+  contact can be tuned later. `Sincerely, {name}` sign-off. Name the degree and
+  university for recent graduates (carried over from today's prompt).
 - **`banned_phrases.txt`**: "I am thrilled to apply", "proven track record",
   "fast-paced environment", "leverage my skills", "delve", "tapestry", …
   **The same file feeds `style_lint`**, so the rule and the check can't drift
   apart. The list grows as we spot new ones.
-- **`voice_samples/`**: 2–3 short pieces of the user's own writing (Q5). These
-  do more against "sounds machine-written" than any check. **Gitignored**,
-  because they are personal. Move them to the DB when the app goes
-  multi-user.
+- **The user's voice (Q5, decided).** This does more against "sounds
+  machine-written" than any check. It is user data, so it lives in the DB, not
+  in the skill folder:
+  1. **Writing sample (preferred).** A new "Your writing" section in the
+     profile editor with one large free-text box. The user pastes whatever they
+     have (an old cover letter, a uni essay, a long email, a few rambling
+     paragraphs). It's a dump: no structure, no minimum, editable any time.
+     Stored as `profiles.writing_sample` (§7).
+  2. **Fallback: the profile's own text.** If there's no sample, the writer
+     uses the user's own words in `Experience.description` and
+     `profiles.summary` as the voice reference. This is weaker, because CV-style
+     text is terser than how people write letters, so the sidebar nudges the
+     user to paste a sample.
+  The prompt uses the voice material for tone and rhythm only, never as a
+  source of facts. Facts come from evidence pointers.
 
 Later 🧪: learn from the user's edits. `generated_content` vs `edited_content`
 shows what the user changes. Summarise recurring edits into style notes (e.g.
@@ -314,6 +335,18 @@ them to the skill.
 
 No grammar tool. Current models rarely make grammar errors. If needed, add
 LanguageTool as code inside `style_lint`.
+
+**"AI detection", v1 (Q6, decided):** no external detector. It's two parts:
+the skill (prevention, in the writer's context) and `style_lint` (detection,
+in code). Lint rules:
+- **Blocking:** any em dash; any banned phrase; over the one-page limit
+  (proxy: >340 words or >5 body paragraphs 🧪); placeholders; missing
+  sign-off.
+- **Warnings (passed to `revise_letter`, don't block finish):** under 230
+  words; low sentence-length variance; 3+ paragraphs opening with "I";
+  American spellings from a small `us_to_au.txt` list (e.g. -ize, -yze, color).
+
+Tune the thresholds from the eval set.
 
 ### 5.5 The orchestrator
 
@@ -367,21 +400,40 @@ while True:
   executor, like today's cover-letter phase. A run can take minutes *(est.)*,
   so SSE progress events (`letter_run_step`) let the sidebar show what it is
   doing.
-- **`ask_user` can't block.** Letters are generated in the background, often
-  when the user isn't looking. `ask_user` persists the questions, marks the run
-  `waiting_user`, frees the worker, and the sidebar card shows "1 question
-  before your letter". Answering resumes the run from its saved state.
-  Unanswered questions would mean top matches never get a letter, so see Q9
-  for a default.
-- **Gap decisions should be remembered across jobs** 🧪. The same gaps ("Power
-  BI") will come up across many ads. Storing decisions at profile level, keyed
-  by normalised skill name (reusing `prefilter.normalise_skill()`), means the
-  user answers once. A per-job override is still possible. See Q9.
+- **`ask_user` flow (Q9, decided).** Letters are generated in the background,
+  so `ask_user` can't block the worker:
+  1. It saves the questions, marks the run `waiting_user`, and frees the
+     worker. The sidebar card shows "1 question before your letter".
+  2. Each question names the requirement in the employer's words: "This role
+     asks for *experience with Power BI*. Do you have experience that covers
+     this?" It offers **Yes** with a text box ("Tell us what you did, where and
+     roughly how long"), and **No**.
+  3. **Yes:** a small-model call turns the typed answer into profile rows. Each
+     row is whichever fits: an `experiences` row, a `skills` row, a
+     `qualifications` row, and `experience_skills` links between them. The
+     sidebar shows what will be saved (🧪 a one-click confirm, so a
+     misread answer doesn't land in the profile silently). The rows are written,
+     `profiles.profile_revised_at` is bumped, and the run resumes. The new
+     facts are then normal evidence for this letter and every future match.
+  4. **No:** the requirement becomes `leave_out`. The letter doesn't mention
+     it, and `suggest_learning` may suggest a way to close it.
+- **Answers are remembered, so each gap is asked once.**
+  - A "yes" is remembered automatically, because it is now in the profile and
+    `match_profile` finds it next time.
+  - A "no" is stored in `gap_decisions` (§7), keyed by normalised name (reusing
+    `prefilter.normalise_skill()`), so the same gap on the next ad is left out
+    without asking.
+  - The user can clear a remembered "no" in the profile editor (e.g. after
+    doing the course).
+- **Questions are batched.** All must-have gaps for a run are asked together
+  in one card, not one pause per gap.
 
 ### 5.6 Side outputs
 
 - **Screening answers** (`answer_screening`): grounded in the profile, with the
-  same evidence pointers. Depends on capturing the questions (Q10).
+  same evidence pointers. **v1 reads only the ad text** (Q10). Reading the real
+  questions live from Seek's Quick Apply page is a Phase 9 item, tied to the
+  parked apply-flow detection in CLAUDE.md.
 - **Learning suggestions** (`suggest_learning`): only for gaps the user
   confirmed as real (`leave_out`). Short, concrete (course, cert, small
   project).
@@ -422,10 +474,10 @@ stop after six calls; that flexibility is the point.
 | # | Tool | Result | Why |
 |---|---|---|---|
 | 1 | `analyze_job` | 6 requirements (4 must, 2 should); cache hit if the job was analysed before | Always first |
-| 2 | `match_profile` | 5 supported, 1 gap: Power BI (must) | Needs evidence before writing |
-| 3 | `ask_user` | Remembered decision: "Tableau 1 yr, no Power BI" → `adjacent` (no pause) | Must-have gap blocks drafting |
-| 4 | `suggest_learning` | Power BI fundamentals course | Real gap confirmed |
-| 5 | `generate_letter` | Draft 1, frames Tableau honestly | Gaps resolved |
+| 2 | `match_profile` | 4 supported, 2 gaps: Power BI (must), driver's licence (must) | Needs evidence before writing |
+| 3 | `ask_user` | Licence: remembered "no" → `leave_out`, not asked. Power BI: run pauses; the user answers Yes, "Used Tableau for 1 year at uni"; saved as an experience + skill; run resumes; R1 → `partial` | A must-have gap blocks drafting |
+| 4 | `suggest_learning` | Power BI fundamentals course | Power BI still not covered directly |
+| 5 | `generate_letter` | Draft 1, frames Tableau honestly as related experience; no licence mention | Gaps resolved |
 | 6–8 | `check_claims` / `check_requirements` / `style_lint` | Pass / **fail R4** (stakeholder reporting) / 1 em dash + "fast-paced environment" | Required after each draft |
 | 9 | `revise_letter` | Draft 2: adds R4, fixes style | Targeted fixes |
 | 10 | `check_claims` | **Fail:** "presented to executives" not in profile | Rechecks every draft |
@@ -452,8 +504,8 @@ Preferences in `profiles.preferences`, editable in the Personalise panel:
   Both share the same tools, so this also makes the §9 comparison and a quick
   fallback possible. The default is set by the Phase 7 comparison.
 - **Side-output toggles:** `resume_advice_enabled` (True),
-  `learning_suggestions_enabled` (True), `screening_answers_enabled` (True,
-  but a no-op until questions are captured).
+  `learning_suggestions_enabled` (True), `screening_answers_enabled` (True;
+  ad text only for now).
 - *Nice-to-have:* a per-letter **"Polish"** button to run the pipeline on
   demand below the bar.
 
@@ -485,16 +537,25 @@ Alembic migrations. Use the portable styles (BigInteger variant,
   (JSON text) + `requirements_checklist_at`. It is `analyze_job`'s output and
   depends only on the job, so it belongs on the global job row. (This was
   v0.2's `employer_rubric`.)
-- **Gap decisions** (Phase 7, if Q9 says yes): `gap_decisions(id, user_id FK
-  CASCADE, skill_key, choice, note, created_at, updated_at)`, UNIQUE
-  `(user_id, skill_key)`. `skill_key` is the normalised name and is not
-  FK'd to `skills`, consistent with `job_skills`.
+- **`profiles.writing_sample`** (Text, nullable; Phase 4): the pasted voice
+  dump (§5.4). It is a column rather than a preference because it can be long
+  and is profile content, not a setting.
+- **`gap_decisions`** (Phase 7): `gap_decisions(id, user_id FK CASCADE,
+  skill_key, requirement_text, created_at)`, UNIQUE `(user_id, skill_key)`.
+  It stores remembered **"no"** answers only; "yes" answers become real profile
+  rows. `skill_key` is the normalised name and is not FK'd to `skills`,
+  consistent with `job_skills`.
+- **Rows created by `ask_user`** go into the existing `experiences` /
+  `skills` / `qualifications` / `experience_skills` tables, with no new
+  columns. 🧪 Optionally tag their origin (e.g. a `source` value like
+  `ask_user`) so the profile editor can show "added while applying to X".
 - **New preference keys** (no migration; add to `DEFAULTS` in
   `app/preferences.py`): `letter_loop_enabled`, `letter_loop_min_score`,
   `letter_engine`, `resume_advice_enabled`, `learning_suggestions_enabled`,
-  `screening_answers_enabled`, `llm_daily_budget_usd`,
-  `llm_total_budget_usd` (Q8), `letter_max_drafts` (3),
-  `letter_max_tool_calls` (15).
+  `screening_answers_enabled`, `llm_daily_budget_usd` ($5),
+  `llm_total_budget_usd` ($200), `llm_run_budget_usd` ($0.50) (Q8: starting
+  values, expected to change once real costs are in), `letter_max_drafts`
+  (3), `letter_max_tool_calls` (15).
 
 ---
 
@@ -515,7 +576,7 @@ app/llm/
     workflow.py          # fixed sequence over the same tools (the baseline)
     agent.py             # orchestrator loop
   skills/cover_letter_style/
-    SKILL.md  banned_phrases.txt  voice_samples/ (gitignored)
+    SKILL.md  banned_phrases.txt  us_to_au.txt   # voice comes from the DB, not here
 scripts/
   letter_lab.py          # run eval set × engine, write rubric results + cost to markdown
 evals/
@@ -591,16 +652,16 @@ budget guard comes in Phase 1.
 
 | # | Phase | Output | Depends on |
 |---|---|---|---|
-| 0 | **Decisions + checks** | Answers to Q5–Q10; confirm trial credit + expiry in Cloud Billing; confirm model IDs via `client.models.list()` | — |
-| 1 | **Gemini migration** (§4) | Tiers, `complete_tools`, `llm_usage`, budget guard, all callers on Gemini | 0 |
-| 2 | **State, eval set, baseline** | `LetterState` + pointer resolver; `evals/` set + rubric; `letter_lab.py`; score today's one-shot letters as the first baseline | 1 |
+| 0 | ✅ **Decisions + checks** | Answers to Q5–Q10; confirm trial credit + expiry in Cloud Billing; confirm model IDs via `client.models.list()` | — |
+| 1 | ✅ **Gemini migration** (§4) | Tiers, `complete_tools`, `llm_usage`, budget guard, all callers on Gemini | 0 |
+| 2 | ✅ **State, eval set, baseline** | `LetterState` + pointer resolver; `evals/` set + rubric; `letter_lab.py`; score today's one-shot letters as the first baseline | 1 |
 | 3 | **`analyze_job` + `match_profile`** | Structured outputs, requirements cache, `letter_runs` / `letter_run_steps` tables; checked by hand on the eval set | 2 |
-| 4 | **Style skill + `style_lint`** | Skill folder, banned list shared by prompt and lint, voice samples wired in | 2 |
+| 4 | **Style skill + `style_lint` + voice** | Skill folder, banned list shared by prompt and lint, AU spelling list; `profiles.writing_sample` + a "Your writing" paste box in the profile editor; experience-text fallback | 2 |
 | 5 | **Draft + check tools** | `generate_letter`, `check_claims` (both stages), `check_requirements`, `revise_letter`; planted-claim test | 3, 4 |
-| 6 | **Fixed workflow = baseline** | `workflow.py`: analyze → match → (gap default) → draft → checks → revise ≤2 → finish, with the guardrails. Run evals. **Usable on its own; could ship here** | 5 |
-| 7 | **Agent** | `ask_user` (+ sidebar question UI, resume), gap memory (Q9), side-output tools, tool descriptions, orchestrator prompt, `agent.py`. Run evals and fill in the comparison table. Set the `letter_engine` default from the result | 6 |
+| 6 | **Fixed workflow = baseline** | `workflow.py`: analyze → match → unanswered gaps treated as `leave_out` (evals only; there is no UI yet) → draft → checks → revise ≤2 → finish, with the guardrails. Run evals. **Usable on its own; could ship here** | 5 |
+| 7 | **Agent + ask_user** | `ask_user` (sidebar question card with Yes + text box / No, answer → profile rows, run resume), `gap_decisions` for remembered "no"s, side-output tools, tool descriptions, orchestrator prompt, `agent.py`. Run evals and fill in the comparison table. Set the `letter_engine` default from the result | 6 |
 | 8 | **Integration** | Idle-loop trigger (§6), SSE progress, sidebar: final letter + open issues, "not claimed" list, side-output sections, Personalise controls (wired like `auto_cover_letter_min_score`: `DEFAULTS` → `PreferencesUpdate` with bounds → `sidebar.js`) | 7 (or 6 if the workflow ships first) |
-| 9 | **Later / optional** | `research_company` tool with search grounding (where agency clearly helps; recruiter-posted ads are a risk); learn-from-edits style notes; "Polish" button; Batch API for the extract/match backlog | 8 |
+| 9 | **Later / optional** | Read the live screening questions from Seek's Quick Apply page (needs the parked apply-flow detection); `research_company` tool with search grounding (recruiter-posted ads are a risk); tune the agent's "hiring manager" framing and addressing; learn-from-edits style notes; "Polish" button; Batch API for the extract/match backlog | 8 |
 
 The baseline and harness come before any agent work on purpose. Without them we
 can't tell whether checks, revisions or an orchestrator beat one
@@ -622,7 +683,12 @@ well-prompted Pro call.
 - **Over-polish / sameness.** Past 2–3 drafts, letters tend to get more
   generic. Keep the draft cap low and watch for this in evals.
 - **Paused runs pile up.** If questions go unanswered, high-scoring matches
-  wait for letters. Q9's default and gap memory address this.
+  wait for letters. Batching, remembered "no"s and "yes" answers landing in the
+  profile keep the number of questions small. If it's still a problem, add a
+  "skip, leave it out" option or an auto-`leave_out` after N days.
+- **Bad data from `ask_user`.** A misparsed answer would put a wrong fact into
+  the profile, which then counts as evidence everywhere. The confirm step and
+  origin tagging (§7) are there for this.
 - **Preview model churn.** `gemini-3.1-pro-preview` may change. `strong` is one
   env var; falling back to 3.8 Flash is a config change.
 - **Price change 2027-01-01** (Flash doubles) and **trial expiry
@@ -630,7 +696,7 @@ well-prompted Pro call.
   prices before continuing past the trial.
 - **Privacy.** Profile data and voice samples go to Google. Verify the
   paid-tier data-use terms (not used for training at time of writing).
-  Voice samples are gitignored.
+  The writing sample lives in the DB, never in the repo.
 
 ---
 
@@ -643,24 +709,29 @@ well-prompted Pro call.
 - ~~Q3 Company research~~: later, as an experiment (Phase 9).
 - ~~Q4 Resume scope~~: tailoring notes only, behind a toggle (§5.6).
 
-**Still open:**
-- **Q5 Voice samples.** Can you provide 2–3 pieces of your own writing (an
-  old cover letter, a uni essay intro, a long email)?
-- **Q6 AI detector.** Drop it entirely (leaning this way, per the design
-  basis), or keep a report-only score?
-- **Q7 Letter shape.** 250–350 words? Australian spelling? Address a named
-  contact when the ad has one?
-- **Q8 Budget caps.** Suggested: $5/day, $200 total. Per-run cap? Suggested:
-  $0.50.
-- **Q9 Unanswered gaps.** When a must-have gap has no decision, should the
-  run (a) pause until you answer, or (b) assume `leave_out`, which is always
-  honest, write the letter, and show the question so answering triggers a
-  re-run? Leaning towards (b) plus profile-level gap memory, so automatic
-  letters don't stall.
-- **Q10 Screening questions.** Seek shows most of them in the Quick Apply
-  flow, not the ad. Capturing them depends on the parked §5.2 apply-flow
-  detection (CLAUDE.md), which needs a live session. Until then,
-  `answer_screening` only covers questions written into the ad itself.
+- ~~Q5 Voice~~: a free-text "Your writing" paste box in the profile editor
+  (`profiles.writing_sample`). If it's empty, fall back to the user's own text
+  in experiences and the summary (§5.4).
+- ~~Q6 AI detector~~: no external detector. v1 is the lint script plus the
+  style skill in the writer's context (§5.4).
+- ~~Q7 Letter shape~~: Australian spelling; must fit on one page, about
+  250–300 words; "Dear Hiring Manager" for now, with addressing and framing
+  tuned later.
+- ~~Q8 Budget caps~~: start at $5/day, $200 total, $0.50/run. These are
+  placeholders until Phase 1 shows real costs.
+- ~~Q9 Gaps~~: `ask_user` asks with a Yes + text box / No. Yes saves the
+  answer to the profile as experience / skill / qualification rows; No means
+  `leave_out` and is remembered (§5.5).
+- ~~Q10 Screening~~: ad text only at first; live Quick Apply questions later
+  (Phase 9).
+
+**Still open (small, decide while building):**
+- **Q11 Confirm step.** Should `ask_user` show the parsed profile rows for a
+  one-click confirm before saving, or save straight away? Leaning towards
+  confirm, because a wrong row becomes evidence everywhere.
+- **Q12 Origin tag.** Mark profile rows created by `ask_user` so the profile
+  editor can show where they came from? This would need a small column on the
+  three tables.
 
 ---
 
@@ -680,3 +751,20 @@ well-prompted Pro call.
 | 2026-10-01 | Evidence pointers use stable DB ids (`experience:12#s3`), not list indices | Indices shift when the profile is edited |
 | 2026-10-01 | `check_claims` = code source check + independent small-model extraction | The writer's own claims list is self-reported and can't be the only check |
 | 2026-10-01 | No agent framework yet; hand-written loop | Understand the plumbing before adopting LangGraph or similar |
+| 2026-10-01 | Voice = pasted free-text dump in `profiles.writing_sample`, falling back to experience/summary text | Easiest for the user to provide; the profile's own words are better than nothing |
+| 2026-10-01 | "AI detection" v1 = `style_lint` + style skill, no external detector | Detectors are unreliable; lint rules are free and specific |
+| 2026-10-01 | Australian spelling, one page, about 250–300 words, "Dear Hiring Manager" | User preference; addressing and framing to be tuned later |
+| 2026-10-01 | Budget caps $5/day, $200 total, $0.50/run, as placeholders | Revisit once `llm_usage` shows real costs |
+| 2026-10-01 | `ask_user`: Yes + text box → saved as profile rows; No → `leave_out`, remembered | Gaps get filled with real facts that help every future match; nothing is invented; each gap is asked once |
+| 2026-10-01 | Screening answers from ad text only for now | Live Quick Apply questions need the parked apply-flow detection |
+| 2026-10-01 | **Phase 0 done.** Trial expiry confirmed 2026-12-30 (user). `gemini-3.1-flash-lite`, `gemini-3.8-flash`, `gemini-3.1-pro-preview` all listed on the Vertex project and answered a live call. Auth is Vertex ADC, not an API key | Closes the Phase 0 checks |
+| 2026-10-01 | **Phase 1 done**, all in `client.py` + `app/llm/usage.py`: tiers (`GEMINI_MODEL_SMALL/_MID/_STRONG`; old `GEMINI_MODEL` still read as small); `complete_tools` (stateless: tool results ride in the next state summary, so no thought-signature replay); `llm_usage` table (no FKs, so the spend log outlives deleted rows); budget guard (small never blocked, fails open if the table is unreadable); `GET /llm/usage` + sidebar banner; idle loop pauses letters 10 min on a cap hit | Plan §4 items 1–9 |
+| 2026-10-01 | Gemini 3 called **without `temperature`** (re-verified in Google's Gemini 3 docs: keep 1.0); thinking level per tier low / medium / high via `GEMINI_THINKING_*` | §4 item 5 |
+| 2026-10-01 | **Score drift: do NOT bump `profile_revised_at`** at switchover. `check_matching.py` on Gemini: 3/3 test jobs in band (95 / 95 / 55, spread 40). Revisit if real-job scores look shifted | §4 item 10. Reversible: bumping later just down-weights older scores in the miner |
+| 2026-10-01 | 🧪 Observed: thinking tokens dominate small-call cost. A trivial `small` call used 110–262 thinking tokens against 1–5 output tokens at level `low` (flash-lite's own default is `minimal`). Re-test `small` at `minimal` on the eval set before Phase 2 numbers are taken as final | Thinking is the biggest cost lever (§4 item 5) |
+| 2026-10-01 | **Phase 2 built.** `app/llm/letter/state.py` (`LetterState`, `ProfileIndex` pointer resolver, `summary_for_orchestrator`), `app/llm/letter/rubric.py` (code-checked rubric items), `scripts/letter_lab.py` (snapshot → prepare → run → report), `evals/rubric.md` | Plan §5.3, §9 |
+| 2026-10-01 | Evals run against the **real profile**, in a scratch `evals/eval.db` built from a read-only copy of real.db with the job side wiped. Ads, eval.db, set.json and letters are **gitignored**; only `evals/rubric.md` and `evals/results/*.md` are committed | User choice: the "would I send it" item only means something for the user's own letters; ad text and letters written as the user stay off GitHub |
+| 2026-10-01 | Pointer sentences are **1-based** (`experience:12#s1` is the first sentence); lines/bullets are sentence boundaries | The splitter must be deterministic or `#s<n>` pointers drift |
+| 2026-10-01 | `banned_phrases.txt` created now (Phase 2) with a seed list, because the rubric needs it. Phase 4's `style_lint` and style guide read the same file | One list, no drift |
+| 2026-10-01 | Grading split: 5 rubric items are checked by code; 4 (supported must-haves, no unsupported claims, specific detail, would send) are graded by the user in `grades.csv`. No LLM judge for the baseline | The plan warns that lenient model graders make the design look safer than it is; `check_claims` gets its own planted-claim test in Phase 5 |
+| 2026-10-01 | ⚠️ **Eval set is only 9 ads** (17 snapshotted; 8 scored < 50). Bands: 3 at 88–90, **none at 75–84**, 6 at 55–60. Grow it to 12–15 with more relevant real scans **before Phase 6**, when engines are compared on a fixed set | The plan's 10–15 target, and the 75–84 band is where the one-shot vs pipeline split (§6) actually matters |

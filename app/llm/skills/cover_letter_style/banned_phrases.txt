@@ -1,0 +1,29 @@
+# Phrases that make a cover letter read as machine-written or generic.
+# One per line, case-insensitive, matched on word boundaries. Lines starting with
+# # are comments. This ONE file feeds both the writer's style guide and the
+# checks (scripts/letter_lab.py now, style_lint from Phase 4), so the rule and
+# the check can't drift apart. Grow it as new ones turn up in eval letters.
+i am thrilled to apply
+i am excited to apply
+i am writing to express my interest
+proven track record
+fast-paced environment
+leverage my skills
+leverage my experience
+delve
+tapestry
+testament to
+passionate about
+synergy
+dynamic team
+hit the ground running
+team player
+go-getter
+think outside the box
+a perfect fit
+ideal candidate
+unique blend
+wealth of experience
+navigate the complexities
+in today's ever-evolving
+ever-changing landscape

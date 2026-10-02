@@ -283,7 +283,10 @@ def match_job(
         )
 
         try:
-            data = complete_json(_SYSTEM_PROMPT, prompt, schema=MatchScore, temperature=0.1)
+            data = complete_json(
+                _SYSTEM_PROMPT, prompt, schema=MatchScore, temperature=0.1,
+                tier="small", task="match", job_id=job_id,
+            )
             result = MatchScore.model_validate(data)
             score = max(0, min(100, result.score))
             reasoning = result.reasoning

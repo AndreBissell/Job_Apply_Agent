@@ -77,7 +77,7 @@ Language: Python 3.11+
 ORM: SQLAlchemy 2.0 (typed, declarative mapped style)
 Migrations: Alembic
 API: FastAPI + uvicorn (local backend for the extension)
-LLM: Groq (free tier, llama-3.3-70b-versatile) — see the LLM Layer section below
+LLM: Gemini on Vertex AI (small/mid/strong tiers) — see the LLM Layer section below
 Config: python-dotenv — app/db.py loads .env so DATABASE_URL (and
 later secrets) can live in a gitignored .env file.
 DB: SQLite for local dev, Postgres-ready for hosting. The database URL
@@ -90,66 +90,58 @@ everything portable so a Postgres DATABASE_URL works with no code changes.
 
 🤖 LLM LAYER
 
-Active provider: OpenAI (platform.openai.com), paid — chosen 2026-09-11 after
-Groq deprecated its free-tier models (llama-3.1-8b-instant cut 2026-08-16,
-llama-3.3-70b-versatile went enterprise-only 2026-08-26) and Gemini's fallback
-default (gemini-2.0-flash) was retired 2026-06-01. Neither old default works
-anymore. Cost is negligible at this project's volume — a few cents/month even
-at dozens of applications — so the model choice below is optimised for quality
-where it matters (cover letters), not absolute cheapness everywhere.
+Active provider: **Gemini on Vertex AI**, authenticating with Application Default
+Credentials (no API key — the $300 trial project's org disallows keys). Trial
+window 2026-10-01 → 2026-12-30; Flash intro prices double 2027-01-01, so re-check
+prices (and the plan's cost tables) before running past the trial. OpenAI
+(gpt-5-nano / gpt-5-mini, mini shuts down 2026-12-11) and Groq remain as dormant
+fallbacks in client.py. Switched 2026-10-01 (Phase 1 of
+docs/cover-letter-loop-plan.md); see that file for the model-choice reasoning.
 
-Split by task — two different models, not one:
-  Extraction + matching (complete_json) → OPENAI_MODEL_SMALL, default
-    gpt-5-nano. Structured JSON, low judgment required — the cheap tier is
-    genuinely fine here.
-  Cover letters (complete_text) → OPENAI_MODEL_LETTER, default gpt-5-mini.
-    This is the one output a human (an employer) actually reads, so it gets
-    the better model even though the dollar difference is trivial either way.
+Callers name a **tier**, never a model:
+  small  (GEMINI_MODEL_SMALL,  default gemini-3.1-flash-lite) — quick-screen,
+         extract, match, search_refine. `complete_json` defaults to this.
+  mid    (GEMINI_MODEL_MID,    default gemini-3.8-flash) — orchestration/analysis
+         (not used yet; the cover-letter agent will).
+  strong (GEMINI_MODEL_STRONG, default gemini-3.1-pro-preview) — cover letters.
+         `complete_text` defaults to this. A *preview* model: may change; falling
+         back is one env var.
 
-⚠️ gpt-5-mini is scheduled for shutdown 2026-12-11, successor is gpt-5.6-terra
-(pricier tier — re-check current pricing/model landscape before migrating,
-don't assume today's numbers still hold). Swap is a single .env change
-(OPENAI_MODEL_LETTER), never a code change — see provider abstraction below.
+Provider abstraction: ALL LLM calls go through app/llm/client.py —
+`complete_json` (structured), `complete_text` (prose), `complete_tools` (one
+tool-calling turn; provider-neutral `ToolSpec`, returns a `ToolStep`). Provider,
+models, prices and thinking levels live in exactly ONE place. Never call a
+provider SDK from extract.py / match.py / cover-letter code. Pass `task=` (and
+`job_id` / `match_id` / `run_id` where known) so the usage row is labelled.
 
-Provider abstraction: ALL LLM calls go through app/llm/client.py
-(complete_json for structured extraction; complete_text for prose). Provider
-and models live in exactly ONE place. Do not call the OpenAI/Groq/Gemini SDKs
-directly from extract.py / match.py / cover-letter code.
+Cost control (all in client.py + app/llm/usage.py):
+  * Every call writes an `llm_usage` row (tokens, thinking tokens, estimated USD).
+    `cost_usd` is an estimate from the PRICES dict; Cloud Billing is the authority.
+  * Budget guard: `llm_daily_budget_usd` ($5) / `llm_total_budget_usd` ($200) in
+    `profiles.preferences`. At the cap, mid/strong calls raise
+    `BudgetExceededError` BEFORE any request; `small` is never blocked. The idle
+    loop pauses cover letters for 10 min and the sidebar shows a banner
+    (`GET /llm/usage`, SSE `llm_budget_blocked`). The guard fails open if the
+    usage table is unreadable. Don't add FKs from llm_usage (spend log must
+    outlive the rows it describes) or purge it without keeping a running total.
+  * Thinking tokens bill as output and dominate small calls: GEMINI_THINKING_*
+    sets the level per tier (default low/medium/high).
+  * Gemini 3 is called WITHOUT `temperature` (Google: leave it at 1.0, lowering
+    risks looping); the `temperature` argument is ignored there, like GPT-5.
 
-Temperature:
-  Extraction → 0.1 (deterministic, consistent structure).
-  Cover letters → higher (~0.7) for natural prose.
+Rate-limit handling: on HTTP 429, client.py backs off and retries (max 3);
+delays > 300s are treated as daily exhaustion → DailyQuotaError. The idle loop
+(_processing_idle_loop in main.py) serialises LLM work through a single-worker
+executor and backs off 3 minutes when extraction fails. Local throttle: LLM_RPM=8.
 
-Rate-limit handling: on HTTP 429, client.py backs off and retries (max 3).
-OpenAI/Groq provide a retry-after header; delays > 300s are treated as daily
-exhaustion → DailyQuotaError. The idle processing loop (_processing_idle_loop
-in main.py) serialises all LLM work through a single-worker executor and backs
-off 3 minutes when extraction fails. Local throttle: LLM_RPM=8 (~7.5s spacing).
+Env vars (gitignored .env): LLM_PROVIDER=gemini, GOOGLE_GENAI_USE_VERTEXAI=true,
+GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_LOCATION=global, GEMINI_MODEL_SMALL/_MID/
+_STRONG, GEMINI_THINKING_SMALL/_MID/_STRONG (optional), LLM_RPM. The old
+GEMINI_MODEL is still read as the small model. Verify with
+`python scripts/check_llm.py` (every tier + a tool call + usage logging).
 
-TLS note (this machine): OpenAI/Groq both use httpx internally. The AV does TLS
-interception with a local CA cert that certifi doesn't trust. truststore's
-inject_into_ssl() doesn't affect httpcore's start_tls path, so both httpx
-clients are created with verify=False. Acceptable on a local dev machine with a
-trusted AV proxy.
-
-Env vars (gitignored .env):
-  OPENAI_API_KEY — from platform.openai.com/api-keys
-  OPENAI_MODEL_SMALL=gpt-5-nano
-  OPENAI_MODEL_LETTER=gpt-5-mini
-  LLM_PROVIDER=openai
-  LLM_RPM=8
-
-Dormant fallbacks (kept working, not required): Groq (LLM_PROVIDER=groq,
-GROQ_API_KEY, GROQ_MODEL) and Gemini (LLM_PROVIDER=gemini, GEMINI_API_KEY,
-GEMINI_MODEL) are still wired in client.py. Neither has a currently-valid free
-default model as of 2026-09-11 — check current model availability before
-switching back. Gemini TLS works via truststore.inject_into_ssl() (urllib3
-path, unlike httpx).
-
-Data privacy: check OpenAI's current data-usage terms for API traffic before
-sending personal profile data (as of this writing, API inputs are not used for
-training by default, unlike the old Groq free tier — verify this hasn't
-changed if it matters for your use case).
+Data privacy: profile data goes to Google. Verify the paid-tier / Vertex data-use
+terms if it matters (not used for training at the time of writing).
 
 
 Repo layout (actual)
@@ -168,7 +160,8 @@ job-app-assistant/
     api/
       main.py          # FastAPI backend for the extension
     llm/
-      client.py        # provider abstraction (Gemini now; Claude later) — ONE place
+      client.py        # provider abstraction: tiers, tool calling, usage log, budget guard — ONE place
+      usage.py         # spend totals + budget cap status (reads llm_usage)
       extract.py       # job → structured fields (DONE 2026-06-23)
       prefilter.py     # cheap pre-LLM match signals (DONE 2026-06-23)
       match.py         # job vs profile → score/reasoning/gaps (DONE 2026-06-23)
@@ -185,6 +178,7 @@ job-app-assistant/
     run_extraction.py  # batch LLM extraction
     run_matching.py    # batch LLM matching/scoring
     run_cover_letters.py  # batch cover-letter generation (dev/testing only)
+    letter_lab.py      # cover-letter eval harness (evals/rubric.md)
     check_matching.py  # scoring diagnostic report vs expected bands
     check_llm.py       # validate the LLM key before a batch
     smoke_test.py
@@ -244,15 +238,24 @@ sidebar's REAL/TEST pill flips it and reloads. Not verified in a loaded Chrome.
 
 🔄 CURRENT TASK: Cover-letter agent + Gemini migration
 
-Living plan: docs/cover-letter-loop-plan.md (DRAFT v0.3, rebased 2026-10-01
-from two fixed review loops onto a tool-calling agent with a shared state
-object and code-enforced guardrails; workflow baseline first, then agent,
-compared on an eval set. Expect it to change; update its Decision log when it
-does). Next up is Phase 0 (confirm the new $300 trial's expiry + model IDs on
-the key), then Phase 1 (switch client.py to Gemini with small/mid/strong
-tiers, complete_tools for tool calling, llm_usage cost logging, budget guard). The LLM Layer section above still describes
-OpenAI because that is what runs today. Rewrite it when Phase 1 lands, not
-before.
+Living plan: docs/cover-letter-loop-plan.md (DRAFT v0.4, a tool-calling agent
+with a shared state object and code-enforced guardrails; workflow baseline
+first, then agent, compared on an eval set. Expect it to change; update its
+Decision log when it does).
+
+Phases 0–2 are DONE (2026-10-01). Phase 0/1: trial confirmed to 2026-12-30,
+model IDs verified on Vertex, client.py has tiers, `complete_tools`,
+`llm_usage` logging and the budget guard (see the LLM Layer section). Phase 2:
+`app/llm/letter/state.py` (LetterState + pointer resolver), `rubric.py`, and the
+eval harness `scripts/letter_lab.py` (snapshot → prepare → run → report; see
+evals/rubric.md). Evals use the REAL profile in a scratch `evals/eval.db` copied
+read-only from real.db; ads/letters/eval.db are gitignored. The one-shot baseline
+run is `baseline-oneshot`; it needs the user's grades in
+evals/runs/baseline-oneshot/grades.csv, then `letter_lab.py report`.
+Next up is Phase 3 (`analyze_job` + `match_profile`, `letter_runs` /
+`letter_run_steps` tables, requirements cache) and Phase 4 (style skill +
+`style_lint` + `profiles.writing_sample`), which can run in parallel. Grow the
+eval set (only 9 ads, none at 75–84) before Phase 6 compares engines.
 
 Parked fast-follows. Both need a live Seek session rather than guesswork:
 1. §5.2's apply-flow detection (see the extension-revamp entry below).

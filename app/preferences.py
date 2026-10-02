@@ -43,6 +43,13 @@ DEFAULTS: dict = {
     "stale_profile_weight": 0.35,
     # ISO timestamp of the last completed sweep; written by the sweep itself.
     "retention_last_run": None,
+    # LLM spend caps (USD), enforced in app/llm/client.py before any mid/strong
+    # call; `small` calls are never blocked. Placeholders until llm_usage shows
+    # real costs (docs/cover-letter-loop-plan.md Q8). llm_run_budget_usd is the
+    # per-letter-run cap, used by the cover-letter agent (not built yet).
+    "llm_daily_budget_usd": 5.0,
+    "llm_total_budget_usd": 200.0,
+    "llm_run_budget_usd": 0.5,
 }
 
 

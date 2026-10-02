@@ -127,6 +127,9 @@ def extract_job(
             f"JOB TITLE: {job.title}\n\nJOB DESCRIPTION:\n{job.raw_description}",
             schema=JobExtraction,
             temperature=0.1,
+            tier="small",
+            task="extract",
+            job_id=job_id,
         )
         extraction = JobExtraction.model_validate(data)
 

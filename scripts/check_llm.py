@@ -1,14 +1,16 @@
-"""Self-test the configured LLM key end to end.
+"""Self-test the configured LLM provider end to end.
 
     python scripts/check_llm.py
 
-Loads the same env/config the app uses (via app.llm.client), then makes one
-tiny complete_text call and one tiny complete_json call through the public
-API — whichever provider/model LLM_PROVIDER selects. Costs ~nothing.
+Loads the same env/config the app uses (via app.llm.client), then makes one tiny
+complete_json call and one tiny complete_text call on EACH tier (small / mid /
+strong), plus one complete_tools call, through the public API — whichever
+provider LLM_PROVIDER selects. Costs a fraction of a cent. Each call is logged to
+llm_usage like any other, so this also proves usage logging works.
 
-Provider-agnostic on purpose: it drives the same complete_json/complete_text
-functions extract.py, match.py, and cover_letter.py call, so a PASS here means
-the configured provider actually works end to end, not just that a key exists.
+Provider-agnostic on purpose: it drives the same functions extract.py, match.py
+and cover_letter.py call, so a PASS means the provider actually works end to end
+for every tier the app uses, not just that credentials exist.
 """
 
 from __future__ import annotations
@@ -24,7 +26,11 @@ from app.llm import client  # noqa: E402  (loads .env + provider config)
 _KEY_HINTS = {
     "openai": "OPENAI_API_KEY — create one at https://platform.openai.com/api-keys",
     "groq": "GROQ_API_KEY — create one at https://console.groq.com/keys",
-    "gemini": "GEMINI_API_KEY (or GOOGLE_API_KEY) — create one at https://aistudio.google.com/apikey",
+    "gemini": (
+        "Vertex: run `gcloud auth application-default login` and set "
+        "GOOGLE_GENAI_USE_VERTEXAI / GOOGLE_CLOUD_PROJECT; or an API key in "
+        "GEMINI_API_KEY (https://aistudio.google.com/apikey)"
+    ),
 }
 
 
@@ -49,35 +55,101 @@ def _diagnose(exc: Exception, provider: str) -> None:
         print("Diagnosis: unexpected error — see the message above.")
 
 
+def _usage_rows_since(start_id: int) -> int:
+    from sqlalchemy import func, select
+
+    from app.models import LlmUsage
+
+    with client._usage_session() as db:
+        return db.scalar(select(func.count()).select_from(LlmUsage).where(LlmUsage.id > start_id)) or 0
+
+
+def _max_usage_id() -> int:
+    from sqlalchemy import func, select
+
+    from app.models import LlmUsage
+
+    with client._usage_session() as db:
+        return db.scalar(select(func.coalesce(func.max(LlmUsage.id), 0))) or 0
+
+
 def main() -> int:
     provider = client.LLM_PROVIDER
     print(f"Provider : {provider}")
     if provider not in _KEY_HINTS:
         print(f"FAIL: unknown LLM_PROVIDER={provider!r} (expected one of {sorted(_KEY_HINTS)})")
         return 1
-
     try:
-        text = client.complete_text("You are a test.", "Reply with exactly: OK", temperature=0)
-        print(f"complete_text : OK -> {text[:40]!r}")
+        start_id = _max_usage_id()
     except Exception as exc:  # noqa: BLE001
-        print(f"complete_text : FAIL — {str(exc)[:240]}")
-        _diagnose(exc, provider)
-        return 1
+        print(f"WARN: llm_usage not readable ({str(exc)[:120]}) — run `alembic upgrade head`")
+        start_id = None
+
+    calls = 0
+    for tier in client.TIERS:
+        model = client.model_for(tier)
+        try:
+            text = client.complete_text(
+                "You are a test.", "Reply with exactly: OK", temperature=0, tier=tier, task="check_llm"
+            )
+            calls += 1
+            print(f"[{tier:6}] {model:26} complete_text : OK -> {text[:40]!r}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[{tier:6}] {model:26} complete_text : FAIL — {str(exc)[:240]}")
+            _diagnose(exc, provider)
+            return 1
+        try:
+            data = client.complete_json(
+                "You are a test. Reply as JSON only.",
+                "Set the answer field to OK.",
+                schema=_Ping,
+                temperature=0,
+                tier=tier,
+                task="check_llm",
+            )
+            calls += 1
+            print(f"[{tier:6}] {model:26} complete_json : OK -> {data}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[{tier:6}] {model:26} complete_json : FAIL — {str(exc)[:240]}")
+            _diagnose(exc, provider)
+            return 1
 
     try:
-        data = client.complete_json(
-            "You are a test. Reply as JSON only.",
-            "Set the answer field to OK.",
-            schema=_Ping,
-            temperature=0,
+        step = client.complete_tools(
+            "You are a test. Always call a tool.",
+            [{"role": "user", "content": "Call the echo tool with word set to ping."}],
+            [
+                client.ToolSpec(
+                    name="echo",
+                    description="Echo a word back. Use this whenever asked to echo.",
+                    parameters={
+                        "type": "object",
+                        "properties": {"word": {"type": "string"}},
+                        "required": ["word"],
+                    },
+                )
+            ],
+            tier="mid",
+            task="check_llm",
         )
-        print(f"complete_json : OK -> {data}")
+        calls += 1
+        if step.tool != "echo":
+            print(f"complete_tools: FAIL — expected an echo call, got {step!r}")
+            return 1
+        print(f"complete_tools: OK -> {step.tool}({step.args})")
     except Exception as exc:  # noqa: BLE001
-        print(f"complete_json : FAIL — {str(exc)[:240]}")
+        print(f"complete_tools: FAIL — {str(exc)[:240]}")
         _diagnose(exc, provider)
         return 1
 
-    print("\nPASS — the LLM layer is good to go. Run: python scripts/run_extraction.py --job-id 4")
+    if start_id is not None:
+        logged = _usage_rows_since(start_id)
+        if logged != calls:
+            print(f"FAIL: made {calls} calls but only {logged} llm_usage rows were written")
+            return 1
+        print(f"llm_usage     : OK -> {logged} rows written")
+
+    print("\nPASS — every tier, tool calling and usage logging work.")
     return 0
 
 
