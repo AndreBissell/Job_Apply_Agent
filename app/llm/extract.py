@@ -53,6 +53,7 @@ Seniority = Literal[
 
 
 class JobExtraction(BaseModel):
+    employer_name: str | None
     hard_skills: list[str]
     soft_skills: list[str]
     qualifications: list[QualificationRequirement]
@@ -83,8 +84,71 @@ years value only if the ad gives one.
 title, stated years, and language; use "unknown" if genuinely unclear.
 - key_responsibilities: 3-6 short phrases, in the ad's own framing.
 - summary: 2-3 neutral sentences describing the role. No salesy language.
+- employer_name: the hiring organisation's name exactly as the ad states it \
+(e.g. "Boeing Defence Australia"). null if the ad names no employer, including a \
+recruitment agency advertising for an unnamed client. Never guess.
 Return empty arrays where a section has nothing to extract.
 """
+
+
+# Employer name recovered from the ad text. The extension sends the company from the
+# search card or the detail page's structured data, but before 2026-10-02 the detail
+# page sent none, so most rows have company = NULL and letters said "at Unknown".
+# This is the fallback: it only ever fills a NULL, never overwrites a captured value.
+_EMPLOYER_RULE = (
+    "Return the hiring organisation's name exactly as the ad states it. Return null if "
+    "the ad names no employer, including a recruitment agency advertising for an "
+    "unnamed client. Never guess."
+)
+
+
+class EmployerName(BaseModel):
+    employer_name: str | None
+
+
+def _fill_company(job: JobListing, name: str | None) -> bool:
+    name = " ".join((name or "").split())
+    if job.company or not name or len(name) > 120:
+        return False
+    # Must appear verbatim in the ad: a name the model inferred or invented (a
+    # parent company, a guess from the domain) is worse than "Unknown".
+    ad = " ".join((job.raw_description or "").split()).lower()
+    if name.lower() not in ad:
+        logger.info("employer name %r not found in ad text for job %s; not stored", name, job.id)
+        return False
+    job.company = name
+    return True
+
+
+def infer_employer_name(job_id: int, session=None) -> str | None:
+    """Fill ``company`` for one job from its ad text, if it is NULL. One small-tier
+    call. Returns the name written, or None. Used by scripts/backfill_company.py
+    for rows captured before the extension sent the company."""
+    own_session = session is None
+    db = session or _as_session()
+    try:
+        job = db.get(JobListing, job_id)
+        if job is None or job.company or not job.raw_description:
+            return None
+        data = complete_json(
+            "You read one job advertisement. " + _EMPLOYER_RULE,
+            f"JOB TITLE: {job.title}\n\nJOB DESCRIPTION:\n{job.raw_description}",
+            schema=EmployerName,
+            tier="small",
+            task="employer_name",
+            job_id=job_id,
+        )
+        name = EmployerName.model_validate(data).employer_name
+        if _fill_company(job, name):
+            db.commit()
+            return job.company
+        return None
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        if own_session:
+            db.close()
 
 
 def _as_session():
@@ -162,6 +226,7 @@ def extract_job(
         job.key_responsibilities = json.dumps(extraction.key_responsibilities)
         job.seniority = extraction.seniority
         job.summary = extraction.summary
+        _fill_company(job, extraction.employer_name)
         job.extracted_at = datetime.datetime.now(datetime.timezone.utc)
 
         db.commit()

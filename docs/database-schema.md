@@ -43,6 +43,10 @@ profiles (the user / account)
 
 llm_usage (cost log: one row per LLM call; standalone, no FKs)
 
+matches
+  |-< letter_runs          (one cover-letter pipeline execution; several per match allowed)
+        |-< letter_run_steps   (one tool call each)
+
 job_listings (global pool, scraped once, shared across users)
   |-< job_skills            (extracted required skills, hard/soft)
   |-< matches               (a listing can match many users)
@@ -298,6 +302,8 @@ CREATE TABLE job_listings (
     key_responsibilities        TEXT,                   -- LLM-extracted, JSON array of short phrases
     summary                     TEXT,                   -- LLM-extracted, 2-3 neutral sentences
     extracted_at                TIMESTAMPTZ,            -- set when LLM extraction succeeded (NULL = pending)
+    requirements_checklist      TEXT,                   -- analyze_job output, JSON object (see below); NULL = not analysed
+    requirements_checklist_at   TIMESTAMPTZ,            -- when that analysis ran
     quick_screen_at             TIMESTAMPTZ,            -- set after the pre-extraction screen runs (NULL = pending)
     quick_screen_score          INTEGER,                -- 0-100 screen verdict; NULL + quick_screen_at set = screen errored, failed open
     expired_detected_at         TIMESTAMPTZ,            -- set opportunistically when a revisit finds the listing gone (NULL = not observed closed)
@@ -314,6 +320,20 @@ marker: NULL means "not yet extracted", and the batch runner
 (`scripts/run_extraction.py`) processes only NULL-marked rows unless `--force`.
 The list-valued fields are stored as JSON **text** (portable across SQLite and
 Postgres); fine-grained skills go to `job_skills`, not into these columns.
+
+`requirements_checklist` / `requirements_checklist_at` cache the cover-letter
+pipeline's `analyze_job` tool (`app/llm/letter/tools/analyze_job.py`). It reads the
+full `raw_description` and writes one JSON object: `requirements` (each with
+`importance` essential|important|nice_to_have and `letter_role`
+headline|mention|implied|not_for_letter, a `theme`, and for implied items the
+`implied_by` they follow from), plus `tone`, `keywords`, `screening_questions`,
+`company_facts`, and a `description_sha` fingerprint of the text it read. It
+depends only on the job, never the profile, so it lives on this global row and is
+computed once however many letters or users follow; a changed description changes
+the fingerprint and the cache is ignored. It is separate from the cheap
+`extract.py` fields above, which run on every scanned job and feed matching.
+`not_for_letter` items (work rights, licences, clearances, availability) are
+surfaced to the user as eligibility notes rather than written into a letter.
 
 `quick_screen_at`/`quick_screen_score` are written by `app/llm/quickscreen.py`,
 a cheap pass that runs **before** extraction to skip the two expensive LLM calls
@@ -507,6 +527,57 @@ CREATE TABLE cover_letters (
 );
 ```
 
+### letter_runs
+
+One row per execution of the cover-letter pipeline for a match: the persisted
+`LetterState` (docs/cover-letter-loop-plan.md §5.3) plus bookkeeping. Several runs
+per match are allowed (regenerate, workflow vs agent A/B), so `match_id` is NOT
+unique. `cover_letters.generated_content` remains the chosen final text, so
+nothing downstream changes. `state` is the JSON-serialised `LetterState`, rewritten
+after every tool call so a run can resume after a crash or an `ask_user` pause.
+Each run's spend is attributable through `llm_usage.run_id` (a label, not an FK).
+
+```sql
+CREATE TABLE letter_runs (
+    id                  BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    match_id            BIGINT      NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
+    engine              TEXT        NOT NULL,           -- 'workflow','agent'
+    status              TEXT        NOT NULL DEFAULT 'running',  -- 'running','waiting_user','done','budget_stopped','failed'
+    state               TEXT,                           -- JSON LetterState
+    final_draft_version INTEGER,
+    tool_calls          INTEGER     NOT NULL DEFAULT 0,
+    cost_usd            NUMERIC(12,6) NOT NULL DEFAULT 0,
+    started_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    finished_at         TIMESTAMPTZ
+);
+```
+
+---
+
+### letter_run_steps
+
+One row per tool call within a run, for debugging ("which step caused this?") and
+for the eval reports. `args` and `result_summary` are small JSON objects (a summary,
+not the full state, which is on the run). A failed call keeps its row with `error`
+set, so the log shows what the pipeline tried, not only what worked.
+
+```sql
+CREATE TABLE letter_run_steps (
+    id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    run_id          BIGINT      NOT NULL REFERENCES letter_runs(id) ON DELETE CASCADE,
+    seq             INTEGER     NOT NULL,               -- 1-based order within the run
+    tool            TEXT        NOT NULL,
+    args            TEXT,                               -- JSON
+    result_summary  TEXT,                               -- JSON
+    error           TEXT,
+    duration_ms     INTEGER     NOT NULL DEFAULT 0,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (run_id, seq)
+);
+```
+
+---
+
 ### llm_usage
 
 One row per LLM call: tokens and an estimated USD cost. It feeds the budget guard
@@ -569,6 +640,7 @@ CREATE INDEX idx_matches_user_score     ON matches(user_id, score DESC);   -- ra
 CREATE INDEX idx_matches_status         ON matches(status);
 CREATE INDEX idx_matches_created        ON matches(created_at);            -- retention sweep / miner window
 CREATE INDEX idx_llm_usage_created      ON llm_usage(created_at);          -- daily spend sum (budget guard)
+CREATE INDEX idx_letter_runs_match      ON letter_runs(match_id);          -- "runs for this match"
 ```
 
 ---

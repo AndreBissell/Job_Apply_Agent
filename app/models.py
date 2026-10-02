@@ -357,6 +357,11 @@ class JobListing(Base):
     extracted_at: Mapped[datetime.datetime | None] = mapped_column(
         DateTime(timezone=True)
     )
+    # analyze_job's cached output (JSON object) — see docs/database-schema.md.
+    requirements_checklist: Mapped[str | None] = mapped_column(Text)
+    requirements_checklist_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
     # Stamped by app/llm/quickscreen.py's cheap pre-extraction pass, on both
     # outcomes. quick_screen_score is 0-100 on a real screen; NULL with
     # quick_screen_at set means the screen errored and failed open (job still
@@ -541,6 +546,60 @@ class CoverLetter(Base):
     match: Mapped["Match"] = relationship(back_populates="cover_letter")
 
     __table_args__ = (UniqueConstraint("match_id", name="uq_cover_letters_match"),)
+
+
+# ---------------------------------------------------------------------------
+# Cover-letter pipeline runs
+# ---------------------------------------------------------------------------
+class LetterRun(Base):
+    """One execution of the cover-letter pipeline for a match (persisted state)."""
+
+    __tablename__ = "letter_runs"
+
+    id: Mapped[int] = mapped_column(BIG_INT_PK, primary_key=True)
+    match_id: Mapped[int] = mapped_column(
+        BIG_INT_FK, ForeignKey("matches.id", ondelete="CASCADE"), nullable=False
+    )
+    engine: Mapped[str] = mapped_column(Text, nullable=False)  # 'workflow' | 'agent'
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="running")
+    state: Mapped[str | None] = mapped_column(Text)  # JSON LetterState
+    final_draft_version: Mapped[int | None] = mapped_column(Integer)
+    tool_calls: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    cost_usd: Mapped[Decimal] = mapped_column(Numeric(12, 6), nullable=False, server_default="0")
+    started_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    finished_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))
+
+    steps: Mapped[list["LetterRunStep"]] = relationship(
+        back_populates="run", passive_deletes=True, order_by="LetterRunStep.seq"
+    )
+
+    __table_args__ = (Index("idx_letter_runs_match", "match_id"),)
+
+
+class LetterRunStep(Base):
+    """One tool call within a run."""
+
+    __tablename__ = "letter_run_steps"
+
+    id: Mapped[int] = mapped_column(BIG_INT_PK, primary_key=True)
+    run_id: Mapped[int] = mapped_column(
+        BIG_INT_FK, ForeignKey("letter_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    tool: Mapped[str] = mapped_column(Text, nullable=False)
+    args: Mapped[str | None] = mapped_column(Text)  # JSON
+    result_summary: Mapped[str | None] = mapped_column(Text)  # JSON
+    error: Mapped[str | None] = mapped_column(Text)
+    duration_ms: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    run: Mapped["LetterRun"] = relationship(back_populates="steps")
+
+    __table_args__ = (UniqueConstraint("run_id", "seq", name="uq_letter_run_steps_seq"),)
 
 
 # ---------------------------------------------------------------------------

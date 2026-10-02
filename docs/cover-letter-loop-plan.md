@@ -1,7 +1,7 @@
 # Cover-letter agent + Gemini migration — PLAN (living document)
 
 > **Status: DRAFT v0.4 — 2026-10-01. Rebased onto an agent design; Q5–Q10
-> answered. Phases 0, 1 and 2 DONE 2026-10-01 (Phase 2 awaiting your grades). Open to change.**
+> answered. Phases 0-3 built 2026-10-01/02; Phase 3 awaiting the user's hand-check. Open to change.**
 > **Budget window:** new Google Cloud $300 trial, ~2026-10-01 → ~2026-12-30.
 > That ends before Gemini Flash prices double on 2027-01-01, so the intro
 > prices in §3 hold for the whole trial.
@@ -195,7 +195,7 @@ the cheapest implementation that works.
 
 | Tool | Job | Reads | Writes | Runs on | Maps to existing code |
 |---|---|---|---|---|---|
-| `analyze_job` | Turn the ad into a requirements checklist (id, text in the employer's words, `must`/`should`), plus tone, keywords to mirror, and any screening questions in the ad | `raw_description` + extracted fields | `requirements`, `job.*` | mid, structured | Builds on `extract.py`. **Cached on the job** (it depends only on the job), so it runs once per job, not once per run |
+| `analyze_job` | Turn the ad into a requirements checklist. Each item is rated twice, separately: `importance` (essential / important / nice_to_have: how much the employer cares) and `letter_role` (headline / mention / implied / not_for_letter: what the letter should do with it), plus a `theme`. Also tone, keywords to mirror, screening questions in the ad, and `company_facts` (raw material for a specific detail) | `raw_description` + extracted fields | `requirements`, `job.*` | mid, structured | Builds on `extract.py`. **Cached on the job** (it depends only on the job), so it runs once per job, not once per run |
 | `match_profile` | For each requirement, find evidence pointers into the profile and mark it `supported` / `partial` / `gap` | requirements, profile | `requirements[].evidence`, `.status` | mid, structured | New. `match.py` stays the cheap whole-job score that decides *whether* to write a letter |
 | `ask_user` | Ask the user whether they have experience that fills a must-have gap, with a text box to answer. "Yes" saves the answer to the profile as a new experience / skill / qualification; "no" means `leave_out` | gap requirements | `user_questions`, `user_decision`, **new profile rows** | code + sidebar UI (+ small model to structure the answer) | New. Pauses the run (§5.5) |
 | `generate_letter` | Write the first draft from supported evidence only, with the style skill loaded. Returns the text **and** a list of claims, each with its source pointer | evidence, decisions, style skill | new `drafts[]` entry | strong | Replaces the one-shot prompt in `cover_letter.py` |
@@ -243,18 +243,23 @@ each other's content.
   "job": {
     "job_id": 412, "title": "Data Analyst", "company": "Example Pty Ltd",
     "tone": "corporate", "keywords": ["stakeholder reporting", "SQL"],
-    "screening_questions": []
+    "screening_questions": [], "company_facts": ["They build logistics software"]
   },
   "requirements": [
-    {"id": "R1", "text": "Experience with Power BI", "priority": "must",
-     "evidence": ["experience:31"], "status": "partial",
+    {"id": "R1", "text": "Experience with Power BI", "importance": "essential",
+     "letter_role": "headline", "theme": "BI tooling", "implied_by": [],
+     "evidence": ["experience:31"], "status": "partial", "note": "Tableau at uni, not Power BI",
      "user_decision": {"choice": "have_it", "answer": "Used Tableau for 1 year at uni, no Power BI",
                        "saved_as": ["experience:31", "skill:44"]}},
-    {"id": "R5", "text": "Driver's licence", "priority": "must",
-     "evidence": [], "status": "gap",
-     "user_decision": {"choice": "leave_out", "remembered": true}},
-    {"id": "R2", "text": "Strong SQL", "priority": "must",
-     "evidence": ["experience:12#s3", "skill:7"], "status": "supported", "user_decision": null}
+    {"id": "R5", "text": "Driver's licence", "importance": "essential",
+     "letter_role": "not_for_letter", "theme": "Eligibility", "implied_by": [],
+     "evidence": [], "status": "gap", "user_decision": null},
+    {"id": "R2", "text": "Strong SQL", "importance": "essential",
+     "letter_role": "headline", "theme": "Data", "implied_by": [],
+     "evidence": ["experience:12#s3", "skill:7"], "status": "supported", "user_decision": null},
+    {"id": "R6", "text": "Git and CI/CD", "importance": "important",
+     "letter_role": "implied", "theme": "Engineering practice", "implied_by": ["R2"],
+     "evidence": ["skill:9"], "status": "partial", "user_decision": null}
   ],
   "drafts": [
     {"version": 1, "text": "...",
@@ -473,9 +478,9 @@ stop after six calls; that flexibility is the point.
 
 | # | Tool | Result | Why |
 |---|---|---|---|
-| 1 | `analyze_job` | 6 requirements (4 must, 2 should); cache hit if the job was analysed before | Always first |
-| 2 | `match_profile` | 4 supported, 2 gaps: Power BI (must), driver's licence (must) | Needs evidence before writing |
-| 3 | `ask_user` | Licence: remembered "no" → `leave_out`, not asked. Power BI: run pauses; the user answers Yes, "Used Tableau for 1 year at uni"; saved as an experience + skill; run resumes; R1 → `partial` | A must-have gap blocks drafting |
+| 1 | `analyze_job` | 6 requirements; the licence is `not_for_letter`, CI/CD is `implied`; cache hit if the job was analysed before | Always first |
+| 2 | `match_profile` | 4 supported, 2 gaps: Power BI (essential headline), driver's licence (eligibility) | Needs evidence before writing |
+| 3 | `ask_user` | The licence is never asked about (eligibility is a job-card note, not a letter claim). Power BI: run pauses; the user answers Yes, "Used Tableau for 1 year at uni"; saved as an experience + skill; run resumes; R1 → `partial` | A must-have gap blocks drafting |
 | 4 | `suggest_learning` | Power BI fundamentals course | Power BI still not covered directly |
 | 5 | `generate_letter` | Draft 1, frames Tableau honestly as related experience; no licence mention | Gaps resolved |
 | 6–8 | `check_claims` / `check_requirements` / `style_lint` | Pass / **fail R4** (stakeholder reporting) / 1 em dash + "fast-paced environment" | Required after each draft |
@@ -655,7 +660,7 @@ budget guard comes in Phase 1.
 | 0 | ✅ **Decisions + checks** | Answers to Q5–Q10; confirm trial credit + expiry in Cloud Billing; confirm model IDs via `client.models.list()` | — |
 | 1 | ✅ **Gemini migration** (§4) | Tiers, `complete_tools`, `llm_usage`, budget guard, all callers on Gemini | 0 |
 | 2 | ✅ **State, eval set, baseline** | `LetterState` + pointer resolver; `evals/` set + rubric; `letter_lab.py`; score today's one-shot letters as the first baseline | 1 |
-| 3 | **`analyze_job` + `match_profile`** | Structured outputs, requirements cache, `letter_runs` / `letter_run_steps` tables; checked by hand on the eval set | 2 |
+| 3 | ✅ **`analyze_job` + `match_profile`** | Structured outputs, requirements cache, `letter_runs` / `letter_run_steps` tables; checked by hand on the eval set | 2 |
 | 4 | **Style skill + `style_lint` + voice** | Skill folder, banned list shared by prompt and lint, AU spelling list; `profiles.writing_sample` + a "Your writing" paste box in the profile editor; experience-text fallback | 2 |
 | 5 | **Draft + check tools** | `generate_letter`, `check_claims` (both stages), `check_requirements`, `revise_letter`; planted-claim test | 3, 4 |
 | 6 | **Fixed workflow = baseline** | `workflow.py`: analyze → match → unanswered gaps treated as `leave_out` (evals only; there is no UI yet) → draft → checks → revise ≤2 → finish, with the guardrails. Run evals. **Usable on its own; could ship here** | 5 |
@@ -768,3 +773,12 @@ well-prompted Pro call.
 | 2026-10-01 | `banned_phrases.txt` created now (Phase 2) with a seed list, because the rubric needs it. Phase 4's `style_lint` and style guide read the same file | One list, no drift |
 | 2026-10-01 | Grading split: 5 rubric items are checked by code; 4 (supported must-haves, no unsupported claims, specific detail, would send) are graded by the user in `grades.csv`. No LLM judge for the baseline | The plan warns that lenient model graders make the design look safer than it is; `check_claims` gets its own planted-claim test in Phase 5 |
 | 2026-10-01 | ⚠️ **Eval set is only 9 ads** (17 snapshotted; 8 scored < 50). Bands: 3 at 88–90, **none at 75–84**, 6 at 55–60. Grow it to 12–15 with more relevant real scans **before Phase 6**, when engines are compared on a fixed set | The plan's 10–15 target, and the 75–84 band is where the one-shot vs pipeline split (§6) actually matters |
+| 2026-10-02 | **Baseline graded** (9 letters, one-shot, Gemini 3.1 Pro): `would_send` 0/9, `supported_musts_covered` 4/9, `specific_detail` 4/8, `no_unsupported_claims` 9/9. Rubric limits tightened: at most 1 em dash, at most 1 generic phrase | The one-shot writer does not fabricate; it is shallow and misses requirements, which points at Phase 3 (the writer never sees the ad) and Phase 4 (style/voice), not at claim-checking |
+| 2026-10-02 | **Requirements carry two ratings, not one must/should flag.** `importance` = how much the employer cares (essential / important / nice_to_have, inferred from wording because many ads use one flat "you likely have" list); `letter_role` = what the letter does with it: **headline** (lead point with evidence), **mention** (brief, if the candidate has it), **implied** (not named, but may be used if it fits a sentence), **not_for_letter** (eligibility/admin, shown to the user as a job-card note) | User feedback from grading: not every requirement belongs in a letter (work rights), and some real ones are implied by others (CI/CD under "builds production web apps"). A single must/should flag cannot express either |
+| 2026-10-02 | Code constrains the model's judgement in `analyze_job`: nice-to-have can't be a headline; at most 5 headlines; obvious eligibility wording (work rights, citizenship, clearances, licence, police check) is forced to `not_for_letter`; `implied_by` may only point at headline/mention items | Same principle as the guardrails: the model decides, code enforces what must always hold |
+| 2026-10-02 | `pending_gaps` (blocks drafting, asks the user) now means: essential + headline/mention + gap + undecided. Eligibility, implied and nice-to-have gaps never trigger a question | Keeps `ask_user` to the few questions that matter; an eligibility gap is a note, not a letter claim |
+| 2026-10-02 | `match_profile` validates in code: pointers must resolve (brackets/quotes stripped first), a bare listed skill can't make a requirement `supported` (-> partial), supported/partial with no valid evidence -> gap, eligibility items are judged from profile facts and never cited. Live finding: Gemini copied pointers WITH brackets on one job, which first demoted 7 good matches to gaps; fixed by normalising pointers and telling the prompt to omit brackets | Hallucinated or malformed evidence must never reach the writer; the correction list is shown in the review pack |
+| 2026-10-02 | `analyze_job` + `match_profile` run on the **mid** tier (gemini-3.8-flash); ~$0.016 per job for both, `analyze_job` once per job (cached on `job_listings.requirements_checklist`, keyed by a description fingerprint and `ANALYSIS_VERSION`) | Plan §3 test: mid vs strong on the eval set. Hand-check decides whether to move up |
+| 2026-10-02 | Phase 3 surfaces `eligibility_notes` in `GET /jobs` and `GET /jobs/{id}` (empty until a job has been analysed). **Sidebar display deferred to Phase 8**, because analysis only runs for jobs headed for a letter until the idle-loop integration | Data is ready; UI waits for there to be data on most cards |
+| 2026-10-02 | ⚠️ Found while reviewing: **`job_listings.company` is NULL for every Seek job** in both DBs (the extension reads it only from search-result cards, not the detail page), so letters currently say "at Unknown". Not fixed in Phase 3 (needs the extension and a live Seek page to verify; the JSON-LD `hiringOrganization` is the likely source) | Hurts "specific detail"; flagged for the user |
+| 2026-10-02 | **Company-name bug fixed** in three layers: (1) the extension's detail-page capture now sends company/location/work type from the JSON-LD `hiringOrganization` / `jobLocation` / `employmentType`, with unverified DOM fallbacks; (2) `/ingest` backfills company/location/work_type/salary onto existing rows (it previously only backfilled description/taxonomy/query); (3) `extract.py` recovers `employer_name` from the ad text and fills a NULL `company`, stored only if the name appears verbatim in the ad. `scripts/backfill_company.py` repairs old rows. Eval + test DBs: 12/17 and 9/13 filled, all verbatim in the ad; the rest are recruiter or unnamed-employer ads, correctly left empty | Letters said "at Unknown", which hurt `specific_detail`. ⚠️ The graded one-shot baseline was written WITHOUT company names, so part of any later improvement in `specific_detail` is this fix, not the pipeline. Decided 2026-10-02: NOT re-graded; the baseline stands as a lower bound for `specific_detail`. real.db repaired the same day (6/8 filled, all verbatim; backup in backups/real.db.pre-company-backfill) |

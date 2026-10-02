@@ -75,6 +75,18 @@ class ProfileIndex:
     def __init__(self, profile: Profile):
         self.profile_id = profile.id
         self._text: dict[str, str] = {}
+        # Eligibility facts (not citable evidence): lets match_profile judge items like
+        # "Australian work rights" without them ever becoming letter claims.
+        self.facts: dict[str, str] = {
+            k: v
+            for k, v in (
+                ("visa/work status", profile.visa_status),
+                ("location", profile.location),
+                ("target location", profile.target_location),
+            )
+            if v
+        }
+        self._heads: dict[str, str] = {}  # experience pointer -> "Title at Org (span)", no description
         if profile.summary:
             self._text["profile:summary"] = profile.summary.strip()
         for q in profile.qualifications:
@@ -87,6 +99,7 @@ class ProfileIndex:
             org = f" at {e.organization}" if e.organization else ""
             span = f" ({_year(e.start_date)}–{_year(e.end_date)})" if e.start_date or e.end_date else ""
             head = f"{e.title}{org}{span}"
+            self._heads[f"experience:{e.id}"] = head
             self._text[f"experience:{e.id}"] = (
                 f"{head}: {e.description.strip()}" if e.description else head
             )
@@ -99,6 +112,33 @@ class ProfileIndex:
             return None
         return self._text.get(pointer)
 
+    def prompt_catalog(self) -> str:
+        """The profile as an LLM-readable list of citable pointers.
+
+        Experiences appear as a header line with their description split into
+        sentence-level pointers underneath, so a model cites the narrowest piece of
+        evidence (``experience:12#s3``) instead of a whole role. Every pointer shown
+        resolves, so a model that copies them exactly cannot cite something that
+        does not exist.
+        """
+        lines: list[str] = []
+        if "profile:summary" in self._text:
+            lines.append(f"[profile:summary] {self._text['profile:summary']}")
+        for key, text in self._text.items():
+            if key.startswith("qualification:"):
+                lines.append(f"[{key}] {text}")
+        for key, head in self._heads.items():
+            lines.append(f"[{key}] {head}")
+            n = 1
+            while f"{key}#s{n}" in self._text:
+                lines.append(f"    [{key}#s{n}] {self._text[f'{key}#s{n}']}")
+                n += 1
+        skills = [(k, t) for k, t in self._text.items() if k.startswith("skill:")]
+        if skills:
+            lines.append("Skills the user lists (a bare listing is weak evidence on its own):")
+            lines.extend(f"[{k}] {t}" for k, t in skills)
+        return "\n".join(lines)
+
     def catalog(self, include_sentences: bool = True) -> dict[str, str]:
         """Every resolvable pointer -> its text. What a writer prompt cites from."""
         if include_sentences:
@@ -110,6 +150,17 @@ class ProfileIndex:
 # State
 # ---------------------------------------------------------------------------
 RequirementStatus = Literal["unknown", "supported", "partial", "gap"]
+# How much the EMPLOYER cares, inferred from the ad's wording (not from the heading
+# alone: many ads use one flat "you likely have" list).
+Importance = Literal["essential", "important", "nice_to_have"]
+# What the LETTER should do with it: a separate question from importance.
+#   headline        a core, distinguishing requirement; a lead point backed by evidence
+#   mention         relevant; worth a brief mention if the candidate has it
+#   implied         anyone competent at a headline/mention item has it (CI/CD, git); don't
+#                   name it, but it MAY be used if it fits a sentence neatly
+#   not_for_letter  eligibility/admin (work rights, licence, clearance, availability);
+#                   shown to the user as a note, never written into the letter
+LetterRole = Literal["headline", "mention", "implied", "not_for_letter"]
 
 
 class UserDecision(BaseModel):
@@ -124,15 +175,26 @@ class UserDecision(BaseModel):
 class Requirement(BaseModel):
     id: str  # "R1", "R2", ... stable within a run
     text: str  # in the employer's words
-    priority: Literal["must", "should"]
+    importance: Importance
+    letter_role: LetterRole
+    theme: str = ""  # related requirements share one, so a letter makes one point per theme
+    implied_by: list[str] = Field(default_factory=list)  # ids of the headline/mention items it follows from
     evidence: list[str] = Field(default_factory=list)  # pointers
     status: RequirementStatus = "unknown"
+    note: str | None = None  # match_profile's one-line reason (e.g. "Tableau, not Power BI")
     user_decision: UserDecision | None = None
 
     @property
     def needs_user(self) -> bool:
-        """A must-have gap nobody has decided on — blocks drafting."""
-        return self.priority == "must" and self.status == "gap" and self.user_decision is None
+        """An essential requirement the letter would address, with no evidence and no
+        user decision yet: blocks drafting (plan 5.7 "no silent gaps"). Eligibility
+        items are not asked about: they become a note, not a letter claim."""
+        return (
+            self.importance == "essential"
+            and self.letter_role in ("headline", "mention")
+            and self.status == "gap"
+            and self.user_decision is None
+        )
 
 
 class Claim(BaseModel):
@@ -162,6 +224,9 @@ class JobInfo(BaseModel):
     tone: str | None = None
     keywords: list[str] = Field(default_factory=list)
     screening_questions: list[str] = Field(default_factory=list)
+    # Concrete facts the ad states about the employer/product/team that a letter can
+    # cite: the raw material for the rubric's "specific detail" item.
+    company_facts: list[str] = Field(default_factory=list)
 
 
 class SideOutputs(BaseModel):
@@ -219,6 +284,13 @@ class LetterState(BaseModel):
         self.latest_draft.checks[name] = result
 
     # -- requirements -------------------------------------------------------
+    def requirements_by_role(self, role: str) -> list[Requirement]:
+        return [r for r in self.requirements if r.letter_role == role]
+
+    def eligibility_notes(self) -> list[str]:
+        """Admin/eligibility items shown to the user, never written into the letter."""
+        return [r.text for r in self.requirements if r.letter_role == "not_for_letter"]
+
     def requirement(self, req_id: str) -> Requirement | None:
         return next((r for r in self.requirements if r.id == req_id), None)
 
@@ -247,7 +319,7 @@ class LetterState(BaseModel):
                 decision = f", user: {r.user_decision.choice}" if r.user_decision else ""
                 flag = "  <- needs a user decision" if r.needs_user else ""
                 lines.append(
-                    f"  {r.id} [{r.priority}] {r.status}{decision} "
+                    f"  {r.id} [{r.importance}/{r.letter_role}] {r.status}{decision} "
                     f"({len(r.evidence)} evidence){flag}"
                 )
 

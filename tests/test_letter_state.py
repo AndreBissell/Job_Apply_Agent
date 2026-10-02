@@ -115,17 +115,22 @@ def _state() -> LetterState:
         profile_id=1,
         job=JobInfo(job_id=412, title="Data Analyst", company="Example Pty Ltd"),
         requirements=[
-            Requirement(id="R1", text="Power BI", priority="must", status="gap"),
-            Requirement(id="R2", text="Strong SQL", priority="must", status="supported",
-                        evidence=["experience:12#s1", "skill:7"]),
-            Requirement(id="R3", text="Tableau", priority="should", status="gap"),
+            Requirement(id="R1", text="Power BI", importance="essential", letter_role="headline", status="gap"),
+            Requirement(id="R2", text="Strong SQL", importance="essential", letter_role="headline",
+                        status="supported", evidence=["experience:12#s1", "skill:7"]),
+            Requirement(id="R3", text="Tableau", importance="nice_to_have", letter_role="mention", status="gap"),
+            Requirement(id="R4", text="Australian work rights", importance="essential",
+                        letter_role="not_for_letter", status="gap"),
+            Requirement(id="R5", text="CI/CD", importance="important", letter_role="implied",
+                        implied_by=["R2"], status="gap"),
         ],
     )
 
 
-def test_pending_gaps_are_undecided_must_haves_only():
+def test_pending_gaps_are_essential_letter_items_only():
     s = _state()
-    assert [r.id for r in s.pending_gaps()] == ["R1"]  # R3 is only a "should"
+    # R3 is nice-to-have, R4 is eligibility (a note, not a question), R5 is implied.
+    assert [r.id for r in s.pending_gaps()] == ["R1"]
     s.requirement("R1").user_decision = UserDecision(choice="leave_out", remembered=True)
     assert s.pending_gaps() == []
 
@@ -150,12 +155,32 @@ def test_summary_has_statuses_and_checks_but_never_draft_text():
     s.record_check("style", Check(passed=True, warnings=["low_sentence_variance"]))
     summary = s.summary_for_orchestrator()
     assert "SECRET LETTER BODY" not in summary
-    assert "R1 [must] gap (0 evidence)  <- needs a user decision" in summary
-    assert "R2 [must] supported (2 evidence)" in summary
+    assert "R1 [essential/headline] gap (0 evidence)  <- needs a user decision" in summary
+    assert "R2 [essential/headline] supported (2 evidence)" in summary
     assert "claims: not run on this draft" in summary
     assert "requirements: FAIL — R2 not addressed" in summary
     assert "style: pass (warnings: low_sentence_variance)" in summary
     assert "LATEST DRAFT: v1 of 3 allowed" in summary
+
+
+def test_role_helpers_and_eligibility_notes():
+    s = _state()
+    assert [r.id for r in s.requirements_by_role("headline")] == ["R1", "R2"]
+    assert s.eligibility_notes() == ["Australian work rights"]
+
+
+def test_prompt_catalog_lists_only_resolvable_pointers(profile):
+    import re
+
+    idx = ProfileIndex(profile)
+    catalog = idx.prompt_catalog()
+    assert "[experience:12] Reporting Assistant at Acme (2022–present)" in catalog
+    assert "    [experience:12#s2] Presented weekly reports to team leads." in catalog
+    assert "[skill:7] SQL" in catalog and "[profile:summary]" in catalog
+    pointers = re.findall(r"\[([a-z]+:[\w:#]+)\]", catalog)
+    assert pointers and all(idx.resolve(p) for p in pointers)
+    # The experience header must not leak the description: sentences carry that.
+    assert "Built SQL reports" not in catalog.split("[experience:12#s1]")[0]
 
 
 def test_summary_before_analysis():

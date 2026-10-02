@@ -178,7 +178,7 @@ job-app-assistant/
     run_extraction.py  # batch LLM extraction
     run_matching.py    # batch LLM matching/scoring
     run_cover_letters.py  # batch cover-letter generation (dev/testing only)
-    letter_lab.py      # cover-letter eval harness (evals/rubric.md)
+    letter_lab.py      # cover-letter eval harness (evals/rubric.md); analyze = Phase 3 hand-check pack
     check_matching.py  # scoring diagnostic report vs expected bands
     check_llm.py       # validate the LLM key before a batch
     smoke_test.py
@@ -252,10 +252,23 @@ evals/rubric.md). Evals use the REAL profile in a scratch `evals/eval.db` copied
 read-only from real.db; ads/letters/eval.db are gitignored. The one-shot baseline
 run is `baseline-oneshot`; it needs the user's grades in
 evals/runs/baseline-oneshot/grades.csv, then `letter_lab.py report`.
-Next up is Phase 3 (`analyze_job` + `match_profile`, `letter_runs` /
-`letter_run_steps` tables, requirements cache) and Phase 4 (style skill +
-`style_lint` + `profiles.writing_sample`), which can run in parallel. Grow the
-eval set (only 9 ads, none at 75–84) before Phase 6 compares engines.
+Phase 3 is BUILT (2026-10-02), awaiting the user's hand-check: `analyze_job`
+(requirements checklist; each item has `importance` essential/important/
+nice_to_have AND `letter_role` headline/mention/implied/not_for_letter, plus
+theme, tone, keywords, screening questions, company_facts; cached on
+`job_listings.requirements_checklist`), `match_profile` (per-requirement evidence
+pointers, validated in code), `app/llm/letter/runner.py` (logs every tool call to
+`letter_run_steps`, persists `letter_runs.state`, costs from `llm_usage.run_id`),
+migration `c7a3e1f5d284`. Not-for-letter items (work rights etc.) surface as
+`eligibility_notes` on GET /jobs; sidebar display waits for Phase 8. Hand-check:
+`python scripts/letter_lab.py analyze` -> evals/runs/<run>/review.md + checks.csv,
+then `analysis-report`. Company-name bug FIXED 2026-10-02 (detail-page JSON-LD capture,
+/ingest backfill of card fields, employer name recovered from ad text at
+extraction; `scripts/backfill_company.py` repairs old rows). Unverified in a live
+Chrome; also no Seek row has a location/discovered_query, which suggests the
+search-card capture path may not be firing (check the console on a search page).
+Next up is Phase 4 (style skill + `style_lint` + `profiles.writing_sample`). Grow
+the eval set (only 9 ads, none at 75-84) before Phase 6 compares engines.
 
 Parked fast-follows. Both need a live Seek session rather than guesswork:
 1. §5.2's apply-flow detection (see the extension-revamp entry below).

@@ -11,6 +11,10 @@ mechanical items, you grade the judgement items in a CSV.
     #    ... fill in evals/runs/<run>/grades.csv (Y/N per column) ...
     python scripts/letter_lab.py report <run>      # 4. merge code checks + your grades -> evals/results/<run>.md
 
+    python scripts/letter_lab.py analyze           # Phase 3: analyze_job + match_profile on the set -> review.md + checks.csv
+    #    ... fill in evals/runs/<analysis-run>/checks.csv (Y/N per column) ...
+    python scripts/letter_lab.py analysis-report <run>   # agreement rates -> evals/results/<run>.md
+
 Privacy: evals/jobs/, evals/eval.db, evals/set.json and evals/runs/ hold ad text,
 your profile and letters written as you — all gitignored. Only the summary in
 evals/results/ (titles, pass/fail, cost) is meant to be committed.
@@ -136,6 +140,15 @@ def _build_eval_db(profile_source: Path) -> None:
         db.commit()
 
 
+def _migrate_eval_db() -> None:
+    """Bring an existing eval.db up to the current schema (a no-op when already there),
+    so a migration added after `prepare` doesn't break `run` / `analyze`."""
+    from alembic import command
+    from alembic.config import Config
+
+    command.upgrade(Config(str(ROOT / "alembic.ini")), "head")
+
+
 def _choose_set(scored: list[tuple[str, int]]) -> list[str]:
     """Up to SET_MAX ads spread across score bands, so the set covers strong
     matches AND real gaps rather than just the top of the list."""
@@ -251,6 +264,7 @@ def cmd_run(args) -> int:
         print("Run `letter_lab.py prepare` first.")
         return 1
     keys = json.loads(SET_FILE.read_text(encoding="utf-8"))["jobs"]
+    _migrate_eval_db()
 
     from sqlalchemy import select
 
@@ -431,6 +445,185 @@ def cmd_report(args) -> int:
     return 0
 
 
+# ---------------------------------------------------------------------------
+# 5. analyze (Phase 3): requirements checklist + evidence map, for hand-checking
+# ---------------------------------------------------------------------------
+_ROLE_TITLES = {
+    "headline": "HEADLINE: lead points the letter should make with evidence",
+    "mention": "MENTION: brief mention if the candidate has it",
+    "implied": "IMPLIED: not named, but may be used if it fits a sentence",
+    "not_for_letter": "NOT FOR THE LETTER: shown to you as a note",
+}
+_CHECK_COLUMNS = ("importance_ok", "letter_role_ok", "evidence_ok", "notes")
+
+
+def _evidence_text(ctx, pointers: list[str]) -> str:
+    return " || ".join(f"[{p}] {ctx.index.resolve(p)}" for p in pointers)
+
+
+def cmd_analyze(args) -> int:
+    if not EVAL_DB.exists() or not SET_FILE.exists():
+        print("Run `letter_lab.py prepare` first.")
+        return 1
+    keys = json.loads(SET_FILE.read_text(encoding="utf-8"))["jobs"]
+    _migrate_eval_db()
+
+    from sqlalchemy import select
+
+    from app.db import SessionLocal
+    from app.llm import client
+    from app.llm.client import BudgetExceededError, DailyQuotaError
+    from app.llm.letter.runner import execute_tool, finish_run, start_run
+    from app.llm.letter.state import JobInfo, LetterState
+    from app.llm.letter.tools.analyze_job import analyze_job
+    from app.llm.letter.tools.match_profile import match_profile
+    from app.models import JobListing, Match
+
+    run_id = args.label or f"analysis-{datetime.datetime.now():%Y%m%d-%H%M}"
+    run_dir = RUNS_DIR / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Analysis {run_id}: mid model={client.model_for('mid')}, {len(keys)} jobs"
+          f"{' (forcing re-analysis)' if args.force else ''}")
+
+    review: list[str] = [
+        f"# Requirements analysis review: {run_id}\n",
+        "For each job: the checklist `analyze_job` built from the ad, then what `match_profile` found in your profile.",
+        "Check against the ad (the full ad is at the end of each section). Then fill in `checks.csv` (Y/N); see evals/rubric.md.",
+        "If the analysis MISSED a requirement the ad clearly states, add a row to checks.csv with id `MISSED` and the text.\n",
+    ]
+    rows: list[list[str]] = []
+    totals = {"cost": 0.0, "runs": 0}
+    role_counts: dict[str, int] = {}
+    status_counts: dict[str, int] = {}
+
+    for key in keys:
+        source, source_job_id = key.split("-", 1)
+        with SessionLocal() as db:
+            job = db.scalar(select(JobListing).where(
+                JobListing.source == source, JobListing.source_job_id == source_job_id))
+            if job is None:
+                print(f"  {key}: not in eval.db — skipped")
+                continue
+            match = db.scalar(select(Match).where(Match.job_id == job.id, Match.user_id == PROFILE_ID))
+            state = LetterState(profile_id=PROFILE_ID, job=JobInfo(job_id=job.id, title=job.title, company=job.company))
+            ctx = start_run(db, match.id, "workflow", state)
+            try:
+                r1 = execute_tool(ctx, state, "analyze_job", analyze_job, force=args.force)
+                r2 = execute_tool(ctx, state, "match_profile", match_profile) if r1.ok else None
+            except (DailyQuotaError, BudgetExceededError) as exc:
+                finish_run(ctx, state, "budget_stopped")
+                print(f"Stopped: {exc}")
+                break
+            ok = r1.ok and r2 is not None and r2.ok
+            finish_run(ctx, state, "done" if ok else "failed")
+            totals["cost"] += state.budget.cost_usd
+            totals["runs"] += 1
+            title, company, score, ad = job.title, job.company, int(match.score), job.raw_description
+
+            if not ok:
+                err = (r1.error if not r1.ok else r2.error)
+                print(f"  {key}: FAILED — {err}")
+                review.append(f"\n---\n\n# {title} ({company or '?'}): FAILED\n\n{err}\n")
+                continue
+
+            by_role = {}
+            for req in state.requirements:
+                by_role.setdefault(req.letter_role, []).append(req)
+                role_counts[req.letter_role] = role_counts.get(req.letter_role, 0) + 1
+                status_counts[req.status] = status_counts.get(req.status, 0) + 1
+                rows.append([key, req.id, req.text, req.importance, req.letter_role, req.theme, req.status,
+                             _evidence_text(ctx, req.evidence), "", "", "", ""])
+
+            lines = [f"\n---\n\n# {title} ({company or '?'})  [match score {score}, csv key {key}]\n",
+                     f"Source: {r1.summary['source']}. Tone: {state.job.tone}. Run cost ${state.budget.cost_usd:.4f}.\n"]
+            if state.job.company_facts:
+                lines.append("**Company facts (raw material for a specific detail):**")
+                lines += [f"- {f}" for f in state.job.company_facts]
+            if state.job.keywords:
+                lines.append(f"\n**Keywords to echo:** {', '.join(state.job.keywords)}")
+            if state.job.screening_questions:
+                lines.append("\n**Screening questions in the ad:**")
+                lines += [f"- {q}" for q in state.job.screening_questions]
+            if state.eligibility_notes():
+                lines.append("\n**Eligibility notes (heads-up on the job card, never in the letter):**")
+                lines += [f"- {t}" for t in state.eligibility_notes()]
+            if state.pending_gaps():
+                lines.append("\n**Would ask you before drafting** (essential, not covered): "
+                             + "; ".join(f"{g.id} {g.text}" for g in state.pending_gaps()))
+            if r2.summary["corrections"]:
+                lines.append("\n**Code corrected the model on:** " + "; ".join(r2.summary["corrections"]))
+            for role, title_text in _ROLE_TITLES.items():
+                items = by_role.get(role, [])
+                lines.append(f"\n## {title_text} ({len(items)})\n")
+                for req in items:
+                    follows = f" (follows from {', '.join(req.implied_by)})" if req.implied_by else ""
+                    lines.append(f"- **{req.id}** [{req.importance}] _{req.theme}_: {req.text}{follows}")
+                    lines.append(f"  - **{req.status}**" + (f": {req.note}" if req.note else ""))
+                    for p in req.evidence:
+                        lines.append(f"  - evidence `{p}`: {ctx.index.resolve(p)}")
+            lines.append(f"\n## THE AD\n\n{ad}\n")
+            review.append("\n".join(lines))
+            print(f"  {score:>3}  {title[:46]:46}  {len(state.requirements):>2} reqs  "
+                  f"roles {r1.summary['by_letter_role']}  status {r2.summary['by_status']}")
+
+    (run_dir / "review.md").write_text("\n".join(review), encoding="utf-8")
+    with (run_dir / "checks.csv").open("w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        w.writerow(["key", "id", "text", "importance", "letter_role", "theme", "status", "evidence", *_CHECK_COLUMNS])
+        w.writerows(rows)
+    print(f"\nRoles: {role_counts}   Status: {status_counts}")
+    print(f"{totals['runs']} jobs, ${totals['cost']:.4f} total (${totals['cost'] / max(totals['runs'], 1):.4f}/job)")
+    print(f"Read: {(run_dir / 'review.md').relative_to(ROOT)}")
+    print(f"Fill in Y/N: {(run_dir / 'checks.csv').relative_to(ROOT)}  (importance_ok, letter_role_ok, evidence_ok)")
+    print(f"Then: python scripts/letter_lab.py analysis-report {run_id}")
+    return 0
+
+
+def cmd_analysis_report(args) -> int:
+    run_dir = RUNS_DIR / args.run_id
+    path = run_dir / "checks.csv"
+    if not path.exists():
+        print(f"No checks.csv for {args.run_id}")
+        return 1
+    with path.open(encoding="utf-8") as fh:
+        rows = list(csv.DictReader(fh))
+    missed = [r for r in rows if r["id"].strip().upper() == "MISSED"]
+    graded = [r for r in rows if r["id"].strip().upper() != "MISSED"]
+
+    def rate(col: str, subset=None) -> str:
+        subset = graded if subset is None else subset
+        votes = [_yn(r[col]) for r in subset if _yn(r[col]) is not None]
+        return f"{sum(votes)}/{len(votes)}" if votes else "not graded"
+
+    lines = [
+        f"# Requirements analysis: {args.run_id}", "",
+        f"{len(graded)} requirements across {len({r['key'] for r in graded})} jobs; "
+        f"{len(missed)} requirement(s) the analysis MISSED (rows marked MISSED).", "",
+        "| Check | Agreed |", "|---|---|",
+        f"| importance_ok (essential / important / nice_to_have) | {rate('importance_ok')} |",
+        f"| letter_role_ok (headline / mention / implied / not_for_letter) | {rate('letter_role_ok')} |",
+        f"| evidence_ok (the cited profile text really backs it) | {rate('evidence_ok')} |",
+        "", "## By letter role", "", "| Role | Count | letter_role_ok | evidence_ok |", "|---|---|---|---|",
+    ]
+    for role in _ROLE_TITLES:
+        sub_rows = [r for r in graded if r["letter_role"] == role]
+        lines.append(f"| {role} | {len(sub_rows)} | {rate('letter_role_ok', sub_rows)} | {rate('evidence_ok', sub_rows)} |")
+    disagreements = [r for r in graded if any(_yn(r[c]) is False for c in _CHECK_COLUMNS[:3])]
+    if disagreements or missed:
+        lines += ["", "## Where you disagreed", ""]
+        for r in disagreements:
+            bad = [c for c in _CHECK_COLUMNS[:3] if _yn(r[c]) is False]
+            lines.append(f"- `{r['key']}` {r['id']} ({r['importance']}/{r['letter_role']}) {r['text'][:90]}: "
+                         f"{', '.join(bad)}" + (f". {r['notes']}" if r["notes"].strip() else ""))
+        for r in missed:
+            lines.append(f"- `{r['key']}` MISSED: {r['text']}" + (f". {r['notes']}" if r["notes"].strip() else ""))
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    out = RESULTS_DIR / f"{args.run_id}.md"
+    out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"Wrote {out.relative_to(ROOT)}")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -453,6 +646,15 @@ def main() -> int:
     p = sub.add_parser("report", help="merge code checks + grades into evals/results/<run>.md")
     p.add_argument("run_id")
     p.set_defaults(fn=cmd_report)
+
+    p = sub.add_parser("analyze", help="run analyze_job + match_profile on the set; write a hand-check pack")
+    p.add_argument("--label", help="run id (default: analysis-<timestamp>)")
+    p.add_argument("--force", action="store_true", help="ignore the cached analysis and redo it")
+    p.set_defaults(fn=cmd_analyze)
+
+    p = sub.add_parser("analysis-report", help="summarise your checks.csv grades")
+    p.add_argument("run_id")
+    p.set_defaults(fn=cmd_analysis_report)
 
     args = parser.parse_args()
     return args.fn(args)

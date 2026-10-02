@@ -427,6 +427,27 @@ def _gaps_to_list(gaps: str | None) -> list[str]:
     return data if isinstance(data, list) else [str(data)]
 
 
+def _eligibility_notes(job: JobListing) -> list[str]:
+    """Requirements the cover-letter pipeline judged not-for-a-letter (work rights,
+    licence, clearance, availability), for display on the job card as a heads-up.
+
+    Empty both when there are none AND when the job has not been analysed yet —
+    ``analyze_job`` only runs for jobs headed for a letter, so most cards have no
+    checklist. Costs nothing: it only reads the cached JSON.
+    """
+    if not job.requirements_checklist:
+        return []
+    try:
+        checklist = json.loads(job.requirements_checklist)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    reqs = checklist.get("requirements") if isinstance(checklist, dict) else None
+    return [
+        r["text"] for r in (reqs or [])
+        if isinstance(r, dict) and r.get("letter_role") == "not_for_letter" and r.get("text")
+    ]
+
+
 def _raw_relevance_score(job: JobListing, skill_names: list[str]) -> int:
     """Zero-cost queue-ordering signal: how many of the profile's skill names
     appear as substrings in the job's title/raw description.
@@ -567,6 +588,13 @@ def ingest(
                 "classification",
                 "subclassification",
                 "discovered_query",
+                # Card fields too: a job first captured from its detail page
+                # used to keep company/location NULL forever, even after its
+                # search card (which carries them) was ingested.
+                "company",
+                "location",
+                "work_type",
+                "salary",
             ):
                 if getattr(existing, attr) is None and getattr(item, attr):
                     setattr(existing, attr, getattr(item, attr))
@@ -735,6 +763,7 @@ def list_jobs(
             "top_skills": [
                 js.name for js in job.job_skills if js.skill_type == "hard"
             ][:3],
+            "eligibility_notes": _eligibility_notes(job),
         }
         for match, job in rows
     ]
@@ -1149,6 +1178,7 @@ def get_job(job_id: int, profile_id: int = 1, db: Session = Depends(get_db)) -> 
         "work_type": job.work_type,
         "salary": job.salary,
         "raw_description": job.raw_description,
+        "eligibility_notes": _eligibility_notes(job),
         "date_scraped": job.date_scraped.isoformat() if job.date_scraped else None,
         "match": (
             {

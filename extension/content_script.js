@@ -58,6 +58,48 @@ function splitOccupationalCategory(raw) {
   return { classification: text, subclassification: null };
 }
 
+// schema.org fields come in several shapes: a string, an object with .name,
+// or an array of either. Returns the first usable string or null.
+function ldText(value, key = 'name') {
+  if (!value) return null;
+  if (typeof value === 'string') return value.trim() || null;
+  if (Array.isArray(value)) {
+    for (const v of value) { const t = ldText(v, key); if (t) return t; }
+    return null;
+  }
+  return typeof value === 'object' ? ldText(value[key], key) : null;
+}
+
+// "FULL_TIME" -> "Full time", matching the wording search cards use.
+function humaniseEmploymentType(raw) {
+  const t = ldText(raw);
+  if (!t) return null;
+  const s = t.replace(/_/g, ' ').toLowerCase();
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+function ldLocation(jobLocation) {
+  const loc = Array.isArray(jobLocation) ? jobLocation[0] : jobLocation;
+  const addr = loc && loc.address;
+  if (!addr || typeof addr !== 'object') return ldText(loc);
+  const parts = [addr.addressLocality, addr.addressRegion].map((p) => ldText(p)).filter(Boolean);
+  return parts.length ? parts.join(', ') : null;
+}
+
+// Employer, location and work type for a detail page: JSON-LD first (Seek's own
+// structured data), then the on-page elements. Before 2026-10-02 the detail page
+// sent none of these, and every captured job had company = NULL, so letters said
+// "at Unknown". Any of them may still be null; the backend backfills company from
+// a later search-card capture, or from the ad text at extraction.
+function readDetailMeta() {
+  const posting = readJsonLdJobPosting() || {};
+  return {
+    company:   ldText(posting.hiringOrganization) || textOrNull(document, SELECTORS.DETAIL_COMPANY),
+    location:  ldLocation(posting.jobLocation) || textOrNull(document, SELECTORS.DETAIL_LOCATION),
+    work_type: humaniseEmploymentType(posting.employmentType) || textOrNull(document, SELECTORS.DETAIL_WORK_TYPE),
+  };
+}
+
 function readClassification() {
   const posting = readJsonLdJobPosting();
   const fromLd = posting && (
@@ -123,10 +165,14 @@ function parseDetailPage() {
     || (document.title || '').replace(/\s*[|-]\s*SEEK.*$/i, '').trim()
     || 'Untitled';
   const { classification, subclassification } = readClassification();
+  const { company, location: jobLocation, work_type } = readDetailMeta();
   return [{
     source_job_id: job_id,
     url: window.location.href,
     title,
+    company,
+    location: jobLocation,
+    work_type,
     classification,
     subclassification,
     raw_description,
