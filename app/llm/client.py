@@ -306,10 +306,22 @@ def _is_quota_429(exc: Exception) -> bool:
     return code == 429 or "429" in low or "resource_exhausted" in low or "resourceexhausted" in low
 
 
+# A dropped connection carries no status code (httpx RemoteProtocolError /
+# ConnectError / ReadError). Seen live 2026-10-03: "Server disconnected without
+# sending a response" mid-eval, which crashed the run instead of retrying.
+_TRANSIENT_NETWORK_ERRORS = ("RemoteProtocolError", "ConnectError", "ReadError", "ReadTimeout",
+                             "ConnectTimeout", "ConnectionResetError", "ConnectionAbortedError")
+_TRANSIENT_NETWORK_TEXT = ("server disconnected", "connection reset", "connection aborted",
+                           "remote end closed connection")
+
+
 def _is_transient_5xx(exc: Exception) -> bool:
+    """A 5xx, or a dropped connection: worth retrying with backoff."""
     code = getattr(exc, "status_code", None) or getattr(exc, "code", None)
     low = (str(getattr(exc, "message", "") or "") + " " + str(exc)).lower()
     if code in (500, 502, 503, 504):
+        return True
+    if type(exc).__name__ in _TRANSIENT_NETWORK_ERRORS or any(s in low for s in _TRANSIENT_NETWORK_TEXT):
         return True
     return any(s in low for s in ("unavailable", "overloaded", "internal error", "503", "500"))
 
