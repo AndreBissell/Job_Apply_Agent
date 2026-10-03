@@ -39,7 +39,9 @@ profiles (the user / account)
   |-< skills -------------------|
   |-< user_cvs              (master CV(s), reused across applications)
   |-< matches               (per-user relevance for a job)
-        |-1 cover_letters   (generated doc for that match, if above threshold)
+  |     |-1 cover_letters   (generated doc for that match, if above threshold)
+  |-< gap_decisions         (remembered "no" answers = the to-work-on list)
+        |-< gap_sightings   (one per ad that asked for it; job_id is a label, no FK)
 
 llm_usage (cost log: one row per LLM call; standalone, no FKs)
 
@@ -159,6 +161,7 @@ CREATE TABLE qualifications (
     expiry_date         DATE,                   -- certs/licenses only (nullable)
     status              TEXT,                   -- 'completed','in_progress','expected'
     notes               TEXT,                   -- coursework, honours, thesis topic
+    origin              TEXT,                   -- NULL (typed in the editor) or 'ask_user'; see below
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -167,6 +170,18 @@ CREATE TABLE qualifications (
 `grade` is deliberately **text**, not numeric, because grading scales differ
 (WAM, GPA, percentage, classification) and aren't meaningfully comparable as a
 single number.
+
+**`origin` (on `qualifications`, `experiences` and `skills`; added 2026-10-03,
+plan Q12).** Where a row came from. `NULL` means the user typed it in a profile
+editor; `'ask_user'` means the cover-letter agent created it from the user's
+"Yes" answer to a gap question, after the user confirmed the parsed rows (Q11).
+The editors show it as "added while applying to a job". Deliberately no job id
+or title: retention may purge the job row, and the fact belongs to the profile,
+not to one application. The editors' `PUT /profile-ui/data` deletes and
+re-inserts experiences and qualifications, so the endpoint carries `origin` over
+by natural key (experience: type + title + organization; qualification: type +
+title + institution). A row whose key the user edits loses its tag, which is
+acceptable: the user has now made it their own.
 
 ---
 
@@ -194,10 +209,15 @@ CREATE TABLE experiences (
     start_date       DATE,
     end_date         DATE,                   -- nullable if ongoing
     description      TEXT,
+    origin           TEXT,                   -- NULL or 'ask_user' (see qualifications)
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ```
+
+An experience created from an `ask_user` answer is saved with `on_cv = FALSE`:
+the user described it in a text box, which says nothing about whether it is on
+their CV.
 
 ---
 
@@ -213,6 +233,7 @@ CREATE TABLE skills (
     user_id     BIGINT      NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
     name        TEXT        NOT NULL,        -- "C#", "React", "Stakeholder communication"
     category    TEXT,                        -- 'language','framework','tool','soft_skill'
+    origin      TEXT,                        -- NULL or 'ask_user' (see qualifications)
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (user_id, name)                   -- no duplicate skills per user
@@ -555,7 +576,7 @@ CREATE TABLE letter_runs (
     id                  BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     match_id            BIGINT      NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
     engine              TEXT        NOT NULL,           -- 'workflow','agent' (evals also log 'tools','eval-analyze','eval-plant')
-    status              TEXT        NOT NULL DEFAULT 'running',  -- 'running','waiting_user','done','budget_stopped','failed'
+    status              TEXT        NOT NULL DEFAULT 'running',  -- 'running','waiting_user','answered','done','budget_stopped','failed'
     state               TEXT,                           -- JSON LetterState
     final_draft_version INTEGER,                        -- the draft handed back: the latest if clean, else the best (guardrails.best_draft)
     tool_calls          INTEGER     NOT NULL DEFAULT 0,
@@ -564,6 +585,14 @@ CREATE TABLE letter_runs (
     finished_at         TIMESTAMPTZ
 );
 ```
+
+**Pausing for the user (Phase 7b).** When a must-have requirement is a gap with
+no decision, `ask_user` writes its questions into `state.user_questions` and the
+run ends as `waiting_user` (`finished_at` stays NULL), which frees the worker.
+The answer endpoints touch only `waiting_user` runs. When every question is
+resolved (a "No", or a "Yes" whose parsed profile rows the user confirmed), the
+run moves to `answered`, and the worker resumes it from the persisted state.
+The worker touches only `answered` runs, so the two never write the same run.
 
 ---
 
@@ -631,6 +660,89 @@ added, keep a running total somewhere else.
 
 ---
 
+### gap_decisions
+
+Remembered **"No"** answers to `ask_user` gap questions (plan §5.5, §5.9). Each
+row is a skill the user said they don't have. It does two jobs:
+
+1. **Each gap is asked once.** When a later letter run finds the same skill as a
+   must-have gap, it is left out without asking (`user_decision.remembered`).
+2. **The to-work-on list.** Together with `gap_sightings` it ranks the skills the
+   user lacks by how often ads ask for them.
+
+"Yes" answers are never stored here: they become real profile rows (with
+`origin = 'ask_user'`), which `match_profile` finds next time.
+
+`skill_key` is `prefilter.normalise_skill()` of the requirement's short `skill`
+name from `analyze_job` ("Power BI" -> `power bi`), or of the requirement's own
+wording when it names no skill. Like `job_skills.name` it is **not** FK'd to
+`skills`. `label` is the readable name shown in the list.
+
+**Clearing** sets `cleared_at` instead of deleting, so the item leaves the list
+and is no longer left out automatically, but its sightings history survives. It
+happens when the user clears it, or automatically when the profile gains a skill
+whose normalised name matches (a later "Yes", or adding it in the editor). A new
+"No" to a cleared skill reopens the same row (`cleared_at` -> NULL, `created_at`
+-> now, so `created_at` is the date of the most recent "No").
+
+```sql
+CREATE TABLE gap_decisions (
+    id                BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    user_id           BIGINT      NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    skill_key         TEXT        NOT NULL,   -- normalise_skill(skill or requirement wording)
+    label             TEXT        NOT NULL,   -- "Power BI"
+    requirement_text  TEXT,                   -- the ad's wording when the user said no
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),   -- the most recent "No"
+    cleared_at        TIMESTAMPTZ,            -- NULL = active (on the list, auto-left-out)
+    UNIQUE (user_id, skill_key)
+);
+```
+
+---
+
+### gap_sightings
+
+The counter behind the to-work-on list: one row per ad that asked for a skill the
+user said no to. `UNIQUE (gap_id, job_id)` makes re-scanning or re-running a job
+free of double counts. Sightings come from three places, all code-only (no LLM):
+
+- `scan`: after `extract.py` writes a job's `job_skills`, their names are matched
+  against every active `skill_key` (every scanned ad, not just letter jobs).
+- `letter_run`: after `match_profile`, a requirement whose skill matches a
+  remembered "No" (with its `importance`).
+- `seed`: when a "No" is first saved, every job already in the DB that asks for
+  it, so the list is useful straight away.
+
+`job_id` has **no FK** and the title is copied into `job_title`, for the same
+reason as `llm_usage`: retention purges job rows, and the counts must survive
+that. `importance` is NULL when the source can't tell (a `job_skills` row has
+none); a later sighting of the same job with a known importance fills it in,
+keeping the higher of the two.
+
+```sql
+CREATE TABLE gap_sightings (
+    id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    gap_id      BIGINT      NOT NULL REFERENCES gap_decisions(id) ON DELETE CASCADE,
+    job_id      BIGINT      NOT NULL,          -- label only, no FK (survives job purges)
+    job_title   TEXT,                          -- copied in for the same reason
+    importance  TEXT,                          -- 'essential','important','nice_to_have', or NULL
+    source      TEXT        NOT NULL,          -- 'scan','letter_run','seed'
+    seen_at     TIMESTAMPTZ NOT NULL DEFAULT now(),   -- when the AD was seen (job's date_scraped)
+    UNIQUE (gap_id, job_id)
+);
+```
+
+`seen_at` is the job's `date_scraped` when the job row is known, not the time the
+sighting was written: seeding a "No" against 14 ads scanned last spring must not
+put them all inside the 90-day window.
+
+**Reading the list** (`GET /gaps/to-work-on`, `scripts/gap_report.py`): active
+decisions ranked by distinct ads in the last 90 days, then by how many of those
+rated it essential. Each item has the label, total and 90-day counts, the
+essential count, the three most recent job titles and the date of the "No".
+
+---
+
 ## Indexes
 
 Unique constraints above already create implicit indexes (`profiles.email`,
@@ -654,6 +766,8 @@ CREATE INDEX idx_matches_status         ON matches(status);
 CREATE INDEX idx_matches_created        ON matches(created_at);            -- retention sweep / miner window
 CREATE INDEX idx_llm_usage_created      ON llm_usage(created_at);          -- daily spend sum (budget guard)
 CREATE INDEX idx_letter_runs_match      ON letter_runs(match_id);          -- "runs for this match"
+CREATE INDEX idx_letter_runs_status     ON letter_runs(status);            -- waiting_user / answered runs
+CREATE INDEX idx_gap_sightings_seen     ON gap_sightings(seen_at);         -- 90-day window
 ```
 
 ---

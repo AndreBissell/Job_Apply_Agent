@@ -17,9 +17,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.llm.letter import guardrails
-from app.llm.letter.runner import ToolContext, finish_run, start_run
+from app.llm.letter.runner import ToolContext, context_for, finish_run, start_run
 from app.llm.letter.state import Draft, JobInfo, LetterState, UserDecision
-from app.models import JobListing, Match
+from app.models import JobListing, LetterRun, Match
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +75,31 @@ def open_run(db: Session, job_id: int, profile_id: int, engine: str) -> tuple[Le
         raise ValueError(f"job {job_id} has no match for profile {profile_id}: score it first")
     state = LetterState(profile_id=profile_id, job=JobInfo(job_id=job.id, title=job.title, company=job.company))
     return state, start_run(db, match.id, engine, state)
+
+
+# Tool calls a resumed run gets on top of its budget: the pause spent one on ask_user
+# and the resume spends one re-matching. Without them a run that asked a question
+# could not afford the same two revisions as one that didn't (a full run is 14 of 15).
+RESUME_EXTRA_CALLS = 2
+
+
+def reopen_run(db: Session, run_id: int) -> tuple[LetterState, ToolContext]:
+    """Pick up an ``answered`` run (every ask_user question resolved) where it paused.
+
+    The state comes back from ``letter_runs.state`` and the profile is loaded fresh,
+    so rows the user confirmed are citable evidence. Raises ``ValueError`` when the
+    run doesn't exist or isn't ready to resume.
+    """
+    run = db.get(LetterRun, run_id)
+    if run is None:
+        raise ValueError(f"letter run {run_id} not found")
+    if run.status != "answered":
+        raise ValueError(f"letter run {run_id} is {run.status}, not answered: nothing to resume")
+    state = LetterState.model_validate_json(run.state)
+    state.budget.max_tool_calls += RESUME_EXTRA_CALLS
+    run.status = "running"
+    db.commit()
+    return state, context_for(db, run, state)
 
 
 def conclude(

@@ -40,3 +40,6 @@ evals/runs/
 evals/panels/
 evals/eval.db
 evals/set.json
+
+# Generated personal reports (the to-work-on list: profile data)
+reports/

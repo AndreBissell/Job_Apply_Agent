@@ -179,6 +179,9 @@ class Requirement(BaseModel):
     letter_role: LetterRole
     theme: str = ""  # related requirements share one, so a letter makes one point per theme
     implied_by: list[str] = Field(default_factory=list)  # ids of the headline/mention items it follows from
+    # Short skill name ("Power BI"); empty for attitudes and duties. The key remembered
+    # "no"s and the to-work-on list count by (plan §5.9). Added in ANALYSIS_VERSION 3.
+    skill: str = ""
     evidence: list[str] = Field(default_factory=list)  # pointers
     status: RequirementStatus = "unknown"
     note: str | None = None  # match_profile's one-line reason (e.g. "Tableau, not Power BI")
@@ -195,6 +198,30 @@ class Requirement(BaseModel):
             and self.status == "gap"
             and self.user_decision is None
         )
+
+
+class UserQuestion(BaseModel):
+    """One ask_user question about a must-have gap (plan §5.5). Questions for a run
+    are asked together; the run waits until every one is ``answered``.
+
+    open           sent to the user, no answer yet
+    needs_confirm  the user said Yes; ``proposal`` holds the parsed profile rows,
+                   waiting for the user's one-click confirm (plan Q11)
+    answered       a No (the requirement is left out and remembered), or a
+                   confirmed Yes (the rows are saved; ``saved_as`` points at them)
+    """
+
+    id: str  # "Q1", "Q2", ... stable within a run
+    requirement_id: str
+    requirement_text: str  # the employer's words, shown to the user
+    skill: str = ""
+    skill_key: str  # gaps.skill_key(): what a "No" is remembered under
+    prompt: str
+    status: Literal["open", "needs_confirm", "answered"] = "open"
+    choice: Literal["yes", "no"] | None = None
+    answer: str | None = None  # the user's text for a Yes
+    proposal: dict | None = None  # ProposedRows awaiting confirm
+    saved_as: list[str] = Field(default_factory=list)
 
 
 class Claim(BaseModel):
@@ -263,7 +290,7 @@ class LetterState(BaseModel):
     job: JobInfo
     requirements: list[Requirement] = Field(default_factory=list)
     drafts: list[Draft] = Field(default_factory=list)
-    user_questions: list[dict] = Field(default_factory=list)
+    user_questions: list[UserQuestion] = Field(default_factory=list)
     side_outputs: SideOutputs = Field(default_factory=SideOutputs)
     budget: Budget = Field(default_factory=Budget)
 
@@ -302,7 +329,10 @@ class LetterState(BaseModel):
 
     def waiting_on_user(self) -> bool:
         """Questions are out and unanswered (``ask_user`` pauses the run)."""
-        return any(q.get("status") == "open" for q in self.user_questions)
+        return any(q.status != "answered" for q in self.user_questions)
+
+    def question(self, question_id: str) -> UserQuestion | None:
+        return next((q for q in self.user_questions if q.id == question_id), None)
 
     # -- budget -------------------------------------------------------------
     def budget_exceeded(self) -> str | None:
@@ -319,7 +349,10 @@ class LetterState(BaseModel):
         else:
             lines.append("REQUIREMENTS:")
             for r in self.requirements:
-                decision = f", user: {r.user_decision.choice}" if r.user_decision else ""
+                decision = ""
+                if r.user_decision:
+                    remembered = " (remembered)" if r.user_decision.remembered else ""
+                    decision = f", user: {r.user_decision.choice}{remembered}"
                 flag = "  <- needs a user decision" if r.needs_user else ""
                 lines.append(
                     f"  {r.id} [{r.importance}/{r.letter_role}] {r.status}{decision} "

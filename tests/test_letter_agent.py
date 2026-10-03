@@ -30,7 +30,7 @@ from app.llm.client import BudgetExceededError, DailyQuotaError, LLMError, ToolS
 from app.llm.letter import agent, guardrails, outcome, registry, workflow
 from app.llm.letter.outcome import conclude, leave_out_gaps, open_run
 from app.llm.letter.runner import REFUSED, ToolError, execute_tool, persist, record_step, start_run
-from app.llm.letter.state import Check, Claim, JobInfo, LetterState, Requirement
+from app.llm.letter.state import Check, Claim, JobInfo, LetterState, Requirement, UserQuestion
 from app.models import (
     Experience,
     JobListing,
@@ -341,13 +341,13 @@ def test_ask_user_gate():
     assert "nothing to ask" in gate(_state())  # no pending gap
     gap = _state([_req("R1", status="gap")])
     assert gate(gap) is None
-    gap.user_questions.append({"status": "open"})
+    gap.user_questions.append(UserQuestion(id="Q1", requirement_id="R1", requirement_text="x", skill_key="x", prompt="?", status="open"))
     assert "already out" in gate(gap)
 
 
 def test_ask_user_gate_does_not_block_on_a_closed_question():
     state = _state([_req("R1", status="gap")])
-    state.user_questions.append({"status": "answered"})
+    state.user_questions.append(UserQuestion(id="Q1", requirement_id="R1", requirement_text="x", skill_key="x", prompt="?", status="answered"))
     assert registry.build_registry(leave_out_gaps)["ask_user"].gate(state) is None
 
 
@@ -392,7 +392,7 @@ def test_ask_user_tool_summarises_what_the_policy_decided():
     fn = registry.ask_user_tool(leave_out_gaps)
     summary = fn(state, None)
     assert summary == {"asked_about": ["R1", "R2"], "decided": {"R1": "leave_out", "R2": "leave_out"},
-                       "waiting_on_user": False}
+                       "questions": [], "waiting_on_user": False}
     assert state.pending_gaps() == []
 
 
@@ -400,7 +400,7 @@ def test_ask_user_tool_reports_a_policy_that_opens_a_question():
     state = _state([_req("R1", status="gap")])
 
     def ask(state, ctx):
-        state.user_questions.append({"requirement": "R1", "status": "open"})
+        state.user_questions.append(UserQuestion(id="Q1", requirement_id="R1", requirement_text="x", skill_key="x", prompt="?", status="open"))
 
     summary = registry.ask_user_tool(ask)(state, None)
     assert summary["waiting_on_user"] is True
@@ -800,7 +800,7 @@ def test_a_must_have_gap_goes_through_ask_user_and_the_default_policy_leaves_it_
     ask = steps[2]
     assert ask.error is None
     assert json.loads(ask.result_summary) == {"asked_about": ["R1"], "decided": {"R1": "leave_out"},
-                                              "waiting_on_user": False}
+                                              "questions": [], "waiting_on_user": False}
     assert res.state.budget.tool_calls == 7
 
 
@@ -817,7 +817,7 @@ def test_generate_before_ask_user_is_refused_naming_ask_user(db, monkeypatch):
 
 def test_a_policy_that_opens_a_question_leaves_the_run_waiting_on_the_user(db, monkeypatch):
     def ask(state, ctx):
-        state.user_questions.append({"requirement": "R1", "status": "open"})
+        state.user_questions.append(UserQuestion(id="Q1", requirement_id="R1", requirement_text="x", skill_key="x", prompt="?", status="open"))
 
     res, fakes, _ = _go(db, monkeypatch, fakes=Fakes(match=_GAP), gap_policy=ask)
     assert res.status == "waiting_user"

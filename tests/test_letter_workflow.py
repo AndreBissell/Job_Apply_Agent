@@ -26,7 +26,7 @@ from app.db import Base
 from app.llm.client import BudgetExceededError, DailyQuotaError
 from app.llm.letter import guardrails, workflow
 from app.llm.letter.runner import ToolError, finish_run, start_run
-from app.llm.letter.state import Check, Claim, JobInfo, LetterState, Requirement, UserDecision
+from app.llm.letter.state import Check, Claim, JobInfo, LetterState, Requirement, UserDecision, UserQuestion
 from app.models import (
     Experience,
     JobListing,
@@ -451,7 +451,7 @@ def test_gap_policy_that_posts_a_question_leaves_the_run_waiting_on_the_user(db,
     s = _plan_script(monkeypatch, {}, match={"R1": ("gap", [])})
 
     def ask(state, ctx):
-        state.user_questions.append({"requirement": "R1", "status": "open"})
+        state.user_questions.append(UserQuestion(id="Q1", requirement_id="R1", requirement_text="x", skill_key="x", prompt="?", status="open"))
 
     res = workflow.run_workflow(db, 5, 1, gap_policy=ask)
     assert res.status == "waiting_user"
@@ -551,15 +551,27 @@ def test_account_limits_stop_the_run_and_return_the_draft(db, monkeypatch, exc):
     assert _run_row(db, res.run_id).status == "budget_stopped"
 
 
-def test_an_exception_outside_any_tool_propagates_and_marks_the_run_failed(db, script):
+def test_a_gap_policy_that_raises_is_a_failed_ask_user_step(db, monkeypatch):
+    # Since Phase 7b the policy runs as the logged ask_user step (as in the agent), so a
+    # bug in it ends the run as failed with the error recorded instead of propagating.
+    s = _plan_script(monkeypatch, {}, match={"R1": ("gap", [])})
+
     def bad_policy(state, ctx):
         raise ValueError("policy bug")
 
-    with pytest.raises(ValueError, match="policy bug"):
-        workflow.run_workflow(db, 5, 1, gap_policy=bad_policy)
+    res = workflow.run_workflow(db, 5, 1, gap_policy=bad_policy)
+    assert res.status == "failed" and "policy bug" in res.stop_reason
     (run,) = db.scalars(select(LetterRun)).all()
     assert run.status == "failed" and run.finished_at is not None
-    assert "generate_letter" not in script.calls
+    step = db.scalars(select(LetterRunStep).where(LetterRunStep.tool == "ask_user")).one()
+    assert "policy bug" in step.error
+    assert "generate_letter" not in s.calls
+
+
+def test_the_gap_policy_is_not_called_without_a_pending_gap(db, script):
+    called = []
+    res = workflow.run_workflow(db, 5, 1, gap_policy=lambda state, ctx: called.append(1))
+    assert called == [] and res.status == "done"
 
 
 def test_missing_job_raises_and_creates_no_run(db, script):

@@ -32,6 +32,10 @@ from app.models import Experience, LetterRun, LetterRunStep, LlmUsage, Profile
 logger = logging.getLogger(__name__)
 
 
+# A tool: ``fn(state, ctx, **args) -> summary dict``.
+ToolFn = Callable[..., dict[str, Any]]
+
+
 class ToolError(RuntimeError):
     """A tool could not do its job. The message is written for the orchestrator."""
 
@@ -70,6 +74,12 @@ def start_run(db: Session, match_id: int, engine: str, state: LetterState) -> To
     run = LetterRun(match_id=match_id, engine=engine, status="running", state=state.model_dump_json())
     db.add(run)
     db.commit()
+    return context_for(db, run, state)
+
+
+def context_for(db: Session, run: LetterRun, state: LetterState) -> ToolContext:
+    """A context for an existing run, with the profile loaded fresh: after an ask_user
+    "Yes" the new profile rows must be citable evidence on resume."""
     profile = load_profile(db, state.profile_id)
     return ToolContext(db=db, run=run, profile=profile, index=ProfileIndex(profile))
 

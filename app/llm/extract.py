@@ -151,6 +151,18 @@ def infer_employer_name(job_id: int, session=None) -> str | None:
             db.close()
 
 
+def _count_gap_sightings(db, job_id: int) -> None:
+    """To-work-on list (plan §5.9): count this ad for every remembered "no" its
+    job_skills ask for. Code only; a failure here must never fail the extraction."""
+    try:
+        from app.gaps import record_scan_sightings  # local: app.gaps imports prefilter
+
+        record_scan_sightings(db, job_id)
+    except Exception:  # noqa: BLE001
+        db.rollback()
+        logger.exception("extract_job: gap sightings failed for job %s", job_id)
+
+
 def _as_session():
     return SessionLocal()
 
@@ -230,6 +242,7 @@ def extract_job(
         job.extracted_at = datetime.datetime.now(datetime.timezone.utc)
 
         db.commit()
+        _count_gap_sightings(db, job_id)
         logger.info(
             "extract_job: job %s done — %d hard / %d soft skills, %d quals, "
             "%d exp, seniority=%s",

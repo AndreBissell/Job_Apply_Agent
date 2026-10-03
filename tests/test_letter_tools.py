@@ -78,11 +78,11 @@ def _analysis(requirements=None, **extra) -> dict:
         "requirements": requirements
         or [
             {"n": 1, "text": "Build REST APIs", "importance": "essential", "letter_role": "headline",
-             "theme": "APIs", "implied_by": []},
+             "theme": "APIs", "implied_by": [], "skill": ""},
             {"n": 2, "text": "CI/CD pipelines", "importance": "important", "letter_role": "implied",
-             "theme": "Operations", "implied_by": [1]},
+             "theme": "Operations", "implied_by": [1], "skill": ""},
             {"n": 3, "text": "Australian work rights", "importance": "essential",
-             "letter_role": "not_for_letter", "theme": "Eligibility", "implied_by": []},
+             "letter_role": "not_for_letter", "theme": "Eligibility", "implied_by": [], "skill": ""},
         ],
         "tone": "technical",
         "keywords": ["logistics"],
@@ -124,9 +124,9 @@ def _fresh(db) -> tuple[LetterState, runner.ToolContext]:
 # ---------------------------------------------------------------------------
 # _postprocess
 # ---------------------------------------------------------------------------
-def _req(n, text, importance="important", role="mention", theme="T", implied_by=()):
+def _req(n, text, importance="important", role="mention", theme="T", implied_by=(), skill=""):
     return {"n": n, "text": text, "importance": importance, "letter_role": role,
-            "theme": theme, "implied_by": list(implied_by)}
+            "theme": theme, "implied_by": list(implied_by), "skill": skill}
 
 
 def _post(reqs):

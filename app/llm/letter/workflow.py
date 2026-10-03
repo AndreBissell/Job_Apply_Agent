@@ -6,7 +6,7 @@ same tools through the same ``runner.execute_tool`` and obeys the same
 ``guardrails`` as the agent will, so the two are compared on the order of steps
 alone:
 
-    analyze_job -> match_profile -> gap policy -> generate_letter
+    analyze_job -> match_profile -> [ask_user, if a must-have gap is pending] -> generate_letter
       -> check_claims, check_requirements, style_lint
       -> while a check failed (at most MAX_REVISIONS times):
              revise_letter (always the LATEST draft) -> the three checks again
@@ -26,8 +26,10 @@ from sqlalchemy.orm import Session
 
 from app.llm.client import BudgetExceededError, DailyQuotaError
 from app.llm.letter import guardrails
-from app.llm.letter.outcome import GapPolicy, LetterResult, Stop, conclude, leave_out_gaps, open_run
-from app.llm.letter.runner import execute_tool, finish_run
+from app.llm.letter.gap_policy import ask_user_tool
+from app.llm.letter.outcome import GapPolicy, LetterResult, Stop, conclude, leave_out_gaps, open_run, reopen_run
+from app.llm.letter.runner import ToolContext, execute_tool, finish_run
+from app.llm.letter.state import LetterState
 from app.llm.letter.tools.analyze_job import analyze_job
 from app.llm.letter.tools.check_claims import check_claims
 from app.llm.letter.tools.check_requirements import check_requirements
@@ -68,7 +70,24 @@ def run_workflow(
     every other way a run can end is a ``LetterResult``.
     """
     state, ctx = open_run(db, job_id, profile_id, engine)
+    return _drive(state, ctx, gap_policy, max_revisions)
 
+
+def resume_workflow(
+    db: Session,
+    run_id: int,
+    *,
+    gap_policy: GapPolicy = leave_out_gaps,
+    max_revisions: int = MAX_REVISIONS,
+) -> LetterResult:
+    """Continue a run the user has answered every ask_user question for. It skips what
+    is already done: analysis, and the matching of every requirement the user did not
+    add rows for (those were reset to ``unknown`` and are re-matched)."""
+    state, ctx = reopen_run(db, run_id)
+    return _drive(state, ctx, gap_policy, max_revisions)
+
+
+def _drive(state: LetterState, ctx: ToolContext, gap_policy: GapPolicy, max_revisions: int) -> LetterResult:
     def step(name: str, fn: Callable[..., dict[str, Any]]) -> None:
         limit = state.budget_exceeded()
         if limit:
@@ -83,14 +102,20 @@ def run_workflow(
 
     status, reason, account = "done", None, None
     try:
-        step("analyze_job", analyze_job)
-        step("match_profile", match_profile)
-        gap_policy(state, ctx)
+        if not state.requirements:
+            step("analyze_job", analyze_job)
+        if any(r.status == "unknown" for r in state.requirements):
+            step("match_profile", match_profile)
+        if state.pending_gaps():
+            step("ask_user", ask_user_tool(gap_policy))
+        if state.waiting_on_user():
+            raise Stop("waiting_user", "questions sent to the user")
         blocked = guardrails.drafting_blocked(state)
         if blocked:
-            raise Stop("waiting_user" if state.waiting_on_user() else "failed", blocked)
-        step("generate_letter", generate_letter)
-        run_checks()
+            raise Stop("failed", blocked)
+        if not state.drafts:
+            step("generate_letter", generate_letter)
+            run_checks()
         revisions = 0
         while guardrails.can_finish(state) is not None:
             if revisions >= max_revisions:

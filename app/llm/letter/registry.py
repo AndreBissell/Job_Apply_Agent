@@ -18,12 +18,13 @@ the run's state, which the orchestrator never reads in full.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Callable
 
 from app.llm.client import ToolSpec
 from app.llm.letter import guardrails
 from app.llm.letter.outcome import GapPolicy
-from app.llm.letter.runner import ToolContext
+from app.llm.letter.gap_policy import ask_user_tool
+from app.llm.letter.runner import ToolFn
 from app.llm.letter.state import LetterState
 from app.llm.letter.tools.analyze_job import analyze_job
 from app.llm.letter.tools.check_claims import check_claims
@@ -33,7 +34,6 @@ from app.llm.letter.tools.match_profile import match_profile
 from app.llm.letter.tools.revise import revise_letter
 from app.llm.letter.tools.style_lint import style_lint
 
-ToolFn = Callable[..., dict[str, Any]]
 Gate = Callable[[LetterState], "str | None"]
 
 FINISH = "finish"
@@ -96,27 +96,6 @@ def _check_gate(tool: str) -> Gate:
 
 
 # ---------------------------------------------------------------------------
-# ask_user: the gap policy, as a tool
-# ---------------------------------------------------------------------------
-def ask_user_tool(gap_policy: GapPolicy) -> ToolFn:
-    """Wrap the run's gap policy as the ``ask_user`` tool. The workflow calls the same
-    policy straight after match_profile, so both engines decide gaps the same way.
-    In 7a the policy is ``leave_out_gaps``; 7b's posts questions and pauses the run."""
-
-    def ask_user(state: LetterState, ctx: ToolContext) -> dict[str, Any]:
-        pending = [r.id for r in state.pending_gaps()]
-        gap_policy(state, ctx)
-        decided = {
-            r.id: r.user_decision.choice
-            for r in state.requirements
-            if r.id in pending and r.user_decision is not None
-        }
-        return {"asked_about": pending, "decided": decided, "waiting_on_user": state.waiting_on_user()}
-
-    return ask_user
-
-
-# ---------------------------------------------------------------------------
 # Model-facing descriptions
 # ---------------------------------------------------------------------------
 _DESCRIPTIONS = {
@@ -127,18 +106,21 @@ _DESCRIPTIONS = {
         "already shows it."
     ),
     "match_profile": (
-        "Match every requirement against the candidate's profile and mark it supported, partial "
-        "or gap, with evidence pointers. Use it once, right after analyze_job and before any "
-        "drafting. Do not use it to change a verdict you dislike; it runs again only after the "
-        "user adds profile rows. A skill the profile only lists (no experience entry describing "
-        "its use) is at most partial evidence."
+        "Match requirements against the candidate's profile and mark each supported, partial "
+        "or gap, with evidence pointers. Use it right after analyze_job and before any drafting. "
+        "Use it again only when requirements show as 'unknown' after the run resumed (the user "
+        "added profile rows for them); then only those are judged. Do not use it to change a "
+        "verdict you dislike. A skill the profile only lists (no experience entry describing its "
+        "use) is at most partial evidence. Gaps the user said 'no' to on earlier ads are left "
+        "out automatically (shown as 'user: leave_out (remembered)')."
     ),
     "ask_user": (
         "Ask the user about every must-have requirement marked 'needs a user decision' (an "
         "essential requirement the profile shows no evidence for), all in one batch. Use it after "
         "match_profile and before generate_letter, whenever such a gap exists: drafting is "
-        "refused until each one has a decision. Do not use it when no requirement needs a user "
-        "decision, and never write around a gap instead of asking."
+        "refused until each one has a decision. The run then pauses until the user answers and "
+        "resumes later with their decisions in the state. Do not use it when no requirement "
+        "needs a user decision, and never write around a gap instead of asking."
     ),
     "generate_letter": (
         "Write draft 1 of the cover letter from the supported evidence, with the style guide and "

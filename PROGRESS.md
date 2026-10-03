@@ -5,6 +5,24 @@ one block per milestone.
 
 ---
 
+## 2026-10-03 — Cover-letter Phase 7b: ask_user, remembered "no"s, the to-work-on list — DONE ✅ (API only)
+
+**Goal:** a must-have gap asks the user once instead of being silently left out; every
+"No" is remembered and counted, so the skills ads keep asking for rise to the top.
+
+**Built:** migration `f6a9c3d8e217` (`gap_decisions`, `gap_sightings`, `origin` on
+profile rows); `app/gaps.py`; `app/llm/letter/gap_policy.py`, `answers.py` (Yes ->
+proposed rows -> confirm), `engines.py`, resume paths for both engines (run status
+`answered`); `analyze_job` `skill` field (v3); API `app/api/letters.py`;
+`scripts/gap_report.py`. Scan sightings after extraction; origin carry-over and
+auto-clear on profile save. 148 new tests (680 total), written by a Sonnet subagent to
+a spec. Live prompt smoke $0.0135.
+
+**Not verified:** the sidebar question card and the idle-loop resume (Phase 8), and an
+ask_user on a real ad (no eval ad has a pending must-have gap).
+
+---
+
 ## 2026-10-03 — Cover-letter Phase 7a: the agent, compared with the workflow — DONE ✅
 
 **Goal:** answer the plan's main question: does a model choosing the steps beat the

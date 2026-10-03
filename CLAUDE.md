@@ -333,8 +333,20 @@ else); USER DECISION: `letter_engine` defaults to `agent` (agent experience for 
 next job; ~$0.26/month at 20 letters). The workflow stays as the fallback; build 7b/7c
 agent-first, with the workflow still working through the same gap-policy hook. Thinking tokens are
 71% of a letter's cost; the Pro draft call is 61% (evals/results/cost-*.md).
-Next: Phase 7b (ask_user + remembered "no"s + the to-work-on list; schema doc first),
-then the writer change as workflow-v3 (apply evidence to the employer's work, no stock
+Phase 7b is DONE (2026-10-03, API only): migration `f6a9c3d8e217` (`gap_decisions`,
+`gap_sightings`, an `origin` column on experiences/skills/qualifications), `app/gaps.py`
+(remembered "no"s + the to-work-on list, code only), `app/llm/letter/gap_policy.py`
+(`apply_remembered` runs at the end of `match_profile`; `ask_user_gaps` is the production
+policy, `leave_out_gaps` stays for evals), `answers.py` (No / Yes -> proposed rows on
+small -> one-click confirm, Q11; rows tagged `origin='ask_user'`, Q12), run status
+`answered`, `resume_workflow` / `resume_agent` / `engines.py` (`run_letter`,
+`resume_letter`, `answered_runs`), `analyze_job` `skill` field (ANALYSIS_VERSION 3, so
+cached checklists are rebuilt), API `app/api/letters.py` (/letter-runs/waiting, answers,
+confirm, /gaps/to-work-on, /gaps/{id}/clear), `scripts/gap_report.py` ->
+reports/to-work-on.md (gitignored). PUT /profile-ui/data carries `origin` over by natural
+key (the editors don't send it) and auto-clears matching "no"s. NOT built/verified: the
+sidebar question card and the idle loop resuming `answered` runs (both Phase 8).
+Next: the writer change as workflow-v3 (apply evidence to the employer's work, no stock
 close; user decision: after 7a), then 7c only if the user asks. Known: Gemini implicit
 caching never hits (cached_tokens 0 on every call), the writer still copies one stock
 line from the writing sample (future_work/voice-toggle-and-comparison.md), and the

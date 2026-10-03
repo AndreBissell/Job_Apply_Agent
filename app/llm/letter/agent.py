@@ -30,10 +30,13 @@ from sqlalchemy.orm import Session
 
 from app.llm.client import BudgetExceededError, DailyQuotaError, LLMError, complete_tools
 from app.llm.letter import guardrails
-from app.llm.letter.outcome import GapPolicy, LetterResult, Stop, conclude, leave_out_gaps, open_run
+from sqlalchemy import select
+
+from app.llm.letter.outcome import GapPolicy, LetterResult, Stop, conclude, leave_out_gaps, open_run, reopen_run
 from app.llm.letter.registry import FINISH, build_registry
-from app.llm.letter.runner import execute_tool, finish_run, persist, record_step
+from app.llm.letter.runner import REFUSED, ToolContext, execute_tool, finish_run, persist, record_step
 from app.llm.letter.state import LetterState
+from app.models import LetterRunStep
 
 ENGINE = "agent"
 ORCHESTRATOR_TIER = "mid"
@@ -55,7 +58,9 @@ the run at a limit and hands the user the best draft so far.
 How to work:
 - Start with analyze_job, then match_profile.
 - If any requirement shows "needs a user decision", call ask_user before drafting. \
-Never resolve a gap by writing around it.
+Never resolve a gap by writing around it. ask_user pauses the run until the user \
+answers. When it resumes, requirements the user added experience for show as \
+"unknown": call match_profile again (it judges only those), then draft.
 - generate_letter writes draft 1 only. After every draft, run check_claims, \
 check_requirements and style_lint on it. Checks belong to one draft.
 - If a check failed, call revise_letter: it fixes only the failed checks' issues. \
@@ -101,10 +106,62 @@ def run_agent(
     is no job/match to run on; every other ending is a ``LetterResult``.
     """
     state, ctx = open_run(db, job_id, profile_id, engine)
+    return _drive(state, ctx, gap_policy, tier, max_refusals, [], "none yet: this is the first turn")
+
+
+def resume_agent(
+    db: Session,
+    run_id: int,
+    *,
+    gap_policy: GapPolicy = leave_out_gaps,
+    tier: str = ORCHESTRATOR_TIER,
+    max_refusals: int = MAX_REFUSALS,
+) -> LetterResult:
+    """Continue a run the user has answered every ask_user question for. Still
+    stateless: the orchestrator gets the steps taken so far (from letter_run_steps)
+    and, as its last result, what the user decided."""
+    state, ctx = reopen_run(db, run_id)
+    return _drive(state, ctx, gap_policy, tier, max_refusals, _past_steps(ctx), _resume_note(state))
+
+
+def _past_steps(ctx: ToolContext) -> list[str]:
+    """The run's earlier tool calls, as the turn prompt lists them. User answers and
+    confirms are not tool calls, so they are left out."""
+    rows = ctx.db.execute(
+        select(LetterRunStep.tool, LetterRunStep.error)
+        .where(LetterRunStep.run_id == ctx.run.id)
+        .order_by(LetterRunStep.seq)
+    )
+    return [
+        f"{tool}(refused)" if (error or "").startswith(REFUSED) else tool
+        for tool, error in rows
+        if not tool.startswith("user_")
+    ]
+
+
+def _resume_note(state: LetterState) -> str:
+    decided = [
+        f"{r.id} {r.user_decision.choice}" for r in state.requirements
+        if r.user_decision is not None and not r.user_decision.remembered
+    ]
+    rematch = [r.id for r in state.requirements if r.status == "unknown"]
+    note = f"the run resumed after the user answered ask_user ({', '.join(decided) or 'no decisions'})"
+    if rematch:
+        note += f"; {', '.join(rematch)} have new profile rows and are unmatched: call match_profile"
+    return note
+
+
+def _drive(
+    state: LetterState,
+    ctx: ToolContext,
+    gap_policy: GapPolicy,
+    tier: str,
+    max_refusals: int,
+    steps: list[str],
+    last: str,
+) -> LetterResult:
     tools = build_registry(gap_policy)
     specs = [t.spec for t in tools.values()]
-    steps: list[str] = []
-    last = "none yet: this is the first turn"
     refusals = 0
 
     def refuse(name: str, args: dict[str, Any], reason: str) -> str:
