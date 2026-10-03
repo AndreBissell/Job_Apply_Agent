@@ -5,6 +5,27 @@ one block per milestone.
 
 ---
 
+## 2026-10-03 — Cover-letter Phase 7a: the agent, compared with the workflow — DONE ✅
+
+**Goal:** answer the plan's main question: does a model choosing the steps beat the
+fixed workflow, on the same tools, guardrails and writer?
+
+**Built:** `app/llm/letter/registry.py` (tools + model-facing specs + guardrail
+gates), `agent.py` (the §5.5 orchestrator loop, stateless turns, code-enforced
+budget and finish), `outcome.py` (the run start/end shared with the workflow).
+`letter_lab.py run --engine agent`, an agent section in `loop-report`, and
+`cost-report` (where each letter's money and time go). 67 new tests (531 total),
+written by a Sonnet subagent to a spec.
+
+**Result (`agent-v1`, 15 ads):** $0.178/letter (orchestrator $0.013 of it), 182 s
+(orchestrator 47 s), 15/15 clean, 0 refusals, and the same tool path as the
+workflow on every job. Blind Opus panel opus-v3 against workflow-v2: musts 15 vs 15,
+claims 12 vs 13, detail 12 vs 12, would_send 0 vs 0; the panel re-graded workflow-v2
+at 57/60. **Recommendation: keep the workflow as the default engine.**
+`evals/results/grading-opus-v3.md`, `agent-v1-loop.md`, `cost-workflow-v2-vs-agent-v1.md`.
+
+---
+
 ## 2026-10-03 — Cover-letter Phase 6: fixed workflow (the baseline) — DONE ✅
 
 **Goal:** turn Phase 5's tools into a fixed loop, the baseline the Phase 7

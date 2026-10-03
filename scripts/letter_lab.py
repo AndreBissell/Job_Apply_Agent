@@ -1100,6 +1100,97 @@ def cmd_loop_report(args) -> int:
 
 
 # ---------------------------------------------------------------------------
+# 4c. cost-report: where a run's money and time go, per task
+# ---------------------------------------------------------------------------
+# Tool step -> the llm_usage task its LLM calls are logged under (style_lint makes none).
+_STEP_TASK = {"analyze_job": "analyze_job", "match_profile": "match_profile", "generate_letter": "generate_letter",
+              "revise_letter": "revise_letter", "check_claims": "check_claims",
+              "check_requirements": "check_requirements"}
+
+
+def _cost_rows(run_dir: Path) -> tuple[list[dict], dict]:
+    """Per llm_usage task: calls, tokens, cost and seconds, summed over the run's letters."""
+    from sqlalchemy import func, select
+
+    from app.db import SessionLocal
+    from app.models import LetterRunStep, LlmUsage
+
+    meta = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+    ok = [r for r in meta["results"] if "error" not in r and r.get("letter_run_id")]
+    run_ids = [r["letter_run_id"] for r in ok]
+    with SessionLocal() as db:
+        usage = db.execute(
+            select(LlmUsage.task, LlmUsage.tier, LlmUsage.model, func.count(),
+                   func.sum(LlmUsage.input_tokens), func.sum(LlmUsage.output_tokens),
+                   func.sum(LlmUsage.thinking_tokens), func.sum(LlmUsage.cost_usd), func.sum(LlmUsage.duration_ms))
+            .where(LlmUsage.run_id.in_(run_ids)).group_by(LlmUsage.task, LlmUsage.tier, LlmUsage.model)
+        ).all()
+        steps = db.execute(
+            select(LetterRunStep.tool, func.count(), func.sum(LetterRunStep.duration_ms))
+            .where(LetterRunStep.run_id.in_(run_ids), LetterRunStep.error.is_(None))
+            .group_by(LetterRunStep.tool)
+        ).all()
+    rows = [{"task": t, "tier": tier, "model": model, "calls": n, "in": int(i or 0), "out": int(o or 0),
+             "think": int(th or 0), "cost": float(c or 0), "ms": int(ms or 0)}
+            for t, tier, model, n, i, o, th, c, ms in usage]
+    step_ms = {tool: (n, int(ms or 0)) for tool, n, ms in steps}
+    totals = {"letters": len(ok), "wall_s": sum(r["seconds"] for r in ok), "step_ms": step_ms}
+    return rows, totals
+
+
+def cmd_cost_report(args) -> int:
+    lines = [
+        "# Where the money and time go", "",
+        "Per task, averaged per letter, from `llm_usage` (every Gemini call: tokens, estimated cost, call time) "
+        "and `letter_run_steps` (each tool's time, including code-only work). Cost is the estimate from "
+        "`client.PRICES`; Cloud Billing is the authority. Thinking tokens bill at the output price.", "",
+    ]
+    for run_id in args.run_ids:
+        run_dir = RUNS_DIR / run_id
+        if not (run_dir / "run.json").exists():
+            print(f"No run {run_id}")
+            return 1
+        rows, t = _cost_rows(run_dir)
+        n = t["letters"] or 1
+        total_cost = sum(r["cost"] for r in rows) or 1e-9
+        rows.sort(key=lambda r: -r["cost"])
+        lines += [
+            f"## `{run_id}` ({t['letters']} letters)", "",
+            "| Task | Model | Calls / letter | Input tok / call | Output tok / call | Thinking tok / call | "
+            "$ / letter | Share of cost | Seconds / call | Seconds / letter |",
+            "|---|---|---|---|---|---|---|---|---|---|",
+        ]
+        for r in rows:
+            c = r["calls"] or 1
+            lines.append(
+                f"| {r['task']} | {r['model']} ({r['tier']}) | {r['calls'] / n:.1f} | {r['in'] // c:,} | "
+                f"{r['out'] // c:,} | {r['think'] // c:,} | ${r['cost'] / n:.4f} | {r['cost'] / total_cost:.0%} | "
+                f"{r['ms'] / c / 1000:.1f} | {r['ms'] / n / 1000:.1f} |")
+        llm_s = sum(r["ms"] for r in rows) / 1000 / n
+        style = t["step_ms"].get("style_lint", (0, 0))
+        steps_s = sum(ms for _, ms in t["step_ms"].values()) / 1000 / n
+        orch_s = sum(r["ms"] for r in rows if r["task"] == "orchestrate") / 1000 / n
+        wall = t["wall_s"] / n
+        lines += [
+            "",
+            "| Per letter | |", "|---|---|",
+            f"| Total cost | ${sum(r['cost'] for r in rows) / n:.4f} |",
+            f"| Wall-clock time | {wall:.0f}s |",
+            f"| Inside Gemini calls | {llm_s:.0f}s ({llm_s / wall if wall else 0:.0%}) |",
+            f"| Inside tool steps (LLM + code) | {steps_s:.0f}s; style_lint (code only) "
+            f"{style[1] / max(style[0], 1):.0f} ms per call |",
+            f"| Orchestrator calls | {orch_s:.0f}s |" if orch_s else "| Orchestrator calls | none (fixed order) |",
+            f"| Everything else (DB writes, throttle waits) | {max(wall - steps_s - orch_s, 0):.0f}s |",
+            "",
+        ]
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    out = RESULTS_DIR / f"cost-{'-vs-'.join(args.run_ids)}.md"
+    out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"Wrote {out.relative_to(ROOT)}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # 5. analyze (Phase 3): requirements checklist + evidence map, for hand-checking
 # ---------------------------------------------------------------------------
 _ROLE_TITLES = {
@@ -1546,6 +1637,10 @@ def main() -> int:
     p.add_argument("run_id", help="a `run --engine tools|workflow|agent` run")
     p.add_argument("--against", help="another tools/workflow run to compare on the jobs both ran (e.g. tools-v1)")
     p.set_defaults(fn=cmd_loop_report)
+
+    p = sub.add_parser("cost-report", help="per-task cost, tokens and time -> evals/results/cost-<runs>.md")
+    p.add_argument("run_ids", nargs="+", help="tools/workflow/agent runs (they need letter_run_id rows in eval.db)")
+    p.set_defaults(fn=cmd_cost_report)
 
     p = sub.add_parser("analyze", help="run analyze_job + match_profile on the set; write a hand-check pack")
     p.add_argument("--label", help="run id (default: analysis-<timestamp>)")

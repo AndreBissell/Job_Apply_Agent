@@ -300,7 +300,7 @@ passed > fewest missing must-covers > style passed > later) with `open_issues`, 
 `clean` only if all 3 checks passed on it; `letter_runs.final_draft_version` is the
 draft handed back. `account_limit` is set when the USD guard / daily quota stopped it
 (stop the batch). The gap policy is the Phase 7 hook for `ask_user` (open questions ->
-`waiting_user`). registry.py waits for Phase 7. Eval set: 15 ads (8 at 85+, 4 at 75,
+`waiting_user`). Eval set: 15 ads (8 at 85+, 4 at 75,
 3 below; eval.db scores, which moved up to 50 points from real.db's), and NONE of them
 triggers a pending must-have gap, so ask_user never fires on it.
 Follow-up done the same day (commit 907fe81): a must-have backed only by listed
@@ -316,9 +316,27 @@ Panel opus-v2, v2 vs v1: claims 13 vs 6, musts 14 vs 15, detail 12 vs 13, would_
 on held-out letters). Every v2 would_send fail: body paragraphs recite the profile
 without applying it to this employer's work, plus generic closes; that is the next
 writer lever. Eval spend 2026-10-03 is in the plan's Decision log.
-Next up is Phase 7 (agent + ask_user + to-work-on list). Known: Gemini implicit
-caching never hits (cached_tokens 0 on every call), and the writer still copies one
-stock line from the writing sample (future_work/voice-toggle-and-comparison.md).
+Phase 7 is split into 7a / 7b / 7c, each committed, with the user's go-ahead between.
+Phase 7a is DONE (2026-10-03): `app/llm/letter/registry.py` (tool -> function +
+model-facing ToolSpec + a guardrail gate; descriptions say when NOT to use each tool),
+`agent.py` (`run_agent`: stateless mid-tier turns on `complete_tools`; refusals cost
+no tool call and go back as the next turn's result, capped at 4; finish is code;
+orchestrator spend counts towards the run budget), and `outcome.py` (`open_run` /
+`conclude` / `LetterResult` / `GapPolicy` / `leave_out_gaps`), now shared by the
+workflow so the engines end a run in one place. `letter_lab.py run --engine agent`,
+`loop-report` (agent path/refusals/overhead) and the new `cost-report` (per-task cost,
+tokens and time). Result `agent-v1`: $0.178/letter, 182 s, 15/15 clean, the SAME tool
+path as the workflow on 15/15 jobs, 0 refusals; panel opus-v3 (re-graded workflow-v2
+at 57/60): musts 15 vs 15, claims 12 vs 13, detail 12 vs 12, would_send 0 vs 0.
+Recommendation: `letter_engine` defaults to `workflow` (agency adds +$0.013 and
++40 s/letter and nothing else when the guardrails fix the order). Thinking tokens are
+71% of a letter's cost; the Pro draft call is 61% (evals/results/cost-*.md).
+Next: Phase 7b (ask_user + remembered "no"s + the to-work-on list; schema doc first),
+then the writer change as workflow-v3 (apply evidence to the employer's work, no stock
+close; user decision: after 7a), then 7c only if the user asks. Known: Gemini implicit
+caching never hits (cached_tokens 0 on every call), the writer still copies one stock
+line from the writing sample (future_work/voice-toggle-and-comparison.md), and the
+claims judge passes "daily" frequency claims and "apply my skills in X" on a listing.
 
 Parked fast-follows. Both need a live Seek session rather than guesswork:
 1. §5.2's apply-flow detection (see the extension-revamp entry below).
