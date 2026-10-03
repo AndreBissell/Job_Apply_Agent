@@ -13,12 +13,14 @@
     /* Header */
     header {
       padding: 10px 14px; background: #fff; border-bottom: 1px solid #e5e7eb;
-      display: flex; align-items: center; justify-content: space-between;
+      display: flex; align-items: center; justify-content: space-between; flex-wrap: nowrap;
       position: sticky; top: 0; z-index: 10;
     }
-    header h1 { font-size: 14px; margin: 0; }
+    header h1 { font-size: 14px; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
     #hdr-jobs-btns { display: flex; gap: 6px; }
-    .hdr-title { display: flex; align-items: center; gap: 8px; }
+    .hdr-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+    .hdr-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .hdr-title #env-pill { flex-shrink: 0; }
 
     /* Environment switch (real.db vs the fake test profile). Deliberately loud
        in TEST mode — the header turns orange so it's never mistaken for real. */
@@ -29,6 +31,19 @@
     }
     body.env-test header { background: #fff7ed; border-bottom-color: #fb923c; }
     body.env-test #env-pill { color: #c2410c; background: #ffedd5; border-color: #fb923c; }
+
+    /* Zoom controls: live in the header (not #hdr-jobs-btns, which is hidden on the
+       Applied/Profile tabs) so they stay reachable everywhere. */
+    #zoom-ctrls { display: flex; gap: 4px; }
+    #zoom-ctrls button {
+      width: 22px; height: 22px; padding: 0; border: 1px solid #d1d5db; border-radius: 4px;
+      background: #fff; font-size: 14px; font-weight: 700; line-height: 1;
+      display: flex; align-items: center; justify-content: center; cursor: pointer;
+    }
+    #zoom-ctrls button:hover:not(:disabled) { background: #f0f4fb; }
+    #zoom-ctrls button:disabled { opacity: .4; cursor: default; }
+    body.env-test #zoom-ctrls button { background: #fff; border-color: #fdba74; }
+    body.env-test #zoom-ctrls button:hover:not(:disabled) { background: #ffedd5; }
 
     /* Tabs */
     nav#tabs {
@@ -198,7 +213,28 @@
       50%      { box-shadow: 0 0 0 1px rgba(245, 197, 24, 0.9),  0 2px 20px rgba(245, 180, 0, 0.7); }
     }
     @media (prefers-reduced-motion: reduce) {
-      ul#job-list li[data-tier="gold"], ul#job-list li[data-tier="gold"]::after { animation: none; }
+      ul#job-list li[data-tier="gold"], ul#job-list li[data-tier="gold"]::after,
+      ul#job-list li[data-tier="blue"]::after { animation: none; }
+    }
+
+    /* 90-94: cool blue card. A faint, slow light band. Quieter than gold:
+       no glow pulse, no star, longer pause between sweeps. */
+    ul#job-list li[data-tier="blue"] {
+      position: relative; overflow: hidden;
+      background: linear-gradient(135deg, #f0fdff 0%, #e3f8fd 55%, #d6f3fb 100%);
+      box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.35), 0 1px 8px rgba(14, 165, 233, 0.18);
+    }
+    ul#job-list li[data-tier="blue"]:hover { background: linear-gradient(135deg, #f5feff 0%, #e9fafe 55%, #ddf5fc 100%); }
+    ul#job-list li[data-tier="blue"]::after {
+      content: ""; position: absolute; inset: 0; pointer-events: none;
+      background: linear-gradient(105deg, transparent 40%, rgba(255, 255, 255, 0.5) 50%, transparent 60%);
+      transform: translateX(-120%);
+      animation: blue-sheen 7s ease-in-out infinite;
+    }
+    ul#job-list li[data-tier="blue"] .score { background: linear-gradient(135deg, #22d3ee, #0ea5e9); color: #fff; }
+    @keyframes blue-sheen {
+      0%, 70% { transform: translateX(-120%); }
+      100%    { transform: translateX(120%); }
     }
     .job-preview { font-size: 12px; color: #374151; margin-top: 5px; }
     .job-preview .chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
@@ -229,32 +265,28 @@
        grows its neighbour, which keeps the rows tidy. Only the top/right/bottom
        borders are set on cards so the tier colour's 4px border-left (above) is
        left alone. */
-    @media (min-width: 640px) {
-      ul#job-list, ul#applied-list {
-        display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 8px; padding: 8px; align-items: stretch;
-      }
-      ul#job-list li, ul#applied-list li {
-        min-width: 0; border-radius: 8px;
-        border-top: 1px solid #eef0f3; border-right: 1px solid #eef0f3;
-        border-bottom: 1px solid #eef0f3;
-      }
-      ul#job-list li.section-header, ul#job-list li.fold { grid-column: 1 / -1; border-radius: 0; }
-      /* Restore the header rules the card border above would otherwise outrank. */
-      ul#job-list li.section-header { border-right: none; border-bottom: none; border-top: none; }
-      ul#job-list li.section-header.ready { border-top: 2px solid #059669; }
-      ul#job-list li.section-header.waiting { border-top: 2px solid #d1d5db; }
-      ul#job-list li.section-header:first-child { border-top: none; }
+    body.w-wide ul#job-list, body.w-wide ul#applied-list {
+      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px; padding: 8px; align-items: stretch;
     }
+    body.w-wide ul#job-list li, body.w-wide ul#applied-list li {
+      min-width: 0; border-radius: 8px;
+      border-top: 1px solid #eef0f3; border-right: 1px solid #eef0f3;
+      border-bottom: 1px solid #eef0f3;
+    }
+    body.w-wide ul#job-list li.section-header, body.w-wide ul#job-list li.fold { grid-column: 1 / -1; border-radius: 0; }
+    /* Restore the header rules the card border above would otherwise outrank. */
+    body.w-wide ul#job-list li.section-header { border-right: none; border-bottom: none; border-top: none; }
+    body.w-wide ul#job-list li.section-header.ready { border-top: 2px solid #059669; }
+    body.w-wide ul#job-list li.section-header.waiting { border-top: 2px solid #d1d5db; }
+    body.w-wide ul#job-list li.section-header:first-child { border-top: none; }
 
     /* Wider panel (dragged out): two-column meta layout on blue cards */
-    @media (min-width: 420px) {
-      ul#job-list li[data-tier="blue"] .job-row,
-      ul#job-list li[data-tier="gold"] .job-row { flex-wrap: wrap; }
-      ul#job-list li[data-tier="blue"] .job-meta,
-      ul#job-list li[data-tier="gold"] .job-meta {
-        display: flex; gap: 10px; flex: 1 0 100%; margin-top: 4px;
-      }
+    body.w-mid ul#job-list li[data-tier="blue"] .job-row,
+    body.w-mid ul#job-list li[data-tier="gold"] .job-row { flex-wrap: wrap; }
+    body.w-mid ul#job-list li[data-tier="blue"] .job-meta,
+    body.w-mid ul#job-list li[data-tier="gold"] .job-meta {
+      display: flex; gap: 10px; flex: 1 0 100%; margin-top: 4px;
     }
 
     /* ── Applied tab ──────────────────────────────────────── */
@@ -416,9 +448,15 @@
       <h1>Seek Job Assistant</h1>
       <button id="env-pill" title="Click to switch between your real profile and the test profile"></button>
     </div>
-    <div id="hdr-jobs-btns">
-      <button class="btn" id="scan-btn">Scan Page</button>
-      <button class="btn" id="refresh-btn">Refresh</button>
+    <div class="hdr-right">
+      <div id="hdr-jobs-btns">
+        <button class="btn" id="scan-btn">Scan Page</button>
+        <button class="btn" id="refresh-btn">Refresh</button>
+      </div>
+      <div id="zoom-ctrls">
+        <button id="zoom-out" title="Smaller">&#8722;</button>
+        <button id="zoom-in" title="Larger">+</button>
+      </div>
     </div>
   </header>
 
