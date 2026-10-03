@@ -277,7 +277,7 @@ summary/experience text), and `app/llm/letter/tools/style_lint.py` (code-only
 check; rubric.py now imports its helpers; one em dash allowed, same as the eval).
 `cover_letter.py` got an eval-only `styled=True` path (`letter_lab.py run --engine
 oneshot-styled`); production letters are unchanged. Early result in
-evals/results/styled-oneshot.md; the user's own grades decide whether it helped.
+evals/results/styled-oneshot.md; grading it is deferred to future_work/voice-toggle-and-comparison.md (voice on/off, compared on the finished agent).
 The real profile's writing_sample is set (921 words, 3 samples). Next up is Phase 5
 (draft + check tools). Grow the eval set (only 9 ads, none at 75-84) before Phase 6
 compares engines.

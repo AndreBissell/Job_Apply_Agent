@@ -8,6 +8,7 @@ mechanical items, you grade the judgement items in a CSV.
     python scripts/letter_lab.py snapshot          # 1. copy ads from real.db + app.db into evals/jobs/
     python scripts/letter_lab.py prepare           # 2. build evals/eval.db, extract + score every ad, pick the set
     python scripts/letter_lab.py run               # 3. write one letter per set job (engine: oneshot)
+    python scripts/letter_lab.py read <run> [--against <run>]   # all letters in one readable letters.md
     #    ... fill in evals/runs/<run>/grades.csv (Y/N per column) ...
     python scripts/letter_lab.py report <run>      # 4. merge code checks + your grades -> evals/results/<run>.md
 
@@ -33,6 +34,7 @@ import json
 import os
 import sqlite3
 import sys
+import textwrap
 import time
 from pathlib import Path
 
@@ -337,7 +339,8 @@ def cmd_run(args) -> int:
         for r in results:
             if "error" not in r:
                 w.writerow([r["key"], r["title"], *[""] * len(HUMAN_ITEMS), ""])
-    print(f"\nLetters: {run_dir.relative_to(ROOT)}/letters/")
+    _write_letters_md(run_dir, meta)
+    print(f"\nRead them: {(run_dir / 'letters.md').relative_to(ROOT)}")
     print(f"Grade them: fill Y/N in {(run_dir / 'grades.csv').relative_to(ROOT)} (see evals/rubric.md),")
     print(f"then: python scripts/letter_lab.py report {run_id}")
     return 0
@@ -346,6 +349,79 @@ def cmd_run(args) -> int:
 # ---------------------------------------------------------------------------
 # 4. report
 # ---------------------------------------------------------------------------
+def _quote(text: str, width: int = 88) -> list[str]:
+    """A letter as a wrapped markdown blockquote: readable raw and in preview."""
+    out: list[str] = []
+    for para in [p.strip() for p in text.replace("\r\n", "\n").split("\n\n") if p.strip()]:
+        if out:
+            out.append(">")
+        for line in para.split("\n"):
+            out += ["> " + w for w in textwrap.wrap(line, width - 2, break_on_hyphens=False)] or [">"]
+    return out
+
+
+def _write_letters_md(run_dir: Path, meta: dict, against: str | None = None) -> Path:
+    """Write <run>/letters.md: every letter in one readable file, with its stats.
+
+    The .txt files stay byte-for-byte what the engine wrote (the report re-checks
+    them, and they are what you'd paste into an application). With `against`, each
+    letter is followed by the other run's letter for the same job, folded.
+    """
+    from app.llm.letter.tools.style_lint import lint
+
+    other_dir = RUNS_DIR / against if against else None
+    ok = [r for r in meta["results"] if "error" not in r]
+    lines = [
+        f"# Letters: {meta['run_id']}", "",
+        f"Engine `{meta['engine']}`, model `{meta['strong_model']}`, run {meta['created_at']}. "
+        f"Grade in `grades.csv` (see evals/rubric.md)."
+        + (f" Each letter is followed by the `{against}` letter for the same job (click to open)."
+           if other_dir else ""),
+        "",
+    ]
+    lines += [f"{i}. {r['title']}" + (f" ({r['company']})" if r.get("company") else "")
+              for i, r in enumerate(ok, 1)]
+    for i, r in enumerate(ok, 1):
+        letter = run_dir / "letters" / f"{r['key']}.txt"
+        if not letter.exists():
+            continue
+        text = letter.read_text(encoding="utf-8")
+        res = lint(text)
+        tags = [i_.split(":")[0] for i_ in res["issues"]] + [f"({w.split(':')[0]})" for w in res["warnings"]]
+        lines += [
+            "", "---", "",
+            f"## {i}/{len(ok)}. {r['title']}" + (f" ({r['company']})" if r.get("company") else ""), "",
+            f"Match score {r.get('score', '?')} · {res['words']} words · "
+            f"style_lint {'pass' if res['passed'] else 'FAIL'}"
+            + (f": {', '.join(tags)}" if tags else "") + f" · key `{r['key']}`", "",
+            *_quote(text),
+        ]
+        other = other_dir / "letters" / f"{r['key']}.txt" if other_dir else None
+        if other and other.exists():
+            other_text = other.read_text(encoding="utf-8")
+            lines += [
+                "", f"<details><summary>{against}: {lint(other_text)['words']} words</summary>", "",
+                *_quote(other_text), "", "</details>",
+            ]
+    out = run_dir / "letters.md"
+    out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return out
+
+
+def cmd_read(args) -> int:
+    run_dir = RUNS_DIR / args.run_id
+    if not (run_dir / "run.json").exists():
+        print(f"No run.json in {run_dir.relative_to(ROOT)}")
+        return 1
+    if args.against and not (RUNS_DIR / args.against / "letters").exists():
+        print(f"No letters in evals/runs/{args.against}/")
+        return 1
+    meta = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+    out = _write_letters_md(run_dir, meta, args.against)
+    print(f"Wrote {out.relative_to(ROOT)} (open the preview: Ctrl+Shift+V)")
+    return 0
+
+
 def _yn(value: str) -> bool | None:
     v = (value or "").strip().lower()
     if v in ("y", "yes", "1", "true", "pass"):
@@ -675,6 +751,11 @@ def main() -> int:
     p.add_argument("--engine", choices=sorted(ENGINES), default="oneshot")
     p.add_argument("--label", help="run id (default: timestamp-engine)")
     p.set_defaults(fn=cmd_run)
+
+    p = sub.add_parser("read", help="write evals/runs/<run>/letters.md, every letter in one readable file")
+    p.add_argument("run_id")
+    p.add_argument("--against", help="another run to show each job's letter from, folded underneath")
+    p.set_defaults(fn=cmd_read)
 
     p = sub.add_parser("report", help="merge code checks + grades into evals/results/<run>.md")
     p.add_argument("run_id")
