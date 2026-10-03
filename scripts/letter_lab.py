@@ -64,7 +64,10 @@ PROFILE_ID = 1  # one profile per DB (CLAUDE.md "TWO ENVIRONMENTS")
 # over the set costs ~$3-4, which the app's $5 default would cut off mid-run.
 # Re-applied on every command because `prepare` rebuilds eval.db from real.db,
 # whose profile carries the app default. real.db's own cap is unchanged.
-EVAL_DAILY_BUDGET_USD = 10.0
+EVAL_DAILY_BUDGET_USD = 20.0
+# Printed (once per command) when today's eval spend passes this: a heads-up
+# well before the hard cap above stops the run.
+EVAL_DAILY_WARN_USD = 10.0
 
 _SNAPSHOT_COLUMNS = (
     "source", "source_job_id", "url", "title", "company", "location", "work_type",
@@ -158,6 +161,26 @@ def _set_eval_budget() -> None:
 
     with SessionLocal() as db:
         set_preferences(db, PROFILE_ID, {"llm_daily_budget_usd": EVAL_DAILY_BUDGET_USD})
+    _warn_spend()
+
+
+_spend_warned = False
+
+
+def _warn_spend() -> None:
+    """Print a warning, once per command, when today's eval spend passes EVAL_DAILY_WARN_USD."""
+    global _spend_warned
+    if _spend_warned:
+        return
+    from app.db import SessionLocal
+    from app.llm.usage import local_day_start_utc, spend_usd
+
+    with SessionLocal() as db:
+        today = spend_usd(db, local_day_start_utc())
+    if today >= EVAL_DAILY_WARN_USD:
+        _spend_warned = True
+        print(f"\n  !! WARNING: eval spend today is ${today:.2f}, past the ${EVAL_DAILY_WARN_USD:.0f} "
+              f"warning line (hard cap ${EVAL_DAILY_BUDGET_USD:.0f}).\n")
 
 
 def _migrate_eval_db() -> None:
@@ -395,6 +418,7 @@ def cmd_run(args) -> int:
 
     def save() -> None:  # after every job, so a killed run loses at most the job in progress
         meta_path.write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
+        _warn_spend()
 
     for key in keys:
         if key in done:
@@ -774,6 +798,7 @@ def cmd_analyze(args) -> int:
     status_counts: dict[str, int] = {}
 
     for key in keys:
+        _warn_spend()
         source, source_job_id = key.split("-", 1)
         with SessionLocal() as db:
             job = db.scalar(select(JobListing).where(
@@ -997,6 +1022,7 @@ def cmd_plant(args) -> int:
     def save() -> None:  # after every letter, so a crash loses at most the letter in progress
         plants_path.write_text(json.dumps({"clean": clean_rows, "plants": rows, "run_ids": run_ids},
                                           indent=2, ensure_ascii=False), encoding="utf-8")
+        _warn_spend()
 
     def judge(ctx, base: LetterState, draft: Draft, tier: str):
         """check_claims on one draft; None if the call failed (logged in letter_run_steps)."""
