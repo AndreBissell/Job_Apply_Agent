@@ -5,6 +5,28 @@ one block per milestone.
 
 ---
 
+## 2026-10-03 — Cover-letter Phase 6: fixed workflow (the baseline) — DONE ✅
+
+**Goal:** turn Phase 5's tools into a fixed loop, the baseline the Phase 7
+agent has to beat, and measure whether revisions still regress.
+
+**Built:** `app/llm/letter/workflow.py`: `run_workflow()` does analyze → match →
+gap policy (`leave_out` until `ask_user` exists) → generate → 3 checks →
+revise the latest draft ≤2 times → finish. When it stops short, it hands back
+`guardrails.best_draft` with its open issues instead of crashing.
+`letter_lab.py run --engine workflow` and `loop-report`. The eval set grew to
+15 ads, and the one-shot baseline was extended to cover them.
+
+**Result (`workflow-v1`):** $0.194/letter and 138 s; 14/15 clean. No revision
+went over length or broke a passing check; 2/6 dropped a must-cover item.
+Per-run detail is in `evals/results/workflow-v1*.md`; the decisions are in
+docs/cover-letter-loop-plan.md's Decision log.
+
+**Verified:** `python -m pytest` (455 passed, 50 new). **Not done:** the
+user's grades for workflow-v1 and the 6 new one-shot letters.
+
+---
+
 ## 2026-09-21 — Rolling retention + post-profile-update weighting — DONE ✅
 
 **Goal:** hard-deleting low scorers had been fixed with soft deletes, which

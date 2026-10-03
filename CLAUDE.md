@@ -179,7 +179,7 @@ job-app-assistant/
     run_extraction.py  # batch LLM extraction
     run_matching.py    # batch LLM matching/scoring
     run_cover_letters.py  # batch cover-letter generation (dev/testing only)
-    letter_lab.py      # cover-letter eval harness (evals/rubric.md); analyze = Phase 3 hand-check pack
+    letter_lab.py      # cover-letter eval harness (evals/rubric.md); analyze = Phase 3 hand-check pack; loop-report = revisions
     check_matching.py  # scoring diagnostic report vs expected bands
     check_llm.py       # validate the LLM key before a batch
     smoke_test.py
@@ -291,12 +291,29 @@ $0.165/letter, 6/9 pass all checks within 2 drafts) and `letter_lab.py plant`
 (planted-claim test: small 35/36, mid 36/36; mid chosen because small missed real
 overclaims; evals/results/plant-tools-v1.md). Both commands save per job and
 `--resume`. Production letters are still the one-shot `cover_letter.py`.
-Next up is Phase 6 (workflow.py: the fixed loop with revise <=2, best-draft selection
-and the finish gate; measures whether the revise prompt's "keep coverage and length"
-line stopped the regressions seen in tools-v1). Grow the eval set (only 9 ads, none
-at 75-84) before Phase 6 compares engines. Known: Gemini implicit caching never hits
-(cached_tokens 0 on every call), and the writer still copies one stock line from the
-writing sample (future_work/voice-toggle-and-comparison.md).
+Phase 6 is DONE (2026-10-03; details in the plan's Decision log): `app/llm/letter/
+workflow.py` `run_workflow(db, job_id, profile_id, gap_policy=leave_out_gaps)`:
+analyze -> match -> gap policy -> generate -> 3 checks -> revise the LATEST draft <=2
+times -> finish. Never crashes on a limit: returns `guardrails.best_draft` (claims
+passed > fewest missing must-covers > style passed > later) with `open_issues`, and
+`clean` only if all 3 checks passed on it; `letter_runs.final_draft_version` is the
+draft handed back. `account_limit` is set when the USD guard / daily quota stopped it
+(stop the batch). The gap policy is the Phase 7 hook for `ask_user` (open questions ->
+`waiting_user`). registry.py waits for Phase 7. Eval set is now 15 ads (8 at 85+, 4 at
+75, 3 below; eval.db scores, which moved up to 50 points from real.db's).
+`letter_lab.py run --engine workflow` (`workflow-v1`: $0.194/letter, 14/15 clean,
+1 hit the revision limit, 0 revisions over length or breaking claims, 2/6 dropped a
+must-cover item) and `loop-report <run> --against tools-v1`. `--engine tools` now
+logs engine="tools". The one-shot baseline covers all 15 (6 new merged into
+evals/runs/baseline-oneshot/). WAITING ON THE USER: grades for evals/runs/workflow-v1/
+grades.csv (letters.md shows each letter with the one-shot one folded underneath)
+and the 6 new rows in evals/runs/baseline-oneshot/grades.csv, then `report` both.
+Open finding for Phase 7: a must-cover item that is `partial` only because of a bare
+skill listing forces "I have not ..." sentences (7/15 letters) and makes
+check_requirements flip-flop; proposed fix is may_use or an ask_user question.
+Next up is Phase 7 (agent + ask_user + to-work-on list). Known: Gemini implicit
+caching never hits (cached_tokens 0 on every call), and the writer still copies one
+stock line from the writing sample (future_work/voice-toggle-and-comparison.md).
 
 Parked fast-follows. Both need a live Seek session rather than guesswork:
 1. §5.2's apply-flow detection (see the extension-revamp entry below).
