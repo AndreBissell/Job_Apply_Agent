@@ -131,11 +131,16 @@ def execute_tool(
     return ToolResult(ok=error is None, summary=summary, error=error)
 
 
-def finish_run(ctx: ToolContext, state: LetterState, status: str) -> None:
-    """status: done | budget_stopped | waiting_user | failed."""
+def finish_run(ctx: ToolContext, state: LetterState, status: str, final_version: int | None = None) -> None:
+    """status: done | budget_stopped | waiting_user | failed.
+
+    ``final_version`` is the draft handed back (the best draft when a run stopped
+    short of passing); it defaults to the latest draft.
+    """
     ctx.run.status = status
     if status != "waiting_user":
         ctx.run.finished_at = datetime.datetime.now(datetime.timezone.utc)
-    final = state.latest_draft
-    ctx.run.final_draft_version = final.version if final else None
+    if final_version is None and state.latest_draft is not None:
+        final_version = state.latest_draft.version
+    ctx.run.final_draft_version = final_version
     _persist(ctx, state)

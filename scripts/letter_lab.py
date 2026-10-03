@@ -20,6 +20,9 @@ mechanical items, you grade the judgement items in a CSV.
     python scripts/letter_lab.py run --engine tools --only seek-94419843   # one job, as a smoke test
     python scripts/letter_lab.py plant <tools-run>        # planted-claim test for check_claims -> evals/results/plant-<run>.md
 
+    python scripts/letter_lab.py run --engine workflow   # Phase 6: the fixed loop (revise <=2, best draft) -> drafts.md + states/
+    python scripts/letter_lab.py loop-report <run> [--against tools-v1]   # per-draft checks + revision regressions
+
 Privacy: evals/jobs/, evals/eval.db, evals/set.json and evals/runs/ hold ad text,
 your profile and letters written as you — all gitignored. Only the summary in
 evals/results/ (titles, pass/fail, cost) is meant to be committed.
@@ -36,6 +39,7 @@ import csv
 import datetime
 import json
 import os
+import re
 import sqlite3
 import sys
 import textwrap
@@ -121,6 +125,29 @@ def cmd_snapshot(args) -> int:
 # ---------------------------------------------------------------------------
 # 2. prepare
 # ---------------------------------------------------------------------------
+def _saved_analyses() -> dict[str, tuple]:
+    """The analyze_job cache from the eval.db about to be rebuilt, keyed by ad.
+
+    Carried into the new eval.db so a rebuilt set keeps the exact requirements
+    checklists earlier runs used (runs on the same ads stay comparable, and the
+    mid-tier analysis isn't paid for twice). analyze_job checks each entry's
+    description fingerprint and ANALYSIS_VERSION, so a stale one is simply redone.
+    """
+    if not EVAL_DB.exists():
+        return {}
+    con = sqlite3.connect(f"file:{EVAL_DB.as_posix()}?mode=ro", uri=True)
+    try:
+        rows = con.execute(
+            "SELECT source, source_job_id, requirements_checklist, requirements_checklist_at "
+            "FROM job_listings WHERE requirements_checklist IS NOT NULL"
+        ).fetchall()
+    except sqlite3.OperationalError:  # an eval.db from before the column existed
+        rows = []
+    finally:
+        con.close()
+    return {_key(src, sid): (checklist, at) for src, sid, checklist, at in rows}
+
+
 def _build_eval_db(profile_source: Path) -> None:
     """Fresh eval.db = a copy of the profile DB with every job-side row removed.
 
@@ -221,6 +248,7 @@ def cmd_prepare(args) -> int:
         print(f"Profile DB {args.profile_db} not found.")
         return 1
 
+    analyses = _saved_analyses()
     print(f"Building {EVAL_DB.relative_to(ROOT)} from {args.profile_db} (profile only) ...")
     _build_eval_db(profile_db)
 
@@ -240,8 +268,15 @@ def cmd_prepare(args) -> int:
         print(f"Profile: {profile.name}")
         for path in ads:
             data = json.loads(path.read_text(encoding="utf-8"))
-            db.add(JobListing(**{c: data.get(c) for c in _SNAPSHOT_COLUMNS}))
+            job = JobListing(**{c: data.get(c) for c in _SNAPSHOT_COLUMNS})
+            checklist, at = analyses.get(_key(job.source, job.source_job_id), (None, None))
+            if checklist:
+                job.requirements_checklist = checklist
+                job.requirements_checklist_at = datetime.datetime.fromisoformat(at) if at else None
+            db.add(job)
         db.commit()
+        if analyses:
+            print(f"Kept {len(analyses)} cached job analyses from the previous eval.db")
         jobs = db.scalars(select(JobListing).order_by(JobListing.id)).all()
         job_ids = [(j.id, _key(j.source, j.source_job_id), j.title) for j in jobs]
 
@@ -293,11 +328,12 @@ TOOLS_MAX_REVISIONS = 1  # Phase 5 exercises revise_letter once; Phase 6's workf
 
 
 def _engine_tools(job_id: int):
-    """Phase 5's draft + check tools in a fixed order (not yet Phase 6's workflow):
-    analyze_job (cached) -> match_profile -> unanswered must-have gaps treated as
-    leave_out (there is no ask_user UI yet) -> generate_letter -> the three checks
-    -> one revise_letter if any failed -> the checks again. Returns the latest
-    draft plus the full state, so `plant` can reuse letters that passed check_claims.
+    """Phase 5's draft + check tools in a fixed order, kept so `tools-v1` stays
+    reproducible (Phase 6's `workflow` engine is the real loop): analyze_job (cached)
+    -> match_profile -> unanswered must-have gaps treated as leave_out (there is no
+    ask_user UI yet) -> generate_letter -> the three checks -> one revise_letter if
+    any failed -> the checks again. Returns the latest draft plus the full state, so
+    `plant` can reuse letters that passed check_claims. Logs engine="tools".
     """
     from sqlalchemy import select
 
@@ -319,7 +355,7 @@ def _engine_tools(job_id: int):
         job = db.get(JobListing, job_id)
         match = db.scalar(select(Match).where(Match.job_id == job_id, Match.user_id == PROFILE_ID))
         state = LetterState(profile_id=PROFILE_ID, job=JobInfo(job_id=job.id, title=job.title, company=job.company))
-        ctx = start_run(db, match.id, "workflow", state)
+        ctx = start_run(db, match.id, "tools", state)
 
         def step(name, fn):
             stop = state.budget_exceeded()
@@ -356,7 +392,33 @@ def _engine_tools(job_id: int):
         return {"text": state.latest_draft.text, "state": state.model_dump(mode="json"), "letter_run_id": ctx.run.id}
 
 
-ENGINES = {"oneshot": _engine_oneshot, "oneshot-styled": _engine_oneshot_styled, "tools": _engine_tools}
+def _engine_workflow(job_id: int):
+    """Phase 6: the fixed workflow (app/llm/letter/workflow.py), exactly as production
+    would call it. Revises the latest draft up to twice; when it stops short of a
+    clean draft it returns the best one with its open issues. An account-level stop
+    (the USD guard, the daily quota) is re-raised so the batch stops."""
+    from app.db import SessionLocal
+    from app.llm.client import BudgetExceededError
+    from app.llm.letter.workflow import run_workflow
+
+    with SessionLocal() as db:
+        result = run_workflow(db, job_id, PROFILE_ID)
+    if result.account_limit:
+        raise BudgetExceededError(result.account_limit)
+    if result.draft is None:
+        raise RuntimeError(f"no draft ({result.status}): {result.stop_reason}")
+    return {
+        "text": result.draft.text, "state": result.state.model_dump(mode="json"),
+        "letter_run_id": result.run_id, "final_version": result.draft.version,
+        "status": result.status, "clean": result.clean, "open_issues": result.open_issues,
+        "stop_reason": result.stop_reason,
+    }
+
+
+ENGINES = {
+    "oneshot": _engine_oneshot, "oneshot-styled": _engine_oneshot_styled,
+    "tools": _engine_tools, "workflow": _engine_workflow,
+}
 
 
 def _run_cost(job_id: int, since: datetime.datetime) -> dict:
@@ -454,11 +516,16 @@ def cmd_run(args) -> int:
             (run_dir / "states").mkdir(exist_ok=True)
             (run_dir / "states" / f"{key}.json").write_text(
                 json.dumps(out["state"], indent=2, ensure_ascii=False), encoding="utf-8")
-            final = out["state"]["drafts"][-1]
+            drafts = out["state"]["drafts"]
+            # The draft handed back: the workflow's best draft, else the latest.
+            final_version = out.get("final_version", len(drafts))
+            final = drafts[final_version - 1]
             extra = {
                 "letter_run_id": out["letter_run_id"],
-                "drafts": len(out["state"]["drafts"]),
+                "drafts": len(drafts),
+                "final_version": final_version,
                 "tool_checks": {n: c["passed"] for n, c in final["checks"].items()},
+                **{k: out[k] for k in ("status", "clean", "open_issues", "stop_reason") if k in out},
             }
         text = text or ""
         (run_dir / "letters" / f"{key}.txt").write_text(text, encoding="utf-8")
@@ -473,6 +540,8 @@ def cmd_run(args) -> int:
         if extra:
             failed = [n for n, ok in extra["tool_checks"].items() if not ok]
             tool_note = f"  {extra['drafts']} draft(s), tools {'ok' if not failed else 'FAIL: ' + ', '.join(failed)}"
+            if extra["final_version"] != extra["drafts"]:
+                tool_note += f" (returned draft {extra['final_version']})"
         print(f"  {score!s:>4}  {title[:48]:48}  {checks['words']:>3}w  {seconds:>5}s  "
               f"{'auto ok' if not fails else 'auto FAIL: ' + ', '.join(fails)}{tool_note}")
 
@@ -574,16 +643,21 @@ def _write_drafts_md(run_dir: Path, meta: dict) -> Path:
         if "error" in r or not path.exists():
             continue
         st = json.loads(path.read_text(encoding="utf-8"))
+        final_version = r.get("final_version", len(st["drafts"]))
         lines += ["---", "", f"## {r['title']}" + (f" ({r['company']})" if r.get("company") else ""), "",
                   f"Match score {r.get('score', '?')} · {len(st['drafts'])} draft(s) · ${r['cost_usd']:.4f} · "
-                  f"{r['seconds']}s · key `{r['key']}`", ""]
+                  f"{r['seconds']}s · key `{r['key']}`"
+                  + (f" · run {r['status']}, returned draft {final_version}" if "status" in r else ""), ""]
+        if r.get("stop_reason"):
+            lines += [f"Stopped: {r['stop_reason']}", ""]
         left_out = [q for q in st["requirements"] if q.get("user_decision")]
         for q in st["requirements"]:
             if q["letter_role"] == "headline" or q["importance"] == "essential":
                 flag = " (left out)" if q in left_out else ""
                 lines.append(f"- {q['id']} [{q['importance']}/{q['letter_role']}] **{q['status']}**{flag}: {q['text']}")
         for d in st["drafts"]:
-            lines += ["", f"### Draft {d['version']}", ""]
+            returned = " (returned)" if d["version"] == final_version else ""
+            lines += ["", f"### Draft {d['version']}{returned}", ""]
             for name in ("claims", "requirements", "style"):
                 c = d["checks"].get(name)
                 if c is None:
@@ -708,7 +782,9 @@ def cmd_report(args) -> int:
         f"| Avg tokens / run | {sum(r['input_tokens'] for r in ok) // n} in, {sum(r['output_tokens'] for r in ok) // n} out+thinking |",
         f"| Avg cost / run | ${sum(r['cost_usd'] for r in ok) / n:.4f} |",
         f"| Avg time / run | {sum(r['seconds'] for r in ok) / n:.1f}s |",
-        "| Runs that hit the budget cap | n/a (one-shot) |",
+        "| Runs that hit the budget cap | "
+        + (f"{sum(r.get('status') == 'budget_stopped' for r in ok)}/{len(ok)} |"
+           if any("status" in r for r in ok) else f"n/a (`{meta['engine']}` doesn't stop early) |"),
         f"| Runs where the user had to fix a factual error | "
         f"{item_pass['no_unsupported_claims'][1] - item_pass['no_unsupported_claims'][0]}"
         f" of {item_pass['no_unsupported_claims'][1]} graded |",
@@ -741,6 +817,150 @@ def cmd_report(args) -> int:
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     out = RESULTS_DIR / f"{meta['run_id']}.md"
+    out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"Wrote {out.relative_to(ROOT)}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# 4b. loop-report (Phase 6): what each revision did, from the saved states
+# ---------------------------------------------------------------------------
+_UNCOVERED_RE = re.compile(r"^(R\d+) not addressed")  # check_requirements' issue format
+
+
+def _uncovered_ids(draft: dict) -> set[str] | None:
+    """Must-cover ids check_requirements found missing on a draft; None if it never ran."""
+    check = draft["checks"].get("requirements")
+    if check is None:
+        return None
+    return {m.group(1) for i in check["issues"] if (m := _UNCOVERED_RE.match(i))}
+
+
+def _loop_rows(run_dir: Path) -> list[dict]:
+    """Per job: each draft's checks and words, and what each revision changed."""
+    from app.llm.letter.tools.revise import changed_pct
+    from app.llm.letter.tools.style_lint import MAX_WORDS, word_count
+
+    meta = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+    rows = []
+    for r in meta["results"]:
+        path = run_dir / "states" / f"{r['key']}.json"
+        if "error" in r or not path.exists():
+            continue
+        drafts = json.loads(path.read_text(encoding="utf-8"))["drafts"]
+        per_draft = [{
+            "version": d["version"], "words": word_count(d["text"]), "uncovered": _uncovered_ids(d),
+            "checks": {n: (c["passed"] if (c := d["checks"].get(n)) else None)
+                       for n in ("claims", "requirements", "style")},
+        } for d in drafts]
+        revisions = []
+        for before, after, a, b in zip(drafts, drafts[1:], per_draft, per_draft[1:]):
+            both_checked = a["uncovered"] is not None and b["uncovered"] is not None
+            revisions.append({
+                "to": b["version"], "changed_pct": changed_pct(before["text"], after["text"]),
+                "words": f"{a['words']}->{b['words']}",
+                "over_length": a["words"] <= MAX_WORDS < b["words"],
+                "dropped": sorted(b["uncovered"] - a["uncovered"]) if both_checked else [],
+                "broke": [n for n in a["checks"] if a["checks"][n] is True and b["checks"][n] is False],
+                "fixed": [n for n in a["checks"] if a["checks"][n] is False and b["checks"][n] is True],
+            })
+        rows.append({**r, "per_draft": per_draft, "revisions": revisions,
+                     "final_version": r.get("final_version", len(drafts))})
+    return rows
+
+
+def _loop_summary(rows: list[dict]) -> dict:
+    revs = [v for r in rows for v in r["revisions"]]
+    n = len(rows) or 1
+    return {
+        "letters": len(rows),
+        "clean": sum(all(r["tool_checks"].values()) for r in rows),
+        "clean_on_1": sum(len(r["per_draft"]) == 1 and all(r["tool_checks"].values()) for r in rows),
+        "revisions": len(revs),
+        "dropped": sum(bool(v["dropped"]) for v in revs),
+        "over_length": sum(v["over_length"] for v in revs),
+        "broke_claims": sum("claims" in v["broke"] for v in revs),
+        "broke_any": sum(bool(v["broke"]) for v in revs),
+        "not_latest": sum(r["final_version"] != len(r["per_draft"]) for r in rows),
+        "hit_cap": sum(r.get("status") == "budget_stopped" for r in rows),
+        "cost": sum(r["cost_usd"] for r in rows) / n,
+        "seconds": sum(r["seconds"] for r in rows) / n,
+        "changed_pct": round(sum(v["changed_pct"] for v in revs) / len(revs)) if revs else 0,
+    }
+
+
+_SUMMARY_ROWS = (
+    ("Letters", lambda s: str(s["letters"])),
+    ("Returned draft passes all 3 checks", lambda s: f"{s['clean']}/{s['letters']}"),
+    ("…on draft 1", lambda s: f"{s['clean_on_1']}/{s['letters']}"),
+    ("Revisions", lambda s: str(s["revisions"])),
+    ("Revisions that dropped a must-cover item", lambda s: f"{s['dropped']}/{s['revisions']}"),
+    ("Revisions that went over the word limit", lambda s: f"{s['over_length']}/{s['revisions']}"),
+    ("Revisions that broke check_claims", lambda s: f"{s['broke_claims']}/{s['revisions']}"),
+    ("Revisions that broke any check", lambda s: f"{s['broke_any']}/{s['revisions']}"),
+    ("Avg words changed per revision", lambda s: f"{s['changed_pct']}%"),
+    ("Returned draft was not the latest", lambda s: f"{s['not_latest']}/{s['letters']}"),
+    ("Runs that hit the cap (budget_stopped)", lambda s: f"{s['hit_cap']}/{s['letters']}"),
+    ("Avg cost / letter", lambda s: f"${s['cost']:.3f}"),
+    ("Avg time / letter", lambda s: f"{s['seconds']:.0f}s"),
+)
+
+
+def _summary_table(cols: list[tuple[str, dict]]) -> list[str]:
+    out = ["| Measure | " + " | ".join(c for c, _ in cols) + " |", "|---|" + "---|" * len(cols)]
+    out += [f"| {label} | " + " | ".join(fmt(s) for _, s in cols) + " |" for label, fmt in _SUMMARY_ROWS]
+    return out
+
+
+def cmd_loop_report(args) -> int:
+    run_dir = RUNS_DIR / args.run_id
+    if not (run_dir / "states").exists():
+        print(f"{args.run_id} has no states/: loop-report needs a `run --engine tools|workflow` run")
+        return 1
+    rows = _loop_rows(run_dir)
+    mark = {True: "✓", False: "✗", None: "–"}
+    lines = [
+        f"# Revision loop: {args.run_id}", "",
+        "Per draft: check_claims / check_requirements / style_lint (✓ pass, ✗ fail, – not run), word count, "
+        "and the must-cover ids found missing. Per revision: share of words changed, must-cover items covered "
+        "before and missing after (**dropped**), whether it went over the word limit, and the checks it broke "
+        "or fixed.", "",
+        "| Job | Score | Drafts (c/r/s, words, missing) | Revisions | Returned | Run | Cost | Time |",
+        "|---|---|---|---|---|---|---|---|",
+    ]
+    for r in rows:
+        drafts = "<br>".join(
+            f"v{d['version']} {''.join(mark[d['checks'][n]] for n in ('claims', 'requirements', 'style'))} "
+            f"{d['words']}w" + (f" missing {','.join(sorted(d['uncovered']))}" if d["uncovered"] else "")
+            for d in r["per_draft"])
+        revs = "<br>".join(
+            f"→v{v['to']}: {v['changed_pct']}% changed, {v['words']}w"
+            + (f", **dropped {','.join(v['dropped'])}**" if v["dropped"] else "")
+            + (", **over length**" if v["over_length"] else "")
+            + (f", broke {','.join(v['broke'])}" if v["broke"] else "")
+            + (f", fixed {','.join(v['fixed'])}" if v["fixed"] else "")
+            for v in r["revisions"]) or "-"
+        returned = f"v{r['final_version']}" + (" (not latest)" if r["final_version"] != len(r["per_draft"]) else "")
+        lines.append(f"| {r['title'][:40].replace('|', '/')} | {r['score']} | {drafts} | {revs} | {returned} | "
+                     f"{r.get('status', '-')} | ${r['cost_usd']:.3f} | {r['seconds']:.0f}s |")
+
+    lines += ["", "## Summary", "", *_summary_table([(args.run_id, _loop_summary(rows))])]
+    if args.against:
+        other_dir = RUNS_DIR / args.against
+        if not (other_dir / "states").exists():
+            print(f"{args.against} has no states/; skipping the comparison")
+        else:
+            other = _loop_rows(other_dir)
+            shared = {r["key"] for r in other} & {r["key"] for r in rows}
+            lines += [
+                "", f"## Against `{args.against}` on the {len(shared)} jobs both ran", "",
+                f"Same jobs only. `{args.against}` may allow fewer revisions, so compare the per-revision rates.",
+                "",
+                *_summary_table([(args.run_id, _loop_summary([r for r in rows if r["key"] in shared])),
+                                 (args.against, _loop_summary([r for r in other if r["key"] in shared]))]),
+            ]
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    out = RESULTS_DIR / f"{args.run_id}-loop.md"
     out.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"Wrote {out.relative_to(ROOT)}")
     return 0
@@ -808,7 +1028,7 @@ def cmd_analyze(args) -> int:
                 continue
             match = db.scalar(select(Match).where(Match.job_id == job.id, Match.user_id == PROFILE_ID))
             state = LetterState(profile_id=PROFILE_ID, job=JobInfo(job_id=job.id, title=job.title, company=job.company))
-            ctx = start_run(db, match.id, "workflow", state)
+            ctx = start_run(db, match.id, "eval-analyze", state)
             try:
                 r1 = execute_tool(ctx, state, "analyze_job", analyze_job, force=args.force)
                 r2 = execute_tool(ctx, state, "match_profile", match_profile) if r1.ok else None
@@ -1186,6 +1406,11 @@ def main() -> int:
     p = sub.add_parser("report", help="merge code checks + grades into evals/results/<run>.md")
     p.add_argument("run_id")
     p.set_defaults(fn=cmd_report)
+
+    p = sub.add_parser("loop-report", help="per-draft checks and what each revision changed -> evals/results/<run>-loop.md")
+    p.add_argument("run_id", help="a `run --engine tools|workflow` run")
+    p.add_argument("--against", help="another tools/workflow run to compare on the jobs both ran (e.g. tools-v1)")
+    p.set_defaults(fn=cmd_loop_report)
 
     p = sub.add_parser("analyze", help="run analyze_job + match_profile on the set; write a hand-check pack")
     p.add_argument("--label", help="run id (default: analysis-<timestamp>)")

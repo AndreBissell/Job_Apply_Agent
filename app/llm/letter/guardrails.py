@@ -21,7 +21,7 @@ requirement. The writer, the reviser and ``check_requirements`` all read it, so
 
 from __future__ import annotations
 
-from app.llm.letter.state import REQUIRED_CHECKS, LetterState, Requirement
+from app.llm.letter.state import REQUIRED_CHECKS, Draft, LetterState, Requirement
 
 _COVERED = ("supported", "partial")
 
@@ -141,3 +141,54 @@ def can_finish(state: LetterState) -> str | None:
     if failed:
         return f"{', '.join(failed)} failed on draft {draft.version}: revise_letter, or stop at the draft limit"
     return None
+
+
+# ---------------------------------------------------------------------------
+# Stopping short: which draft to hand back, and what is still wrong with it
+# ---------------------------------------------------------------------------
+def _passed(draft: Draft, name: str) -> bool:
+    """A check that never ran on a draft counts as failed: unchecked is not clean."""
+    check = draft.checks.get(name)
+    return check is not None and check.passed
+
+
+def uncovered_count(state: LetterState, draft: Draft) -> int:
+    """How many must-cover items the draft misses, per its check_requirements result
+    (one issue per missing item). Unchecked counts as worse than missing them all."""
+    check = draft.checks.get("requirements")
+    if check is None:
+        return len(must_cover(state)) + 1
+    return 0 if check.passed else len(check.issues)
+
+
+def is_clean(draft: Draft) -> bool:
+    """All three checks ran on this draft and passed."""
+    return all(_passed(draft, n) for n in REQUIRED_CHECKS)
+
+
+def best_draft(state: LetterState) -> Draft | None:
+    """The draft to return when a run stops (plan §5.7), ranked by: passed
+    check_claims, then fewest missing must-cover items, then passed style_lint,
+    then the later draft. A run that finished cleanly returns its latest draft,
+    because a clean draft always outranks one that failed something.
+    """
+    if not state.drafts:
+        return None
+    return max(
+        state.drafts,
+        key=lambda d: (_passed(d, "claims"), -uncovered_count(state, d), _passed(d, "style"), d.version),
+    )
+
+
+def open_issues(draft: Draft) -> list[str]:
+    """What is still wrong with a draft, for the user: every blocking issue of a
+    failed check, and a line for each check that never ran on it. Empty means clean.
+    A draft that failed check_claims is never handed back without these."""
+    out: list[str] = []
+    for name in REQUIRED_CHECKS:
+        check = draft.checks.get(name)
+        if check is None:
+            out.append(f"{name}: not checked on draft {draft.version}")
+        elif not check.passed:
+            out += [f"{name}: {i}" for i in check.issues] or [f"{name}: failed"]
+    return out

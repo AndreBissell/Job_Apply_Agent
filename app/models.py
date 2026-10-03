@@ -564,10 +564,10 @@ class LetterRun(Base):
     match_id: Mapped[int] = mapped_column(
         BIG_INT_FK, ForeignKey("matches.id", ondelete="CASCADE"), nullable=False
     )
-    engine: Mapped[str] = mapped_column(Text, nullable=False)  # 'workflow' | 'agent'
+    engine: Mapped[str] = mapped_column(Text, nullable=False)  # 'workflow' | 'agent' (evals: 'tools', 'eval-analyze', 'eval-plant')
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="running")
     state: Mapped[str | None] = mapped_column(Text)  # JSON LetterState
-    final_draft_version: Mapped[int | None] = mapped_column(Integer)
+    final_draft_version: Mapped[int | None] = mapped_column(Integer)  # the draft handed back (best if not clean)
     tool_calls: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     cost_usd: Mapped[Decimal] = mapped_column(Numeric(12, 6), nullable=False, server_default="0")
     started_at: Mapped[datetime.datetime] = mapped_column(

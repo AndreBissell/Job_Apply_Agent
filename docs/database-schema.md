@@ -554,10 +554,10 @@ Each run's spend is attributable through `llm_usage.run_id` (a label, not an FK)
 CREATE TABLE letter_runs (
     id                  BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     match_id            BIGINT      NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
-    engine              TEXT        NOT NULL,           -- 'workflow','agent'
+    engine              TEXT        NOT NULL,           -- 'workflow','agent' (evals also log 'tools','eval-analyze','eval-plant')
     status              TEXT        NOT NULL DEFAULT 'running',  -- 'running','waiting_user','done','budget_stopped','failed'
     state               TEXT,                           -- JSON LetterState
-    final_draft_version INTEGER,
+    final_draft_version INTEGER,                        -- the draft handed back: the latest if clean, else the best (guardrails.best_draft)
     tool_calls          INTEGER     NOT NULL DEFAULT 0,
     cost_usd            NUMERIC(12,6) NOT NULL DEFAULT 0,
     started_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
