@@ -313,6 +313,25 @@
 
     .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 
+    /* Your Writing: a button on the form, a full view of its own when opened. */
+    #open-writing-btn {
+      width: 100%; padding: 9px 10px; display: flex; align-items: center; gap: 8px;
+      text-align: left; font-size: 13px;
+    }
+    #open-writing-btn .writing-btn-label { flex: 1; font-weight: 600; }
+    #open-writing-btn .writing-btn-arrow { font-size: 16px; color: #9ca3af; line-height: 1; }
+    .writing-stats { font-size: 11px; color: #6b7280; white-space: nowrap; }
+    #writing-view[hidden] { display: none; }
+    .writing-view-hdr { margin-top: 12px; }
+    .writing-hint { font-size: 12px; color: #6b7280; margin: 0 0 8px; line-height: 1.45; }
+    #p-writing-sample {
+      display: block; width: 100%; min-height: 60vh; padding: 8px 10px;
+      border: 1px solid #d1d5db; border-radius: 5px; background: #fff; color: #1c2330;
+      font-family: inherit; font-size: 13px; line-height: 1.5; resize: vertical;
+      field-sizing: content; /* grows to show all the text (Chrome 123+) */
+    }
+    #p-writing-sample:focus { outline: none; border-color: #2557a7; box-shadow: 0 0 0 2px #dbeafe; }
+
     .entry-card {
       background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;
       padding: 10px; margin-bottom: 8px;
@@ -485,6 +504,7 @@
   <div id="profile-section" hidden>
     <div id="profile-msg"></div>
 
+    <div id="profile-main">
     <!-- Import / Export -->
     <div style="margin-bottom:14px;display:flex;flex-direction:column;gap:6px;">
       <button class="btn" id="seek-import-btn" style="width:100%;padding:8px;font-size:12px;display:flex;align-items:center;justify-content:center;gap:6px;">
@@ -510,6 +530,16 @@
         <label class="field"><span>Target Role</span><input id="p-target-role" type="text" placeholder="e.g. Software Engineer"></label>
         <label class="field"><span>Target Location</span><input id="p-target-location" type="text" placeholder="e.g. Melbourne"></label>
       </div>
+    </div>
+
+    <!-- Your writing -->
+    <div class="p-section">
+      <div class="p-section-hdr"><h2>Your Writing</h2></div>
+      <button class="btn" id="open-writing-btn">
+        <span class="writing-btn-label">View &amp; edit your writing</span>
+        <span id="writing-stats" class="writing-stats"></span>
+        <span class="writing-btn-arrow">›</span>
+      </button>
     </div>
 
     <!-- Qualifications -->
@@ -542,6 +572,20 @@
         <button class="btn btn-sm" id="skill-ok-btn">Add</button>
         <button class="btn btn-sm" id="skill-cancel-btn">✕</button>
       </div>
+    </div>
+    </div><!-- /#profile-main -->
+
+    <!-- Your writing: its own view so a long sample doesn't swamp the form.
+         Still inside #profile-section, so Save Profile and the unsaved-changes
+         note cover it exactly as before. -->
+    <div id="writing-view" hidden>
+      <button class="btn btn-sm" id="close-writing-btn">‹ Back to profile</button>
+      <div class="p-section-hdr writing-view-hdr">
+        <h2>Your Writing</h2>
+        <span id="writing-view-stats" class="writing-stats"></span>
+      </div>
+      <p class="writing-hint">Paste anything you've written: an old cover letter, a uni essay, a long email. No structure needed. Cover letters use this for tone and rhythm only, never as a source of facts.</p>
+      <textarea id="p-writing-sample" placeholder="Paste your writing here…"></textarea>
     </div>
 
     <div id="save-bar">

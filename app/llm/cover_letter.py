@@ -41,6 +41,25 @@ _SYSTEM_PROMPT = (
 )
 
 
+def _styled_system_prompt(profile: Profile) -> str:
+    """The one-shot prompt with Phase 4's style guide and the user's voice added.
+
+    Eval-only for now (``letter_lab.py run --engine oneshot-styled``): it measures
+    what style + voice alone do, before Phase 5's tools build on them.
+    """
+    from app.llm.letter.style import style_guide_prompt, voice_prompt
+
+    parts = [
+        "You write cover letters in first person as the candidate. Use ONLY facts "
+        "from the candidate profile supplied; never invent or embellish experience. "
+        "Write the letter from 'Dear Hiring Manager,' to the sign-off, with no "
+        "subject line, date or address block.",
+        style_guide_prompt(),
+        voice_prompt(profile),
+    ]
+    return "\n\n".join(p for p in parts if p)
+
+
 def _json_list(raw: str | None) -> list:
     if not raw:
         return []
@@ -152,6 +171,7 @@ def generate_cover_letter(
     session=None,
     force: bool = False,
     bypass_threshold: bool = False,
+    styled: bool = False,
 ) -> CoverLetter | None:
     """Draft a cover letter for a job/profile match, if score >= the profile's
     auto-letter minimum (default THRESHOLD).
@@ -215,8 +235,9 @@ def generate_cover_letter(
             return None
 
         prompt = _build_prompt(profile, job, match)
+        system = _styled_system_prompt(profile) if styled else _SYSTEM_PROMPT
         content = complete_text(
-            _SYSTEM_PROMPT, prompt, temperature=0.7,
+            system, prompt, temperature=0.7,
             tier="strong", task="cover_letter", job_id=job_id, match_id=match.id,
         )
 

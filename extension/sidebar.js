@@ -1097,29 +1097,38 @@ function showMsg(text, type, ms = 3000) {
 }
 
 // Unsaved-changes tracking. The profile form is only persisted by Save Profile
-// (a card's "Done" merely collapses it), so any edit — typing, adding/removing a
-// card or skill, or an import — flips this on until the next successful save
-// or a fresh load from the backend.
+// (a card's "Done" merely collapses it). "Dirty" means the form's data differs
+// from what was last loaded from or accepted by the backend — a snapshot
+// comparison, not "something changed in the DOM". Flagging on any mutation
+// re-dirtied the form straight after every save (the "Saved ✓" button text and
+// the status message are mutations too), and also on Edit/Done or an edit typed
+// then undone. Input/change events and DOM mutations now just re-run the check.
 const dirtyNote = document.getElementById('dirty-note');
 const saveBar = document.getElementById('save-bar');
+let savedSnapshot = null; // JSON of the last loaded/saved form data; null = not loaded yet
 
 function setProfileDirty(dirty) {
   dirtyNote.hidden = !dirty;
   saveBar.classList.toggle('dirty', dirty);
 }
 
-// Called after the form is (re)filled from the backend or saved: discard the
-// mutation records our own rendering just queued, then clear the flag.
-function markProfileClean() {
-  profileObserver.takeRecords();
-  setProfileDirty(false);
+function refreshProfileDirty() {
+  if (savedSnapshot === null) return setProfileDirty(false);
+  setProfileDirty(JSON.stringify(readProfileForm()) !== savedSnapshot);
 }
 
-const profileObserver = new MutationObserver(() => setProfileDirty(true));
+// Called after the form is (re)filled from the backend or saved. `snapshot` is
+// the JSON of what the backend now holds; it defaults to the form as it stands.
+function markProfileClean(snapshot = JSON.stringify(readProfileForm())) {
+  savedSnapshot = snapshot;
+  refreshProfileDirty();
+}
+
 const profileSectionEl = document.getElementById('profile-section');
-profileObserver.observe(profileSectionEl, { childList: true, subtree: true });
-profileSectionEl.addEventListener('input', () => setProfileDirty(true));
-profileSectionEl.addEventListener('change', () => setProfileDirty(true));
+new MutationObserver(refreshProfileDirty)
+  .observe(profileSectionEl, { childList: true, subtree: true });
+profileSectionEl.addEventListener('input', refreshProfileDirty);
+profileSectionEl.addEventListener('change', refreshProfileDirty);
 
 // -- Qualification card --
 
@@ -1416,12 +1425,34 @@ async function loadProfile() {
   profileLoaded = true;
   try {
     const res = await fetch(`${BACKEND}/profile-ui/data`);
-    if (res.status === 404) return; // no profile yet — blank form is fine
+    if (res.status === 404) return markProfileClean(); // no profile yet — blank form is the baseline
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     populateForm(await res.json());
   } catch (e) {
     showMsg(`Could not load profile: ${e.message}`, 'err');
+    markProfileClean(); // still flag edits typed into the (blank) form
   }
+}
+
+// The form's data in the PUT /profile-ui/data shape. Every card is included,
+// titled or not, so an untitled card (which save skips) keeps the form dirty.
+function readProfileForm() {
+  const val = id => document.getElementById(id).value.trim();
+  return {
+    profile: {
+      name:            val('p-name'),
+      email:           val('p-email'),
+      phone:           val('p-phone')           || null,
+      location:        val('p-location')        || null,
+      summary:         val('p-summary')         || null,
+      writing_sample:  val('p-writing-sample')  || null,
+      target_role:     val('p-target-role')     || null,
+      target_location: val('p-target-location') || null,
+    },
+    qualifications: [...document.querySelectorAll('#quals-list .entry-card')].map(readQualCard),
+    experiences:    [...document.querySelectorAll('#exps-list .entry-card')].map(readExpCard),
+    skills:         [...skillsData],
+  };
 }
 
 function populateForm(data) {
@@ -1433,6 +1464,7 @@ function populateForm(data) {
   document.getElementById('p-summary').value         = p.summary         || '';
   document.getElementById('p-target-role').value     = p.target_role     || '';
   document.getElementById('p-target-location').value = p.target_location || '';
+  document.getElementById('p-writing-sample').value  = p.writing_sample  || '';
 
   const qualsList = document.getElementById('quals-list');
   qualsList.innerHTML = '';
@@ -1444,8 +1476,36 @@ function populateForm(data) {
 
   skillsData = data.skills || [];
   renderSkillPills();
+  updateWritingStats();
   markProfileClean();
 }
+
+// -- Your Writing view --
+// The sample is often several pages, so the form shows a button with a word
+// count and the text gets a view of its own. The textarea stays inside
+// #profile-section, so saving and the unsaved-changes note work unchanged.
+
+const writingInput = document.getElementById('p-writing-sample');
+const profileMain  = document.getElementById('profile-main');
+const writingView  = document.getElementById('writing-view');
+
+function updateWritingStats() {
+  const words = (writingInput.value.match(/\S+/g) || []).length;
+  const text = words ? `${words.toLocaleString()} word${words === 1 ? '' : 's'}` : 'Nothing added yet';
+  document.getElementById('writing-stats').textContent = text;
+  document.getElementById('writing-view-stats').textContent = text;
+}
+
+function showWritingView(open) {
+  profileMain.hidden = open;
+  writingView.hidden = !open;
+  profileSection.scrollIntoView({ block: 'start' });
+  if (open) writingInput.focus({ preventScroll: true });
+}
+
+writingInput.addEventListener('input', updateWritingStats);
+document.getElementById('open-writing-btn').addEventListener('click', () => showWritingView(true));
+document.getElementById('close-writing-btn').addEventListener('click', () => showWritingView(false));
 
 async function saveProfile() {
   const btn = document.getElementById('save-profile-btn');
@@ -1453,40 +1513,25 @@ async function saveProfile() {
   btn.textContent = 'Saving…';
   let savedLabel = 'Save Profile';
   try {
-    const qualCards = [...document.querySelectorAll('#quals-list .entry-card')];
-    const expCards  = [...document.querySelectorAll('#exps-list .entry-card')];
-    const quals = qualCards.map(readQualCard).filter(q => q.title);
-    const exps  = expCards.map(readExpCard).filter(e => e.title);
+    const form  = readProfileForm();
+    const quals = form.qualifications.filter(q => q.title);
+    const exps  = form.experiences.filter(e => e.title);
     // A card with no title can't be stored (the backend skips it too) — say so
     // instead of letting it vanish on the next load.
-    const dropped = (qualCards.length - quals.length) + (expCards.length - exps.length);
-    const skills = [...skillsData];
-
-    const body = {
-      profile: {
-        name:            document.getElementById('p-name').value.trim(),
-        email:           document.getElementById('p-email').value.trim(),
-        phone:           document.getElementById('p-phone').value.trim()           || null,
-        location:        document.getElementById('p-location').value.trim()        || null,
-        summary:         document.getElementById('p-summary').value.trim()         || null,
-        target_role:     document.getElementById('p-target-role').value.trim()     || null,
-        target_location: document.getElementById('p-target-location').value.trim() || null,
-      },
-      qualifications: quals,
-      experiences: exps,
-      skills,
-    };
+    const dropped = (form.qualifications.length - quals.length) + (form.experiences.length - exps.length);
+    const body = { ...form, qualifications: quals, experiences: exps };
+    const bodyJson = JSON.stringify(body);
 
     const res = await fetch(`${BACKEND}/profile-ui/data`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      body: bodyJson,
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    markProfileClean();
+    // Baseline = exactly what was sent, so edits typed while the request was in
+    // flight, and any skipped untitled cards, still show as unsaved.
+    markProfileClean(bodyJson);
     if (dropped) {
-      // Left dirty on purpose: the untitled cards are still in the form, unsaved.
-      setProfileDirty(true);
       showMsg(`Saved — but ${dropped} entr${dropped === 1 ? 'y' : 'ies'} with no title ${dropped === 1 ? 'was' : 'were'} skipped. Give ${dropped === 1 ? 'it' : 'them'} a title and save again.`, 'err', 8000);
     } else {
       showMsg('Profile saved.', 'ok');
@@ -1774,6 +1819,8 @@ async function importFromSeekProfile() {
 
     // Skills — merge without duplicates
     for (const s of (p.skills || [])) addSkill(s);
+    // Programmatic .value writes fire no input event — re-check explicitly.
+    refreshProfileDirty();
 
     const counts = [
       p.experiences?.length && `${p.experiences.length} experience(s)`,

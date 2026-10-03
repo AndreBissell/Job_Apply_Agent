@@ -77,6 +77,7 @@ CREATE TABLE profiles (
     visa_status     TEXT,                          -- 'citizen', 'PR', 'visa (subclass X)', ...
     preferences     TEXT,                          -- JSON object of UI-tunable settings (see below)
     profile_revised_at TIMESTAMPTZ,                -- explicit 'profile content changed' marker; see matches.scored_at
+    writing_sample  TEXT,                          -- pasted samples of the user's own writing; voice reference for letters
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -97,6 +98,18 @@ last change" from `MAX(updated_at)` over experiences / skills /
 qualifications, and that cannot see a **deletion** - removing a skill leaves
 no row with a newer timestamp. Any code path that deletes profile content
 should bump this column. See *Retention* under `matches`.
+
+`writing_sample` (cover-letter plan §5.4) is a free-text dump of anything the
+user has written (an old cover letter, an essay, a long email), pasted into the
+"Your writing" box in either profile editor. The letter writer uses it for tone
+and rhythm only, **never as a source of facts** (facts come from evidence
+pointers), so it is not evidence: changing it does not bump
+`profile_revised_at`. It is a column, not a preference key, because it can be
+long and is profile content rather than a setting. `PUT /profile-ui/data`
+leaves it unchanged when the request omits the field, so a client that doesn't
+know about it can't wipe it. When it is empty the writer falls back to the
+user's own words in `summary` and `experiences.description`
+(`app/llm/letter/style.py::voice_reference`).
 
 ---
 

@@ -268,8 +268,19 @@ then `analysis-report`. Company-name bug FIXED 2026-10-02 (detail-page JSON-LD c
 extraction; `scripts/backfill_company.py` repairs old rows). Unverified in a live
 Chrome; also no Seek row has a location/discovered_query, which suggests the
 search-card capture path may not be firing (check the console on a search page).
-Next up is Phase 4 (style skill + `style_lint` + `profiles.writing_sample`). Grow
-the eval set (only 9 ads, none at 75-84) before Phase 6 compares engines.
+Phase 4 is BUILT (2026-10-03): `profiles.writing_sample` (migration `e8b4f2a61c93`;
+"Your writing" box in both profile editors; PUT only writes it when the request
+includes the key, so the sidebar can't wipe it), the style skill folder
+`app/llm/skills/cover_letter_style/` (SKILL.md, banned_phrases.txt, us_to_au.txt),
+`app/llm/letter/style.py` (style guide + voice as prompt text; voice falls back to
+summary/experience text), and `app/llm/letter/tools/style_lint.py` (code-only
+check; rubric.py now imports its helpers; one em dash allowed, same as the eval).
+`cover_letter.py` got an eval-only `styled=True` path (`letter_lab.py run --engine
+oneshot-styled`); production letters are unchanged. Early result in
+evals/results/styled-oneshot.md; the user's own grades decide whether it helped.
+The real profile's writing_sample is set (921 words, 3 samples). Next up is Phase 5
+(draft + check tools). Grow the eval set (only 9 ads, none at 75-84) before Phase 6
+compares engines.
 
 Parked fast-follows. Both need a live Seek session rather than guesswork:
 1. §5.2's apply-flow detection (see the extension-revamp entry below).

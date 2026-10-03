@@ -236,7 +236,16 @@ def _engine_oneshot(job_id: int):
     return cl.generated_content if cl else None
 
 
-ENGINES = {"oneshot": _engine_oneshot}
+def _engine_oneshot_styled(job_id: int):
+    """The same one call with Phase 4's style guide + the user's voice in the system
+    prompt. Same inputs otherwise, so the difference is style + voice alone."""
+    from app.llm.cover_letter import generate_cover_letter
+
+    cl = generate_cover_letter(job_id, PROFILE_ID, force=True, bypass_threshold=True, styled=True)
+    return cl.generated_content if cl else None
+
+
+ENGINES = {"oneshot": _engine_oneshot, "oneshot-styled": _engine_oneshot_styled}
 
 
 def _run_cost(job_id: int, since: datetime.datetime) -> dict:
@@ -433,6 +442,27 @@ def cmd_report(args) -> int:
         f"{item_pass['no_unsupported_claims'][1] - item_pass['no_unsupported_claims'][0]}"
         f" of {item_pass['no_unsupported_claims'][1]} graded |",
     ]
+    # The writer's own style check (Phase 4). Not part of the rubric pass rate: it is
+    # stricter (spaced en dashes, warnings) and is reported so engines can be compared on it.
+    from app.llm.letter.tools.style_lint import lint
+
+    lint_rows, lint_pass = [], 0
+    for r in ok:
+        letter = run_dir / "letters" / f"{r['key']}.txt"
+        if not letter.exists():
+            continue
+        res = lint(letter.read_text(encoding="utf-8"))
+        lint_pass += res["passed"]
+        tags = [i.split(":")[0] for i in res["issues"]] + [f"({w.split(':')[0]})" for w in res["warnings"]]
+        lint_rows.append(f"| {r['title'][:50].replace('|', '/')} | {'✓' if res['passed'] else '✗'} | "
+                         f"{res['sentence_stdev']} | {', '.join(tags) or '-'} |")
+    if lint_rows:
+        lines += [
+            "", f"## style_lint (writer's check, not in the pass rate): {lint_pass}/{len(lint_rows)} pass", "",
+            "Blocking issues plain, warnings in brackets. Sentence stdev: words; under 6 warns.", "",
+            "| Job | Pass | Sentence stdev | Issues (warnings) |", "|---|---|---|---|", *lint_rows,
+        ]
+
     notes = [(r["key"], grades.get(r["key"], {}).get("notes", "").strip()) for r in ok]
     notes = [(k, t) for k, t in notes if t]
     if notes:
@@ -545,8 +575,7 @@ def cmd_analyze(args) -> int:
                 lines.append("\n**Screening questions in the ad:**")
                 lines += [f"- {q}" for q in state.job.screening_questions]
             if state.job.application_instructions:
-                lines.append("
-**Application instructions in the ad:**")
+                lines.append("\n**Application instructions in the ad:**")
                 lines += [f"- {q}" for q in state.job.application_instructions]
             if state.eligibility_notes():
                 lines.append("\n**Eligibility notes (heads-up on the job card, never in the letter):**")

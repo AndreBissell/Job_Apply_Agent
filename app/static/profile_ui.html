@@ -146,6 +146,16 @@
     </div>
   </section>
 
+  <!-- Your writing -->
+  <section>
+    <div class="section-header"><h2>Your Writing</h2></div>
+    <div class="card">
+      <label for="p-writing-sample">Paste anything you've written</label>
+      <textarea id="p-writing-sample" rows="8"
+        placeholder="An old cover letter, a uni essay, a long email — no structure needed. Cover letters use this so the tone and rhythm sound like you. It's never used as a source of facts; leave this empty and letters fall back to your summary and experience descriptions."></textarea>
+    </div>
+  </section>
+
   <!-- Qualifications -->
   <section>
     <div class="section-header">
@@ -431,6 +441,7 @@ async function load() {
     document.getElementById('p-target-role').value = p.target_role || '';
     document.getElementById('p-target-location').value = p.target_location || '';
     document.getElementById('p-summary').value = p.summary || '';
+    document.getElementById('p-writing-sample').value = p.writing_sample || '';
 
     (data.qualifications || []).forEach(q => addQual(q));
     (data.experiences || []).forEach(e => addExp(e));
@@ -453,6 +464,7 @@ function collectState() {
     target_role: document.getElementById('p-target-role').value.trim() || null,
     target_location: document.getElementById('p-target-location').value.trim() || null,
     summary: document.getElementById('p-summary').value.trim() || null,
+    writing_sample: document.getElementById('p-writing-sample').value.trim() || null,
   };
 
   const qualifications = [...document.querySelectorAll('.qual-card')].map(card => ({

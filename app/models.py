@@ -79,6 +79,10 @@ class Profile(Base):
     profile_revised_at: Mapped[datetime.datetime | None] = mapped_column(
         DateTime(timezone=True)
     )
+    # Pasted samples of the user's own writing: the letter writer's voice
+    # reference (tone and rhythm only, never facts). Not evidence, so editing it
+    # does not bump profile_revised_at. See app/llm/letter/style.py.
+    writing_sample: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

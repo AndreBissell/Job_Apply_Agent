@@ -27,3 +27,11 @@ wealth of experience
 navigate the complexities
 in today's ever-evolving
 ever-changing landscape
+# Added 2026-10-03, found repeated across the 9 baseline-oneshot letters
+# (evals/runs/baseline-oneshot/letters/) — generic filler the one-shot writer
+# fell back on across unrelated jobs.
+strong foundation
+technical foundation
+i would welcome the opportunity
+eager to bring
+problem-solving skills

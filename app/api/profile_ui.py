@@ -50,6 +50,10 @@ class ProfileIn(BaseModel):
     summary: str | None = None
     target_role: str | None = None
     target_location: str | None = None
+    # Optional and left out of ProfileData.profile by older/other callers. Only
+    # written when the request actually includes the key (see put_profile_data) —
+    # a PUT that doesn't know about this field must never wipe it.
+    writing_sample: str | None = None
 
 
 class QualIn(BaseModel):
@@ -135,6 +139,7 @@ def get_profile_data(db: Session = Depends(get_db)) -> dict:
             "summary": profile.summary,
             "target_role": profile.target_role,
             "target_location": profile.target_location,
+            "writing_sample": profile.writing_sample,
         },
         "qualifications": [
             {
@@ -188,6 +193,11 @@ def put_profile_data(body: ProfileData, db: Session = Depends(get_db)) -> dict:
     profile.summary = body.profile.summary or None
     profile.target_role = body.profile.target_role or None
     profile.target_location = body.profile.target_location or None
+    # writing_sample is not a source of facts (it's a voice reference, see
+    # docs/database-schema.md), so a PUT that doesn't mention it must never
+    # wipe it — only a request that actually includes the key can change it.
+    if "writing_sample" in body.profile.model_fields_set:
+        profile.writing_sample = body.profile.writing_sample or None
     db.flush()
 
     # 2. Delete experiences first (experience_skills cascade on experience_id)
