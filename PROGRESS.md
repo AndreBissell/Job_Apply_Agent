@@ -21,7 +21,8 @@ written by a Sonnet subagent to a spec.
 (orchestrator 47 s), 15/15 clean, 0 refusals, and the same tool path as the
 workflow on every job. Blind Opus panel opus-v3 against workflow-v2: musts 15 vs 15,
 claims 12 vs 13, detail 12 vs 12, would_send 0 vs 0; the panel re-graded workflow-v2
-at 57/60. **Recommendation: keep the workflow as the default engine.**
+at 57/60. Claude recommended the workflow; **the user chose the agent as the default
+engine** (agent experience; ~$0.26/month extra at 20 letters), with the workflow as fallback.
 `evals/results/grading-opus-v3.md`, `agent-v1-loop.md`, `cost-workflow-v2-vs-agent-v1.md`.
 
 ---

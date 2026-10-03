@@ -328,8 +328,10 @@ workflow so the engines end a run in one place. `letter_lab.py run --engine agen
 tokens and time). Result `agent-v1`: $0.178/letter, 182 s, 15/15 clean, the SAME tool
 path as the workflow on 15/15 jobs, 0 refusals; panel opus-v3 (re-graded workflow-v2
 at 57/60): musts 15 vs 15, claims 12 vs 13, detail 12 vs 12, would_send 0 vs 0.
-Recommendation: `letter_engine` defaults to `workflow` (agency adds +$0.013 and
-+40 s/letter and nothing else when the guardrails fix the order). Thinking tokens are
+Claude recommended the workflow (agency added +$0.013 and +40 s/letter and nothing
+else); USER DECISION: `letter_engine` defaults to `agent` (agent experience for their
+next job; ~$0.26/month at 20 letters). The workflow stays as the fallback; build 7b/7c
+agent-first, with the workflow still working through the same gap-policy hook. Thinking tokens are
 71% of a letter's cost; the Pro draft call is 61% (evals/results/cost-*.md).
 Next: Phase 7b (ask_user + remembered "no"s + the to-work-on list; schema doc first),
 then the writer change as workflow-v3 (apply evidence to the employer's work, no stock
