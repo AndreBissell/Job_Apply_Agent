@@ -109,7 +109,11 @@ shows work that reasonably demonstrates it.
   - overstated: the source has something related, but the letter claims more: a \
 bigger audience, scope, team or number; a lead role where they contributed; using a \
 tool in daily work when they only built something about it or studied it; a \
-different tool than the one stated; an outcome or metric the profile does not give.
+different tool than the one stated; an outcome or metric the profile does not give; \
+experience wording ("experience with", "exposure to", "background in", "hands-on", \
+"practical", "applied my skills in") for a skill the profile only lists in its skills \
+section, with no experience entry describing its use. A listing backs only "skills \
+in", "knowledge of" or "familiar with" that skill.
   - unsupported: nothing in the source says it.
   - not_a_claim: on reflection it is one of the kinds to skip above (interest, \
 intent, the application itself, an admission). Use this rather than unsupported."""

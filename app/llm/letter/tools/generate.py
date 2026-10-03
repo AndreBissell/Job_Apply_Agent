@@ -56,6 +56,12 @@ weekly reports to team leads" must not become "presented to executives"; "contri
 to" must not become "led".
 - PARTIAL evidence is framed honestly as related experience ("I used Tableau at \
 university, which carries over to Power BI"), never as the thing itself.
+- A skill the profile only LISTS (a skill: pointer, with no experience entry \
+describing its use) backs "skills in" or "knowledge of" it, never "experience with", \
+"exposure to", "a background in", or "hands-on" or "practical" use of it.
+- Do not lead with what the candidate has not done ("Although I have not...", "While \
+I am new to..."). Say what they have done and how it carries over, or leave the \
+requirement out.
 - Requirements under DO NOT CLAIM are not mentioned at all and not written around. \
 Items under NEVER IN THE LETTER (eligibility: work rights, licences, clearances) are \
 never mentioned.
@@ -96,7 +102,9 @@ def writer_system_prompt(ctx: ToolContext) -> str:
 
 def _req_line(ctx: ToolContext, r: Requirement, with_evidence: bool) -> list[str]:
     head = f"- {r.id} [{r.importance}, theme: {r.theme}] {r.text}"
-    if r.status == "partial":
+    if guardrails.listing_only(r):
+        head += "  (LISTED SKILL ONLY: at most 'skills in / knowledge of'; never claim experience with it)"
+    elif r.status == "partial":
         head += "  (PARTIAL: frame honestly as related experience)"
     lines = [head]
     if r.note:

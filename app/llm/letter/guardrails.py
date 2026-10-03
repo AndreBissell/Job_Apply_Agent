@@ -11,9 +11,10 @@ requirement. The writer, the reviser and ``check_requirements`` all read it, so
 "what the letter must cover" can't mean three different things:
 
     must_cover     headline items, and essential mentions, the profile supports
-                   (fully or partly). check_requirements BLOCKS if one is missing
-    may_use        other supported/partial mentions and implied items: use if they
-                   fit, never required
+                   (fully or partly) with more than a skill listing.
+                   check_requirements BLOCKS if one is missing
+    may_use        other supported/partial mentions and implied items, and anything
+                   backed only by listed skills: use if they fit, never required
     do_not_claim   gaps and anything the user chose to leave out: not mentioned,
                    not written around
     eligibility    not_for_letter items: never in the letter (a job-card note)
@@ -33,11 +34,20 @@ def _left_out(r: Requirement) -> bool:
 # ---------------------------------------------------------------------------
 # What the letter does with each requirement
 # ---------------------------------------------------------------------------
+def listing_only(r: Requirement) -> bool:
+    """Backed only by skills the profile lists, with no experience entry describing
+    their use. A listing backs "skills in X", never "experience with X", so such an
+    item can't be required: requiring it produced gap-led "I have not ..." sentences
+    and overclaims in 7 of 15 eval letters (decision log 2026-10-03)."""
+    return bool(r.evidence) and all(p.startswith("skill:") for p in r.evidence)
+
+
 def must_cover(state: LetterState) -> list[Requirement]:
     return [
         r for r in state.requirements
         if r.status in _COVERED
         and not _left_out(r)
+        and not listing_only(r)
         and (r.letter_role == "headline" or (r.letter_role == "mention" and r.importance == "essential"))
     ]
 
@@ -48,7 +58,7 @@ def may_use(state: LetterState) -> list[Requirement]:
         r for r in state.requirements
         if r.status in _COVERED
         and not _left_out(r)
-        and r.letter_role in ("mention", "implied")
+        and (r.letter_role in ("mention", "implied") or (r.letter_role == "headline" and listing_only(r)))
         and r.id not in required
     ]
 

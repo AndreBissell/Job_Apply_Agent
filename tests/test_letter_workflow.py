@@ -88,7 +88,7 @@ def _req(rid, text="x", importance="essential", role="headline", status="support
 def _state(requirements=None) -> LetterState:
     reqs = requirements if requirements is not None else [
         _req("R1", "Build REST APIs", evidence=["experience:12#s1"]),
-        _req("R2", "SQL databases", role="mention", evidence=["skill:7"]),
+        _req("R2", "SQL databases", role="mention", evidence=["skill:7", "experience:12"]),
     ]
     return LetterState(profile_id=1, job=JobInfo(job_id=5, title="Engineer"), requirements=reqs)
 
@@ -154,7 +154,7 @@ class Script:
         if "match_profile" in self.raise_in:
             raise self.raise_in["match_profile"]
         for r in state.requirements:
-            r.status, r.evidence = self.match.get(r.id, ("supported", ["skill:7"]))
+            r.status, r.evidence = self.match.get(r.id, ("supported", ["experience:12"]))
         return {"matched": len(state.requirements)}
 
     def generate_letter(self, state, ctx):

@@ -86,7 +86,7 @@ def _req(rid, text, importance="essential", role="headline", status="supported",
 def _plan_requirements() -> list[Requirement]:
     return [
         _req("R1", "Build REST APIs", evidence=["experience:12#s1"]),  # must
-        _req("R2", "SQL databases", role="mention", status="partial", evidence=["skill:7"]),  # must (essential mention)
+        _req("R2", "SQL databases", role="mention", status="partial", evidence=["skill:7", "experience:12#s2"]),  # must (essential mention)
         _req("R3", "Cloud deployment", "important", "mention", evidence=["experience:12#s2"]),  # may
         _req("R4", "Kubernetes in production", "important", "headline", "gap"),  # do not claim (not essential: not pending)
         _req("R5", "Degree in IT", "essential", "headline", evidence=["qualification:4"],
@@ -195,6 +195,23 @@ def test_leave_out_removes_a_supported_item_from_must_cover_and_may_use():
     state = _state(_plan_requirements())
     assert "R5" not in _ids(guardrails.must_cover(state))
     assert "R5" not in _ids(guardrails.may_use(state))
+
+
+def test_listing_only_means_every_pointer_is_a_skill():
+    assert guardrails.listing_only(_req("R1", "x", evidence=["skill:7"]))
+    assert guardrails.listing_only(_req("R1", "x", evidence=["skill:7", "skill:8"]))
+    assert not guardrails.listing_only(_req("R1", "x", evidence=["skill:7", "experience:12"]))
+    assert not guardrails.listing_only(_req("R1", "x", evidence=[]))
+
+
+def test_a_must_have_backed_only_by_listed_skills_moves_to_may_use():
+    # Requiring it forced "I have not ..." sentences and "experience with X" overclaims
+    # (decision log 2026-10-03), so it may be mentioned as a skill but is never required.
+    headline = _req("R1", "SQL", status="partial", evidence=["skill:7"])
+    mention = _req("R2", "Git", role="mention", status="partial", evidence=["skill:7"])
+    state = _state([headline, mention])
+    assert guardrails.must_cover(state) == []
+    assert _ids(guardrails.may_use(state)) == ["R1", "R2"]
 
 
 # ---------------------------------------------------------------------------
@@ -346,6 +363,22 @@ def test_generate_prompt_marks_partial_items(db, fake):
     must = user.split("MUST ADDRESS")[1].split("MAY USE")[0]
     assert "R2" in must and "PARTIAL" in must
     assert "PARTIAL" not in must.split("R2")[0]  # R1 is fully supported
+
+
+def test_generate_prompt_marks_listed_skill_only_items(db, fake):
+    reqs = [
+        _req("R1", "Build REST APIs", evidence=["experience:12#s1"]),
+        _req("R2", "SQL databases", status="partial", evidence=["skill:7"]),
+    ]
+    state, ctx = _fresh(db, requirements=reqs)
+    may = gen.writer_context(state, ctx).split("MAY USE")[1]
+    assert "R2" in may and "LISTED SKILL ONLY" in may and "PARTIAL" not in may
+
+
+def test_writer_and_claims_judge_both_limit_a_listed_skill_to_skills_in():
+    assert 'never "experience with"' in gen._WRITER_RULES
+    assert "Do not lead with what the candidate has not done" in gen._WRITER_RULES
+    assert "only lists in its skills" in cc._SYSTEM_PROMPT and '"experience with"' in cc._SYSTEM_PROMPT
 
 
 def test_generate_prompt_puts_gaps_under_do_not_claim_only(db, fake):

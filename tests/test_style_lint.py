@@ -198,3 +198,23 @@ def test_styled_prompt_adds_style_and_voice_and_keeps_grounding():
     assert "Use ONLY facts" in prompt
     assert "STYLE GUIDE" in prompt and "VOICE REFERENCE" in prompt
     assert prompt != _SYSTEM_PROMPT
+
+
+def test_gap_led_sentences_warn_but_do_not_block():
+    text = ("Dear Hiring Manager,\n\nWhile I have not used Kafka, I built event pipelines at Acme. "
+            "Although my role did not involve support, I fixed production bugs. "
+            "I have never written Go. I built REST APIs while I was at university.\n\nSincerely,\nBob")
+    res = sl.lint(text)
+    assert res["gap_led_sentences"] == [
+        "While I have not used Kafka, I built event pipelines at Acme.",
+        "Although my role did not involve support, I fixed production bugs.",
+        "I have never written Go.",
+    ]
+    assert sum(w.startswith("gap_led") for w in res["warnings"]) == 3
+    assert not any(i.startswith("gap_led") for i in res["issues"])
+
+
+def test_related_experience_framing_is_not_gap_led():
+    text = ("Dear Hiring Manager,\n\nI used Tableau at university, which carries over to Power BI. "
+            "While at Acme I built REST APIs.\n\nSincerely,\nBob")
+    assert sl.gap_led_sentences(text) == []
