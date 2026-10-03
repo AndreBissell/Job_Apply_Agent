@@ -1,6 +1,6 @@
 # Letter eval: workflow-v1
 
-Engine `workflow`, strong model `gemini-3.1-pro-preview`, run 2026-10-03T17:25:28. 15 letters (0 failed). Rubric: evals/rubric.md. Grades: `grades.csv`.
+Engine `workflow`, strong model `gemini-3.1-pro-preview`, run 2026-10-03T17:25:28. 15 letters (0 failed). Rubric: evals/rubric.md. Grades: `grades-opus.csv`.
 
 | Score | Job | Words | em_dash_limit | generic_phrase_limit | within_word_limit | no_placeholders | has_sign_off | supported_musts_covered | no_unsupported_claims | specific_detail | would_send | Pass | Cost | Time |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -67,4 +67,4 @@ Blocking issues plain, warnings in brackets. Sentence stdev: words; under 6 warn
 | Frontend Developer | ✓ | 6.7 | - |
 | Graduate AI & Technology Developer | ✓ | 7.36 | - |
 
-15 letter(s) graded by the blind Opus panel (evals/grading-standard.md); their reasons are in evals/runs/workflow-v1/grades.csv (gitignored: they quote the letters).
+15 letter(s) graded by the blind Opus panel (evals/grading-standard.md); their reasons are in evals/runs/workflow-v1/grades-opus.csv (gitignored: they quote the letters).

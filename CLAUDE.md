@@ -305,12 +305,18 @@ draft handed back. `account_limit` is set when the USD guard / daily quota stopp
 1 hit the revision limit, 0 revisions over length or breaking claims, 2/6 dropped a
 must-cover item) and `loop-report <run> --against tools-v1`. `--engine tools` now
 logs engine="tools". The one-shot baseline covers all 15 (6 new merged into
-evals/runs/baseline-oneshot/). WAITING ON THE USER: grades for evals/runs/workflow-v1/
-grades.csv (letters.md shows each letter with the one-shot one folded underneath)
-and the 6 new rows in evals/runs/baseline-oneshot/grades.csv, then `report` both.
-Open finding for Phase 7: a must-cover item that is `partial` only because of a bare
-skill listing forces "I have not ..." sentences (7/15 letters) and makes
-check_requirements flip-flop; proposed fix is may_use or an ask_user question.
+evals/runs/baseline-oneshot/). GRADED 2026-10-03 by a blind Opus panel (user's
+request; evals/grading-standard.md = the base levels, 2 graders + adjudicator, 111/120
+agreement; vs the user's own grades 8/15 on held-out letters, the panel much stricter
+on claims). Panel, workflow vs one-shot: musts 15 vs 4, claims 6 vs 2, detail 11 vs 4,
+would_send 2 vs 0 (evals/results/grading-opus-v1.md). Panel grades are in
+grades-opus.csv and filled only blank grades.csv cells; `report <run> --grades
+grades-opus.csv`. Fixed: check_claims stage 1 blocks invented links/emails (a style
+revision made up a youtu.be link an ad asked for). Open for Phase 7, one root cause
+(bare skill listings): check_claims passes "experience with X" on a listed-only skill
+(7/9 workflow claim fails), and partial must-covers backed only by a listing force
+gap-led "I have not ..." sentences (10/13 would_send fails). Fix both, then re-run
+`plant` and the 15-ad set.
 Next up is Phase 7 (agent + ask_user + to-work-on list). Known: Gemini implicit
 caching never hits (cached_tokens 0 on every call), and the writer still copies one
 stock line from the writing sample (future_work/voice-toggle-and-comparison.md).

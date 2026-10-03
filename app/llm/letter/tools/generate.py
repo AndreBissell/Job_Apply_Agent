@@ -60,6 +60,9 @@ university, which carries over to Power BI"), never as the thing itself.
 Items under NEVER IN THE LETTER (eligibility: work rights, licences, clearances) are \
 never mentioned.
 - Statements about the employer use only what the job ad says.
+- Never invent links, email addresses, phone numbers or attachments. If the ad asks \
+for something the profile doesn't contain (a video, a portfolio link, a transcript), \
+leave it out: the user adds it.
 
 Write the letter from "Dear Hiring Manager," to the sign-off, with no subject line, \
 date or address block. Address every MUST ADDRESS requirement, grouping requirements \

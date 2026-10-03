@@ -5,7 +5,10 @@ stages:
 
 1. **Code (no LLM).** Every declared claim that names a source must name a pointer
    that resolves to real profile text. A pointer that doesn't exist means the writer
-   cited something it made up: blocking.
+   cited something it made up: blocking. So is any link or email address in the
+   letter that isn't in the profile: an ad asking for "a link to a 2 minute video"
+   once got an invented ``youtu.be/...`` link (eval workflow-v1), which the judge
+   passed because it isn't a claim about experience.
 2. **Small model, independently.** It reads the letter sentence by sentence, lists
    every factual claim about the candidate (and about the employer), pairs each with
    the declared claim it corresponds to, and judges it against the profile (or the
@@ -33,6 +36,7 @@ compare tiers.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any, Literal
 
 from pydantic import BaseModel
@@ -111,11 +115,33 @@ different tool than the one stated; an outcome or metric the profile does not gi
 intent, the application itself, an admission). Use this rather than unsupported."""
 
 
+# A URL (scheme, www., or a lowercase domain followed by a path) or an email address.
+# The bare-domain form is case-sensitive so "ASP.NET/C#" and "Node.js/React" don't match.
+_LINK_RE = re.compile(
+    r"(?i:https?://|www\.)\S+"
+    r"|\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|net|org|io|be|au|dev|me|ly|co|app|ai|tv|gg|edu|gov|info)/\S*"
+    r"|[\w.+-]+@[\w-]+(?:\.[\w-]+)+"
+)
+
+
+def invented_links(text: str, ctx: ToolContext) -> list[str]:
+    """Links and email addresses in ``text`` that appear nowhere in the profile."""
+    known = " ".join([*ctx.index.catalog().values(), ctx.profile.email or "", ctx.profile.phone or ""]).lower()
+    found = (m.group(0).rstrip(".,;:!?)'\"") for m in _LINK_RE.finditer(text))
+    return list(dict.fromkeys(link for link in found if link.lower() not in known))
+
+
 def _stage1(state: LetterState, ctx: ToolContext) -> list[str]:
     issues = []
     for c in state.latest_draft.claims:
         if c.source and ctx.index.resolve(c.source) is None:
             issues.append(f"bad_source: {c.text!r} cites {c.source!r}, which is not in the profile")
+    for link in invented_links(state.latest_draft.text, ctx):
+        issues.append(
+            f"invented_link: {link!r} is not in the profile. Links and contact details come from the "
+            "user, never the writer: remove it (a video, portfolio or attachment the ad asks for is "
+            "the user's to add)"
+        )
     return issues
 
 

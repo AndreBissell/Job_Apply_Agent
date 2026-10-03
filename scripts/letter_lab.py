@@ -710,7 +710,7 @@ def cmd_report(args) -> int:
         return 1
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
     grades: dict[str, dict] = {}
-    grades_path = run_dir / "grades.csv"
+    grades_path = run_dir / args.grades
     if grades_path.exists():
         with grades_path.open(encoding="utf-8") as fh:
             grades = {row["key"]: row for row in csv.DictReader(fh)}
@@ -728,7 +728,8 @@ def cmd_report(args) -> int:
         f"# Letter eval: {meta['run_id']}",
         "",
         f"Engine `{meta['engine']}`, strong model `{meta['strong_model']}`, run {meta['created_at']}. "
-        f"{len(ok)} letters ({len(meta['results']) - len(ok)} failed). Rubric: evals/rubric.md.",
+        f"{len(ok)} letters ({len(meta['results']) - len(ok)} failed). Rubric: evals/rubric.md. "
+        f"Grades: `{args.grades}`.",
         "",
         "| Score | Job | Words | " + " | ".join(AUTO_ITEMS + HUMAN_ITEMS) + " | Pass | Cost | Time |",
         "|---|---|---|" + "---|" * (len(AUTO_ITEMS) + len(HUMAN_ITEMS)) + "---|---|---|",
@@ -811,12 +812,22 @@ def cmd_report(args) -> int:
         ]
 
     notes = [(r["key"], grades.get(r["key"], {}).get("notes", "").strip()) for r in ok]
-    notes = [(k, t) for k, t in notes if t]
+    # A model grader's notes quote the letters and name profile details, which stay out
+    # of committed results (decision log 2026-10-01): they are kept in the run folder.
+    model_noted = sum(1 for _, t in notes if t.startswith("opus-blind"))
+    notes = [(k, t) for k, t in notes if t and not t.startswith("opus-blind")]
     if notes:
         lines += ["", "## Grader notes", "", *[f"- `{k}`: {t}" for k, t in notes]]
+    if model_noted:
+        lines += ["", f"{model_noted} letter(s) graded by the blind Opus panel (evals/grading-standard.md); "
+                      f"their reasons are in evals/runs/{meta['run_id']}/{args.grades} (gitignored: they quote "
+                      "the letters)."]
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    out = RESULTS_DIR / f"{meta['run_id']}.md"
+    # Grades from another file (grades-opus.csv) get their own report, so the user's
+    # grades and a model grader's are never mixed in one results file.
+    suffix = "" if args.grades == "grades.csv" else "-" + Path(args.grades).stem.removeprefix("grades-")
+    out = RESULTS_DIR / f"{meta['run_id']}{suffix}.md"
     out.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"Wrote {out.relative_to(ROOT)}")
     return 0
@@ -1405,6 +1416,8 @@ def main() -> int:
 
     p = sub.add_parser("report", help="merge code checks + grades into evals/results/<run>.md")
     p.add_argument("run_id")
+    p.add_argument("--grades", default="grades.csv",
+                   help="grades file in the run folder (grades-opus.csv -> evals/results/<run>-opus.md)")
     p.set_defaults(fn=cmd_report)
 
     p = sub.add_parser("loop-report", help="per-draft checks and what each revision changed -> evals/results/<run>-loop.md")

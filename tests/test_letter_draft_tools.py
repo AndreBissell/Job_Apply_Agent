@@ -547,6 +547,34 @@ def test_claims_bad_source_pointer_blocks_in_stage_one(db, fake):
     assert state.latest_draft.checks["claims"].passed is False
 
 
+def test_claims_invented_link_blocks_in_stage_one(db, fake):
+    # Seen in eval workflow-v1: an ad asked for "a link to a 2 minute video" and the
+    # reviser made one up. The judge passed it: it is not a claim about experience.
+    fake.responses["check_claims"] = {"claims": []}
+    text = ("Dear Hiring Manager,\n\nI built REST APIs. As requested, my video is at "
+            "youtu.be/bob-video.\n\nSincerely,\nBob")
+    state, ctx = _claims_state(db, [Claim(text="I built REST APIs", source="experience:12#s1")], text=text)
+    s = _run_claims(ctx, state)
+    assert s["passed"] is False
+    assert [i.split(":")[0] for i in s["issues"]] == ["invented_link"]
+    assert "youtu.be/bob-video" in s["issues"][0]
+
+
+def test_invented_links_finds_urls_and_emails_not_in_the_profile(db):
+    state, ctx = _fresh(db)
+    text = ("See https://example.com/me, www.bob.dev, github.com/bob and bob@other.com. "
+            "Reach me at b@x.com.")
+    assert cc.invented_links(text, ctx) == [
+        "https://example.com/me", "www.bob.dev", "github.com/bob", "bob@other.com",
+    ]  # b@x.com is the profile's own email
+
+
+def test_invented_links_ignores_tech_names_with_dots_and_slashes(db):
+    state, ctx = _fresh(db)
+    text = "I used ASP.NET/C#, Node.js/React, CI/CD and .NET at Acme."
+    assert cc.invented_links(text, ctx) == []
+
+
 def test_claims_declared_claim_without_source_is_not_a_stage_one_issue(db, fake):
     fake.responses["check_claims"] = {"claims": []}
     state, ctx = _claims_state(db, [Claim(text="I built REST APIs", source=None)])

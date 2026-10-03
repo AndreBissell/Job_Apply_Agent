@@ -22,8 +22,15 @@ went over length or broke a passing check; 2/6 dropped a must-cover item.
 Per-run detail is in `evals/results/workflow-v1*.md`; the decisions are in
 docs/cover-letter-loop-plan.md's Decision log.
 
-**Verified:** `python -m pytest` (455 passed, 50 new). **Not done:** the
-user's grades for workflow-v1 and the 6 new one-shot letters.
+**Graded** by a blind Opus panel (user's request): a written standard
+(`evals/grading-standard.md`), two graders plus an adjudicator, checked against
+the user's held-out grades. Workflow beat one-shot on every judgement item
+(musts 15 vs 4, claims 6 vs 2, detail 11 vs 4, would send 2 vs 0); details in
+`evals/results/grading-opus-v1.md`. Found and fixed: a revision invented a video
+link an ad asked for, so `check_claims` now blocks links and emails that aren't
+in the profile.
+
+**Verified:** `python -m pytest` (458 passed, 53 new).
 
 ---
 
