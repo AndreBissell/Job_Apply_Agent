@@ -16,6 +16,10 @@ mechanical items, you grade the judgement items in a CSV.
     #    ... fill in evals/runs/<analysis-run>/checks.csv (Y/N per column) ...
     python scripts/letter_lab.py analysis-report <run>   # agreement rates -> evals/results/<run>.md
 
+    python scripts/letter_lab.py run --engine tools      # Phase 5: draft + check tools, one revision -> also drafts.md + states/
+    python scripts/letter_lab.py run --engine tools --only seek-94419843   # one job, as a smoke test
+    python scripts/letter_lab.py plant <tools-run>        # planted-claim test for check_claims -> evals/results/plant-<run>.md
+
 Privacy: evals/jobs/, evals/eval.db, evals/set.json and evals/runs/ hold ad text,
 your profile and letters written as you — all gitignored. Only the summary in
 evals/results/ (titles, pass/fail, cost) is meant to be committed.
@@ -247,7 +251,74 @@ def _engine_oneshot_styled(job_id: int):
     return cl.generated_content if cl else None
 
 
-ENGINES = {"oneshot": _engine_oneshot, "oneshot-styled": _engine_oneshot_styled}
+TOOLS_MAX_REVISIONS = 1  # Phase 5 exercises revise_letter once; Phase 6's workflow sets the real loop
+
+
+def _engine_tools(job_id: int):
+    """Phase 5's draft + check tools in a fixed order (not yet Phase 6's workflow):
+    analyze_job (cached) -> match_profile -> unanswered must-have gaps treated as
+    leave_out (there is no ask_user UI yet) -> generate_letter -> the three checks
+    -> one revise_letter if any failed -> the checks again. Returns the latest
+    draft plus the full state, so `plant` can reuse letters that passed check_claims.
+    """
+    from sqlalchemy import select
+
+    from app.db import SessionLocal
+    from app.llm.client import BudgetExceededError, DailyQuotaError
+    from app.llm.letter import guardrails
+    from app.llm.letter.runner import execute_tool, finish_run, start_run
+    from app.llm.letter.state import JobInfo, LetterState, UserDecision
+    from app.llm.letter.tools.analyze_job import analyze_job
+    from app.llm.letter.tools.check_claims import check_claims
+    from app.llm.letter.tools.check_requirements import check_requirements
+    from app.llm.letter.tools.generate import generate_letter
+    from app.llm.letter.tools.match_profile import match_profile
+    from app.llm.letter.tools.revise import revise_letter
+    from app.llm.letter.tools.style_lint import style_lint
+    from app.models import JobListing, Match
+
+    with SessionLocal() as db:
+        job = db.get(JobListing, job_id)
+        match = db.scalar(select(Match).where(Match.job_id == job_id, Match.user_id == PROFILE_ID))
+        state = LetterState(profile_id=PROFILE_ID, job=JobInfo(job_id=job.id, title=job.title, company=job.company))
+        ctx = start_run(db, match.id, "workflow", state)
+
+        def step(name, fn):
+            stop = state.budget_exceeded()
+            if stop:
+                raise RuntimeError(stop)
+            r = execute_tool(ctx, state, name, fn)
+            if not r.ok:
+                raise RuntimeError(f"{name}: {r.error}")
+
+        def checks():
+            for name, fn in (("check_claims", check_claims), ("check_requirements", check_requirements),
+                             ("style_lint", style_lint)):
+                step(name, fn)
+
+        try:
+            step("analyze_job", analyze_job)
+            step("match_profile", match_profile)
+            for r in state.pending_gaps():
+                r.user_decision = UserDecision(choice="leave_out", answer="eval: unanswered gap left out")
+            step("generate_letter", generate_letter)
+            checks()
+            for _ in range(TOOLS_MAX_REVISIONS):
+                if guardrails.can_revise(state) is not None:
+                    break  # everything passed, or the draft cap
+                step("revise_letter", revise_letter)
+                checks()
+        except (DailyQuotaError, BudgetExceededError):
+            finish_run(ctx, state, "budget_stopped")
+            raise
+        except Exception:
+            finish_run(ctx, state, "failed")
+            raise
+        finish_run(ctx, state, "done" if guardrails.can_finish(state) is None else "budget_stopped")
+        return {"text": state.latest_draft.text, "state": state.model_dump(mode="json"), "letter_run_id": ctx.run.id}
+
+
+ENGINES = {"oneshot": _engine_oneshot, "oneshot-styled": _engine_oneshot_styled, "tools": _engine_tools}
 
 
 def _run_cost(job_id: int, since: datetime.datetime) -> dict:
@@ -275,6 +346,8 @@ def cmd_run(args) -> int:
         print("Run `letter_lab.py prepare` first.")
         return 1
     keys = json.loads(SET_FILE.read_text(encoding="utf-8"))["jobs"]
+    if args.only:
+        keys = [k for k in keys if k in args.only]
     _migrate_eval_db()
 
     from sqlalchemy import select
@@ -291,8 +364,26 @@ def cmd_run(args) -> int:
     engine = ENGINES[args.engine]
     print(f"Run {run_id}: engine={args.engine}, model={client.model_for('strong')}, {len(keys)} jobs")
 
-    results = []
+    meta = {
+        "run_id": run_id, "engine": args.engine, "strong_model": client.model_for("strong"),
+        "created_at": datetime.datetime.now().isoformat(timespec="seconds"), "results": [],
+    }
+    meta_path = run_dir / "run.json"
+    if args.resume and meta_path.exists():  # keep finished jobs, redo failed/missing ones
+        old = json.loads(meta_path.read_text(encoding="utf-8"))
+        meta["created_at"] = old.get("created_at", meta["created_at"])
+        meta["results"] = [r for r in old["results"] if "error" not in r]
+    results = meta["results"]
+    done = {r["key"] for r in results}
+    if done:
+        print(f"  resuming: {len(done)} job(s) already done, skipped")
+
+    def save() -> None:  # after every job, so a killed run loses at most the job in progress
+        meta_path.write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
+
     for key in keys:
+        if key in done:
+            continue
         source, source_job_id = key.split("-", 1)
         with SessionLocal() as db:
             job = db.scalar(select(JobListing).where(
@@ -314,24 +405,39 @@ def cmd_run(args) -> int:
         except Exception as exc:  # noqa: BLE001 — one bad job shouldn't sink the run
             print(f"  {key}: FAILED — {str(exc)[:160]}")
             results.append({"key": key, "title": title, "company": company, "score": score, "error": str(exc)})
+            save()
             continue
         seconds = round(time.monotonic() - start, 1)
+        extra: dict = {}
+        if isinstance(text, dict):  # the tools engine: letter + its full LetterState
+            out = text
+            text = out["text"]
+            (run_dir / "states").mkdir(exist_ok=True)
+            (run_dir / "states" / f"{key}.json").write_text(
+                json.dumps(out["state"], indent=2, ensure_ascii=False), encoding="utf-8")
+            final = out["state"]["drafts"][-1]
+            extra = {
+                "letter_run_id": out["letter_run_id"],
+                "drafts": len(out["state"]["drafts"]),
+                "tool_checks": {n: c["passed"] for n, c in final["checks"].items()},
+            }
         text = text or ""
         (run_dir / "letters" / f"{key}.txt").write_text(text, encoding="utf-8")
         checks = auto_checks(text)
         results.append({
             "key": key, "title": title, "company": company, "score": score,
-            "seconds": seconds, **_run_cost(job_id, since), "auto": checks,
+            "seconds": seconds, **_run_cost(job_id, since), "auto": checks, **extra,
         })
+        save()
         fails = [k for k in AUTO_ITEMS if not checks[k]]
+        tool_note = ""
+        if extra:
+            failed = [n for n, ok in extra["tool_checks"].items() if not ok]
+            tool_note = f"  {extra['drafts']} draft(s), tools {'ok' if not failed else 'FAIL: ' + ', '.join(failed)}"
         print(f"  {score!s:>4}  {title[:48]:48}  {checks['words']:>3}w  {seconds:>5}s  "
-              f"{'auto ok' if not fails else 'auto FAIL: ' + ', '.join(fails)}")
+              f"{'auto ok' if not fails else 'auto FAIL: ' + ', '.join(fails)}{tool_note}")
 
-    meta = {
-        "run_id": run_id, "engine": args.engine, "strong_model": client.model_for("strong"),
-        "created_at": datetime.datetime.now().isoformat(timespec="seconds"), "results": results,
-    }
-    (run_dir / "run.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
+    save()
 
     with (run_dir / "grades.csv").open("w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
@@ -340,6 +446,9 @@ def cmd_run(args) -> int:
             if "error" not in r:
                 w.writerow([r["key"], r["title"], *[""] * len(HUMAN_ITEMS), ""])
     _write_letters_md(run_dir, meta)
+    if (run_dir / "states").exists():
+        _write_drafts_md(run_dir, meta)
+        print(f"Draft history + check results: {(run_dir / 'drafts.md').relative_to(ROOT)}")
     print(f"\nRead them: {(run_dir / 'letters.md').relative_to(ROOT)}")
     print(f"Grade them: fill Y/N in {(run_dir / 'grades.csv').relative_to(ROOT)} (see evals/rubric.md),")
     print(f"then: python scripts/letter_lab.py report {run_id}")
@@ -404,6 +513,53 @@ def _write_letters_md(run_dir: Path, meta: dict, against: str | None = None) -> 
                 *_quote(other_text), "", "</details>",
             ]
     out = run_dir / "letters.md"
+    out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return out
+
+
+def _write_drafts_md(run_dir: Path, meta: dict) -> Path:
+    """Write <run>/drafts.md for a tools-engine run: per job, every draft with its
+    check results and claims (each next to the profile text it cites), so the
+    checkers' calls can be judged by eye."""
+    from app.db import SessionLocal
+    from app.llm.letter.runner import load_profile
+    from app.llm.letter.state import ProfileIndex
+
+    with SessionLocal() as db:
+        index = ProfileIndex(load_profile(db, PROFILE_ID))
+    lines = [f"# Drafts and checks: {meta['run_id']}", "",
+             "Each job: the requirements the letter had to cover, then every draft with its check results "
+             "and declared claims. Unanswered must-have gaps were treated as leave_out.", ""]
+    for r in meta["results"]:
+        path = run_dir / "states" / f"{r['key']}.json"
+        if "error" in r or not path.exists():
+            continue
+        st = json.loads(path.read_text(encoding="utf-8"))
+        lines += ["---", "", f"## {r['title']}" + (f" ({r['company']})" if r.get("company") else ""), "",
+                  f"Match score {r.get('score', '?')} · {len(st['drafts'])} draft(s) · ${r['cost_usd']:.4f} · "
+                  f"{r['seconds']}s · key `{r['key']}`", ""]
+        left_out = [q for q in st["requirements"] if q.get("user_decision")]
+        for q in st["requirements"]:
+            if q["letter_role"] == "headline" or q["importance"] == "essential":
+                flag = " (left out)" if q in left_out else ""
+                lines.append(f"- {q['id']} [{q['importance']}/{q['letter_role']}] **{q['status']}**{flag}: {q['text']}")
+        for d in st["drafts"]:
+            lines += ["", f"### Draft {d['version']}", ""]
+            for name in ("claims", "requirements", "style"):
+                c = d["checks"].get(name)
+                if c is None:
+                    lines.append(f"- {name}: not run")
+                    continue
+                lines.append(f"- {name}: {'pass' if c['passed'] else '**FAIL**'}")
+                lines += [f"  - {i}" for i in c["issues"]]
+                lines += [f"  - _(warning)_ {w}" for w in c["warnings"]]
+            lines += ["", "<details><summary>Letter and declared claims</summary>", "", *_quote(d["text"]), ""]
+            for c in d["claims"]:
+                cited = index.resolve(c["source"]) if c.get("source") else None
+                lines.append(f"- {c['text']!r} ← `{c.get('source')}`: {cited or '**does not resolve**'}")
+            lines += ["", "</details>"]
+        lines.append("")
+    out = run_dir / "drafts.md"
     out.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return out
 
@@ -733,6 +889,232 @@ def cmd_analysis_report(args) -> int:
     return 0
 
 
+# ---------------------------------------------------------------------------
+# 7. plant (Phase 5): how many planted false claims does check_claims catch?
+# ---------------------------------------------------------------------------
+# Overclaim types a careless writer produces. The planting model rewrites ONE sentence
+# of a letter that already passed check_claims to carry one of these.
+PLANT_TYPES = {
+    "invented_tool": "says the candidate used a tool, language or technology the profile never mentions",
+    "inflated_scope": "makes the audience, team, scale or seniority bigger than the profile says "
+                      "(team leads -> executives, contributed -> led, a class project -> a client project)",
+    "invented_metric": "adds a number or measurable outcome the profile does not give",
+    "study_to_work": "turns something the candidate studied, or built a project about, into professional "
+                     "or day-to-day use of it",
+    "wrong_context": "attaches a real piece of experience to the wrong employer, role or setting",
+}
+PLANT_MODES = ("undeclared", "miscited")
+
+
+def _plant_schema():
+    from pydantic import BaseModel
+
+    class Plant(BaseModel):
+        original: str
+        rewritten: str
+        false_words: str
+        cite: str
+
+    return Plant
+
+
+_PLANT_PROMPT = """\
+You are building a test for an automated claim checker. Rewrite exactly ONE sentence of \
+the cover letter so that it contains ONE false claim about the candidate, of the type \
+given. The claim must be plausible (something a careless writer might write), stated as \
+confidently as the rest of the letter, and clearly false given the profile: not a matter \
+of opinion, and not something any line of the profile supports. Keep the sentence \
+natural and change as little as possible.
+
+Return:
+- original: the sentence exactly as it appears in the letter, copied character for character.
+- rewritten: the new sentence.
+- false_words: the exact words in the rewritten sentence that make the false claim.
+- cite: the profile pointer (from the square brackets, without them) that a careless \
+writer would cite for it: related to the false claim, but not actually supporting it."""
+
+
+def _mentions(issue: str, false_words: str) -> bool:
+    """Does a check issue point at the planted words (not just fail for another reason)?"""
+    import re
+
+    # Numbers count whatever their length ("by 25%" is just "25"); short words don't.
+    words = [w for w in re.findall(r"[a-z0-9]+", false_words.lower()) if len(w) > 2 or any(ch.isdigit() for ch in w)]
+    if not words:
+        return False
+    present = set(re.findall(r"[a-z0-9]+", issue.lower()))
+    return sum(w in present for w in words) / len(words) >= 0.5
+
+
+def cmd_plant(args) -> int:
+    src_dir = RUNS_DIR / args.run_id
+    if not (src_dir / "states").exists():
+        print(f"{args.run_id} has no states/: plant needs a `run --engine tools` run")
+        return 1
+    meta = json.loads((src_dir / "run.json").read_text(encoding="utf-8"))
+    _migrate_eval_db()
+
+    from sqlalchemy import select
+
+    from app.db import SessionLocal
+    from app.llm.client import BudgetExceededError, DailyQuotaError, complete_json
+    from app.llm.letter.runner import execute_tool, finish_run, start_run
+    from app.llm.letter.state import Claim, Draft, LetterState
+    from app.llm.letter.tools.check_claims import check_claims
+    from app.models import LlmUsage, Match
+
+    Plant = _plant_schema()
+    label = args.label or f"plant-{args.run_id}"
+    out_dir = RUNS_DIR / label
+    out_dir.mkdir(parents=True, exist_ok=True)
+    type_names = list(PLANT_TYPES)
+    plants_path = out_dir / "plants.json"
+    saved = {"clean": [], "plants": [], "run_ids": []}
+    if (args.resume or args.report_only) and plants_path.exists():  # letters already finished are kept, not re-bought
+        saved = {**saved, **json.loads(plants_path.read_text(encoding="utf-8"))}
+    rows: list[dict] = saved["plants"]
+    clean_rows: list[dict] = saved["clean"]
+    run_ids: list[int] = saved["run_ids"]
+    done = {r["key"] for r in clean_rows}
+    print(f"Plant test {label}: from {args.run_id}, tiers {args.tiers}, {args.per_letter} plant(s) per letter"
+          + (f"; resuming, {len(done)} letter(s) done" if done else ""))
+
+    def save() -> None:  # after every letter, so a crash loses at most the letter in progress
+        plants_path.write_text(json.dumps({"clean": clean_rows, "plants": rows, "run_ids": run_ids},
+                                          indent=2, ensure_ascii=False), encoding="utf-8")
+
+    def judge(ctx, base: LetterState, draft: Draft, tier: str):
+        """check_claims on one draft; None if the call failed (logged in letter_run_steps)."""
+        s = base.model_copy(deep=True)
+        s.drafts = [draft]
+        r = execute_tool(ctx, s, "check_claims", check_claims, tier=tier)
+        if not r.ok:
+            print(f"    check_claims ({tier}) failed: {r.error[:120]}")
+            return None
+        return r.summary
+
+    letter_no = 0
+    try:
+        for res in ([] if args.report_only else meta["results"]):
+            path = src_dir / "states" / f"{res['key']}.json"
+            if "error" in res or not path.exists():
+                continue
+            if res["key"] in done:
+                letter_no += 1  # keep the type rotation the same as an uninterrupted run
+                continue
+            state = LetterState.model_validate_json(path.read_text(encoding="utf-8"))
+            clean = next((d for d in reversed(state.drafts)
+                          if d.checks.get("claims") and d.checks["claims"].passed), None)
+            if clean is None:
+                print(f"  {res['key']}: no draft passed check_claims, skipped")
+                continue
+            with SessionLocal() as db:
+                match = db.scalar(select(Match).where(Match.job_id == state.job.job_id, Match.user_id == PROFILE_ID))
+                ctx = start_run(db, match.id, "eval-plant", state)
+                run_ids.append(ctx.run.id)
+                clean_draft = Draft(version=clean.version, text=clean.text, claims=clean.claims)
+                for tier in args.tiers:
+                    s = judge(ctx, state, clean_draft, tier)
+                    clean_rows.append({"key": res["key"], "tier": tier, "passed": s and s["passed"],
+                                       "error": s is None, "issues": s["issues"] if s else []})
+
+                for j in range(args.per_letter):
+                    ptype = type_names[(letter_no * args.per_letter + j) % len(type_names)]
+                    data = complete_json(
+                        _PLANT_PROMPT,
+                        f"TYPE: {ptype}: {PLANT_TYPES[ptype]}\n\n=== PROFILE ===\n{ctx.index.prompt_catalog()}"
+                        f"\n\n=== LETTER ===\n{clean.text}",
+                        schema=Plant, tier="mid", task="plant_claim",
+                        job_id=state.job.job_id, run_id=ctx.run.id,
+                    )
+                    p = Plant.model_validate(data)
+                    if not p.original.strip() or p.original not in clean.text or p.rewritten == p.original:
+                        print(f"  {res['key']} {ptype}: planting failed (sentence not found), skipped")
+                        continue
+                    text = clean.text.replace(p.original, p.rewritten, 1)
+                    cite = p.cite.strip().strip("[]`'\" ").strip()
+                    cite = cite if ctx.index.resolve(cite) else None
+                    for mode in PLANT_MODES:
+                        if mode == "miscited" and not cite:
+                            continue
+                        claims = list(clean.claims)
+                        if mode == "miscited":
+                            claims.append(Claim(text=p.false_words, source=cite))
+                        planted = Draft(version=clean.version, text=text, claims=claims)
+                        for tier in args.tiers:
+                            s = judge(ctx, state, planted, tier)
+                            if s is None:
+                                outcome = "error"
+                            else:
+                                caught = (not s["passed"]) and any(_mentions(i, p.false_words) for i in s["issues"])
+                                outcome = "caught" if caught else ("failed_other" if not s["passed"] else "missed")
+                            rows.append({"key": res["key"], "type": ptype, "mode": mode, "tier": tier,
+                                         "outcome": outcome, "original": p.original, "rewritten": p.rewritten,
+                                         "false_words": p.false_words, "cite": cite,
+                                         "issues": s["issues"] if s else []})
+                            print(f"  {res['key']}  {ptype:16} {mode:10} {tier:6} {outcome}")
+                finish_run(ctx, state, "done")
+            save()
+            letter_no += 1
+    except (DailyQuotaError, BudgetExceededError) as exc:
+        print(f"Stopped: {exc}")
+
+    with SessionLocal() as db:
+        costs = dict(db.execute(
+            select(LlmUsage.tier, func_sum(LlmUsage.cost_usd))
+            .where(LlmUsage.run_id.in_(run_ids or [-1]), LlmUsage.task == "check_claims")
+            .group_by(LlmUsage.tier)
+        ).all())
+        plant_cost = db.scalar(select(func_sum(LlmUsage.cost_usd)).where(
+            LlmUsage.run_id.in_(run_ids or [-1]), LlmUsage.task == "plant_claim")) or 0
+    save()
+    errors = sum(r["outcome"] == "error" for r in rows) + sum(bool(r.get("error")) for r in clean_rows)
+    rows = [r for r in rows if r["outcome"] != "error"]  # a failed call is no evidence either way
+    for r in rows:  # scored from the stored issues, so a scoring fix needs no new calls (--report-only)
+        caught = bool(r["issues"]) and any(_mentions(i, r["false_words"]) for i in r["issues"])
+        r["outcome"] = "caught" if caught else ("failed_other" if r["issues"] else "missed")
+    clean_rows = [r for r in clean_rows if not r.get("error")]
+
+    def rate(sub: list[dict]) -> str:
+        return f"{sum(r['outcome'] == 'caught' for r in sub)}/{len(sub)}" if sub else "-"
+
+    lines = [f"# Planted-claim test: {label}", "",
+             f"Letters from `{args.run_id}` that passed `check_claims`, each with one sentence rewritten "
+             f"(mid model) to carry one false claim. **undeclared**: the false claim is not on the writer's "
+             f"claims list (stage 2 must find it). **miscited**: it is listed, citing a related profile "
+             f"pointer that does not back it. *Caught* = the check failed with an issue naming the planted "
+             f"words; *failed_other* = it failed, but not on the plant.", "",
+             "| Tier | Caught (all) | undeclared | miscited | failed_other | False alarms on clean letters | check_claims cost |",
+             "|---|---|---|---|---|---|---|"]
+    for tier in args.tiers:
+        sub = [r for r in rows if r["tier"] == tier]
+        clean_sub = [r for r in clean_rows if r["tier"] == tier]
+        lines.append(
+            f"| {tier} | {rate(sub)} | {rate([r for r in sub if r['mode'] == 'undeclared'])} | "
+            f"{rate([r for r in sub if r['mode'] == 'miscited'])} | "
+            f"{sum(r['outcome'] == 'failed_other' for r in sub)} | "
+            f"{sum(not r['passed'] for r in clean_sub)}/{len(clean_sub)} | ${float(costs.get(tier) or 0):.4f} |")
+    lines += ["", "## By claim type", "", "| Type | " + " | ".join(args.tiers) + " |",
+              "|---|" + "---|" * len(args.tiers)]
+    for t in type_names:
+        lines.append(f"| {t} | " + " | ".join(rate([r for r in rows if r["type"] == t and r["tier"] == tier])
+                                             for tier in args.tiers) + " |")
+    if errors:
+        lines += ["", f"{errors} check call(s) failed and are left out of the counts above."]
+    lines += ["", f"Planting cost ${float(plant_cost):.4f}. Details (letter text, gitignored): "
+                  f"`evals/runs/{label}/plants.json`."]
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    (RESULTS_DIR / f"{label}.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"\nWrote evals/results/{label}.md")
+    return 0
+
+
+def func_sum(col):
+    from sqlalchemy import func
+
+    return func.coalesce(func.sum(col), 0)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -750,6 +1132,9 @@ def main() -> int:
     p = sub.add_parser("run", help="write one letter per set job")
     p.add_argument("--engine", choices=sorted(ENGINES), default="oneshot")
     p.add_argument("--label", help="run id (default: timestamp-engine)")
+    p.add_argument("--only", nargs="+", metavar="KEY", help="just these set keys (e.g. seek-94419843), for a smoke test")
+    p.add_argument("--resume", action="store_true",
+                   help="continue an interrupted run (same --label): keep finished jobs, redo the rest")
     p.set_defaults(fn=cmd_run)
 
     p = sub.add_parser("read", help="write evals/runs/<run>/letters.md, every letter in one readable file")
@@ -769,6 +1154,15 @@ def main() -> int:
     p = sub.add_parser("analysis-report", help="summarise your checks.csv grades")
     p.add_argument("run_id")
     p.set_defaults(fn=cmd_analysis_report)
+
+    p = sub.add_parser("plant", help="planted-claim test: does check_claims catch false claims? (Phase 5)")
+    p.add_argument("run_id", help="a `run --engine tools` run whose letters passed check_claims")
+    p.add_argument("--tiers", nargs="+", default=["small", "mid"], choices=["small", "mid", "strong"])
+    p.add_argument("--per-letter", type=int, default=2, help="plants per letter (types rotate)")
+    p.add_argument("--label", help="output id (default: plant-<run>)")
+    p.add_argument("--resume", action="store_true", help="keep letters already in plants.json, do the rest")
+    p.add_argument("--report-only", action="store_true", help="re-score plants.json and rewrite the report; no LLM calls")
+    p.set_defaults(fn=cmd_plant)
 
     args = parser.parse_args()
     return args.fn(args)

@@ -39,6 +39,12 @@ the finished agent is a better use of the grading effort.
 - Known problem to look for: the styled letters copied stock lines from the writing
   sample word-for-word across unrelated letters ("the most relevant ... I can point
   to", "What I took from that project").
+- Phase 5 update (2026-10-03): the Phase 5 writer (`app/llm/letter/tools/generate.py`)
+  adds a "do not reuse sentences from the voice reference" line. On the 9 eval letters
+  that cut 6-word runs shared with the sample from 62 (`styled-oneshot`) to 19
+  (`tools-v1`), and "What I took from" from 3 letters to 0, but "the most relevant ...
+  I can point to" still appears in 4 of 9. The copy check below would catch it; it
+  could be a `style_lint` warning (the lint tool can read `ctx.profile.writing_sample`).
 
 ## How (rough)
 

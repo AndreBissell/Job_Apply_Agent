@@ -101,8 +101,9 @@ docs/cover-letter-loop-plan.md); see that file for the model-choice reasoning.
 Callers name a **tier**, never a model:
   small  (GEMINI_MODEL_SMALL,  default gemini-3.1-flash-lite) — quick-screen,
          extract, match, search_refine. `complete_json` defaults to this.
-  mid    (GEMINI_MODEL_MID,    default gemini-3.8-flash) — orchestration/analysis
-         (not used yet; the cover-letter agent will).
+  mid    (GEMINI_MODEL_MID,    default gemini-3.8-flash) — letter analysis and
+         checking: analyze_job, match_profile, check_claims (moved up from small
+         2026-10-03: small passed real overclaims); the orchestrator later.
   strong (GEMINI_MODEL_STRONG, default gemini-3.1-pro-preview) — cover letters.
          `complete_text` defaults to this. A *preview* model: may change; falling
          back is one env var.
@@ -278,9 +279,24 @@ check; rubric.py now imports its helpers; one em dash allowed, same as the eval)
 `cover_letter.py` got an eval-only `styled=True` path (`letter_lab.py run --engine
 oneshot-styled`); production letters are unchanged. Early result in
 evals/results/styled-oneshot.md; grading it is deferred to future_work/voice-toggle-and-comparison.md (voice on/off, compared on the finished agent).
-The real profile's writing_sample is set (921 words, 3 samples). Next up is Phase 5
-(draft + check tools). Grow the eval set (only 9 ads, none at 75-84) before Phase 6
-compares engines.
+The real profile's writing_sample is set (921 words, 3 samples).
+Phase 5 is DONE (2026-10-03; details in the plan's Decision log): `app/llm/letter/
+guardrails.py` (THE one definition of must_cover / may_use / do_not_claim, plus the
+gates: no drafting with an undecided must-have gap, generate = draft 1 only, revise
+needs all 3 checks run and one failed, draft cap, can_finish), tools `generate.py`,
+`revise.py`, `check_claims.py` (stage 1 code pointer check + stage 2 judge on MID;
+undeclared-but-backed claims only warn), `check_requirements.py` (small; partial-aware,
+quotes verified in code). Eval: `letter_lab.py run --engine tools` (run `tools-v1`:
+$0.165/letter, 6/9 pass all checks within 2 drafts) and `letter_lab.py plant`
+(planted-claim test: small 35/36, mid 36/36; mid chosen because small missed real
+overclaims; evals/results/plant-tools-v1.md). Both commands save per job and
+`--resume`. Production letters are still the one-shot `cover_letter.py`.
+Next up is Phase 6 (workflow.py: the fixed loop with revise <=2, best-draft selection
+and the finish gate; measures whether the revise prompt's "keep coverage and length"
+line stopped the regressions seen in tools-v1). Grow the eval set (only 9 ads, none
+at 75-84) before Phase 6 compares engines. Known: Gemini implicit caching never hits
+(cached_tokens 0 on every call), and the writer still copies one stock line from the
+writing sample (future_work/voice-toggle-and-comparison.md).
 
 Parked fast-follows. Both need a live Seek session rather than guesswork:
 1. §5.2's apply-flow detection (see the extension-revamp entry below).

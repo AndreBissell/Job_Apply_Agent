@@ -1,0 +1,143 @@
+"""Rules every cover-letter run obeys, enforced in code (docs/cover-letter-loop-plan.md §5.7).
+
+Models declare victory early, skip checks and loop, so the rules that must always
+hold live here and the tools call them before doing any work. The fixed workflow
+(Phase 6) and the agent (Phase 7) share these, which keeps their comparison fair.
+Every refusal is a sentence written for the orchestrator, naming what is missing,
+so a refused step can be recovered from.
+
+This module is also the ONE definition of what the letter does with each
+requirement. The writer, the reviser and ``check_requirements`` all read it, so
+"what the letter must cover" can't mean three different things:
+
+    must_cover     headline items, and essential mentions, the profile supports
+                   (fully or partly). check_requirements BLOCKS if one is missing
+    may_use        other supported/partial mentions and implied items: use if they
+                   fit, never required
+    do_not_claim   gaps and anything the user chose to leave out: not mentioned,
+                   not written around
+    eligibility    not_for_letter items: never in the letter (a job-card note)
+"""
+
+from __future__ import annotations
+
+from app.llm.letter.state import REQUIRED_CHECKS, LetterState, Requirement
+
+_COVERED = ("supported", "partial")
+
+
+def _left_out(r: Requirement) -> bool:
+    return r.user_decision is not None and r.user_decision.choice == "leave_out"
+
+
+# ---------------------------------------------------------------------------
+# What the letter does with each requirement
+# ---------------------------------------------------------------------------
+def must_cover(state: LetterState) -> list[Requirement]:
+    return [
+        r for r in state.requirements
+        if r.status in _COVERED
+        and not _left_out(r)
+        and (r.letter_role == "headline" or (r.letter_role == "mention" and r.importance == "essential"))
+    ]
+
+
+def may_use(state: LetterState) -> list[Requirement]:
+    required = {r.id for r in must_cover(state)}
+    return [
+        r for r in state.requirements
+        if r.status in _COVERED
+        and not _left_out(r)
+        and r.letter_role in ("mention", "implied")
+        and r.id not in required
+    ]
+
+
+def do_not_claim(state: LetterState) -> list[Requirement]:
+    return [
+        r for r in state.requirements
+        if r.letter_role != "not_for_letter" and (r.status == "gap" or _left_out(r))
+    ]
+
+
+def eligibility(state: LetterState) -> list[Requirement]:
+    return state.requirements_by_role("not_for_letter")
+
+
+# ---------------------------------------------------------------------------
+# Gates. Each returns None when the step may run, else the reason it may not.
+# ---------------------------------------------------------------------------
+def drafting_blocked(state: LetterState) -> str | None:
+    """No silent gaps: nothing is drafted until every requirement has been matched
+    and every must-have gap has a user decision."""
+    if not state.requirements:
+        return "no requirements yet: run analyze_job, then match_profile"
+    unmatched = [r.id for r in state.requirements if r.status == "unknown"]
+    if unmatched:
+        return f"requirements not matched against the profile yet ({', '.join(unmatched)}): run match_profile"
+    pending = state.pending_gaps()
+    if pending:
+        listed = "; ".join(f"{r.id} {r.text!r}" for r in pending)
+        return f"must-have gaps need a user decision before drafting: {listed}. Call ask_user"
+    return None
+
+
+def can_generate(state: LetterState) -> str | None:
+    """generate_letter writes draft 1 only; every later draft is a revision."""
+    if state.drafts:
+        return (
+            f"draft {state.latest_draft.version} already exists: use revise_letter to fix its "
+            "failed checks (only the first draft is generated)"
+        )
+    return drafting_blocked(state)
+
+
+def checks_not_run(state: LetterState) -> list[str]:
+    draft = state.latest_draft
+    return [n for n in REQUIRED_CHECKS if draft is None or n not in draft.checks]
+
+
+def failed_checks(state: LetterState) -> list[str]:
+    draft = state.latest_draft
+    if draft is None:
+        return []
+    return [n for n in REQUIRED_CHECKS if n in draft.checks and not draft.checks[n].passed]
+
+
+def can_revise(state: LetterState) -> str | None:
+    """A revision fixes listed failures on the latest draft, within the draft cap.
+
+    All three checks must have run first: revising after one failed check and
+    finding another failure afterwards would spend two drafts on one fix.
+    """
+    blocked = drafting_blocked(state)
+    if blocked:
+        return blocked
+    draft = state.latest_draft
+    if draft is None:
+        return "there is no draft to revise: call generate_letter first"
+    if len(state.drafts) >= state.budget.max_drafts:
+        return (
+            f"draft limit reached ({len(state.drafts)}/{state.budget.max_drafts}): no more revisions; "
+            "finish with the best draft and flag its open issues"
+        )
+    missing = checks_not_run(state)
+    if missing:
+        return f"run {', '.join('check_' + n if n != 'style' else 'style_lint' for n in missing)} on draft {draft.version} before revising it"
+    if not failed_checks(state):
+        return f"every check passed on draft {draft.version}: there is nothing to revise; call finish"
+    return None
+
+
+def can_finish(state: LetterState) -> str | None:
+    """Finish gate: all three checks ran and passed on the LATEST draft."""
+    draft = state.latest_draft
+    if draft is None:
+        return "no draft yet: call generate_letter"
+    missing = checks_not_run(state)
+    if missing:
+        return f"{', '.join(missing)} not checked on draft {draft.version} (the latest)"
+    failed = failed_checks(state)
+    if failed:
+        return f"{', '.join(failed)} failed on draft {draft.version}: revise_letter, or stop at the draft limit"
+    return None
