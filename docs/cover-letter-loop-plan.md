@@ -197,7 +197,7 @@ the cheapest implementation that works.
 |---|---|---|---|---|---|
 | `analyze_job` | Turn the ad into a requirements checklist. Each item is rated twice, separately: `importance` (essential / important / nice_to_have: how much the employer cares) and `letter_role` (headline / mention / implied / not_for_letter: what the letter should do with it), plus a `theme`. Also tone, keywords to mirror, screening questions in the ad, and `company_facts` (raw material for a specific detail) | `raw_description` + extracted fields | `requirements`, `job.*` | mid, structured | Builds on `extract.py`. **Cached on the job** (it depends only on the job), so it runs once per job, not once per run |
 | `match_profile` | For each requirement, find evidence pointers into the profile and mark it `supported` / `partial` / `gap` | requirements, profile | `requirements[].evidence`, `.status` | mid, structured | New. `match.py` stays the cheap whole-job score that decides *whether* to write a letter |
-| `ask_user` | Ask the user whether they have experience that fills a must-have gap, with a text box to answer. "Yes" saves the answer to the profile as a new experience / skill / qualification; "no" means `leave_out` | gap requirements | `user_questions`, `user_decision`, **new profile rows** | code + sidebar UI (+ small model to structure the answer) | New. Pauses the run (§5.5) |
+| `ask_user` | Ask the user whether they have experience that fills a must-have gap, with a text box to answer. "Yes" saves the answer to the profile as a new experience / skill / qualification; "no" means `leave_out` | gap requirements | `user_questions`, `user_decision`, **new profile rows**; a "no" also goes on the to-work-on list (§5.9) | code + sidebar UI (+ small model to structure the answer) | New. Pauses the run (§5.5) |
 | `generate_letter` | Write the first draft from supported evidence only, with the style skill loaded. Returns the text **and** a list of claims, each with its source pointer | evidence, decisions, style skill | new `drafts[]` entry | strong | Replaces the one-shot prompt in `cover_letter.py` |
 | `revise_letter` | Make targeted fixes to the latest draft for the failed checks only. An edit, not a rewrite | latest draft, failed checks | new `drafts[]` entry | strong | New |
 | `check_claims` | Verify every factual claim against the profile (two-stage, below) | latest draft, profile | `checks.claims` | code + small | New |
@@ -421,7 +421,9 @@ while True:
      `profiles.profile_revised_at` is bumped, and the run resumes. The new
      facts are then normal evidence for this letter and every future match.
   4. **No:** the requirement becomes `leave_out`. The letter doesn't mention
-     it, and `suggest_learning` may suggest a way to close it.
+     it, and `suggest_learning` may suggest a way to close it. The skill is
+     saved to the **to-work-on list** (§5.9), which counts how often it shows
+     up in later ads.
 - **Answers are remembered, so each gap is asked once.**
   - A "yes" is remembered automatically, because it is now in the profile and
     `match_profile` finds it next time.
@@ -429,7 +431,7 @@ while True:
     `prefilter.normalise_skill()`), so the same gap on the next ad is left out
     without asking.
   - The user can clear a remembered "no" in the profile editor (e.g. after
-    doing the course).
+    doing the course). This takes it off the to-work-on list (§5.9).
 - **Questions are batched.** All must-have gaps for a run are asked together
   in one card, not one pause per gap.
 
@@ -441,7 +443,8 @@ while True:
   parked apply-flow detection in CLAUDE.md.
 - **Learning suggestions** (`suggest_learning`): only for gaps the user
   confirmed as real (`leave_out`). Short, concrete (course, cert, small
-  project).
+  project). When a run has several such gaps, lead with the one highest on the
+  to-work-on list (§5.9): it is the one most ads ask for.
 - **Resume tailoring notes** (`suggest_resume_tweaks`, decided 2026-10-01):
   advice only, behind `resume_advice_enabled`. When off, no call is made.
   Output: `lead_with[]`, `keywords_to_mirror[]`, `consider_cutting[]`,
@@ -493,6 +496,72 @@ stop after six calls; that flexibility is the point.
 Step 10 is the failure v0.2 was exposed to: adding content to satisfy the
 requirements check pushed the writer to overstate. Because `check_claims` runs
 on every draft, it is caught and fixed with a narrow edit.
+
+### 5.9 The to-work-on list (saved "no"s + a counter) (added 2026-10-03)
+
+**Goal:** every "No" to an `ask_user` question is a skill or tool the user
+doesn't have yet. Save them all, count how often each one shows up in ads, and
+rank them. The skills that keep appearing are the ones worth learning or
+getting familiar with. A single "no" says little; the count is what makes the
+list useful.
+
+**Simple by design:** no LLM calls. One small hook when the user answers "No",
+one when a job is scanned, and a count when the list is read.
+
+1. **Saver (on "No").** Save one row per skill to `gap_decisions` (§7): the
+   normalised `skill_key`, a readable `label` ("Power BI"), the requirement's
+   wording, and when the user said no. If the skill is already on the list,
+   don't add a second row. Just record this ad as another sighting. This is the
+   same row that stops the gap being asked about again (§5.5).
+2. **Counter (sightings).** A sighting is "this ad asked for a skill the user
+   said no to". It is recorded in `gap_sightings` (§7), at most once per ad per
+   skill, so re-running a job never double-counts. Sightings come from:
+   - **Every scanned job.** After `extract.py` writes `job_skills`, match their
+     names against the remembered `skill_key`s using `normalise_skill()`. This
+     is code only, so it covers every scanned ad, not just the ≥85 matches that
+     get a full letter run.
+   - **Letter runs.** When `match_profile` leaves a requirement as a gap and
+     its key matches a remembered "no", it becomes `leave_out` without asking
+     (already planned) and counts as a sighting, with its `importance`.
+   - **Seeding.** When a skill is first saved, count the jobs already in the
+     DB that ask for it. This way the list is useful straight away ("Power BI:
+     you just said no, and it's already in 14 of your scanned ads").
+3. **Reading the list.** Rank by the number of distinct ads in the last 90
+   days, so the list follows what the market is asking for now. Break ties by
+   how many of those ads rated it essential. Each item shows the label, the
+   total and 90-day counts, the essential count, the three most recent job
+   titles that asked for it, and the date of the "no".
+   - `GET /gaps/to-work-on` returns the ranked list.
+   - `python scripts/gap_report.py` writes it to `reports/to-work-on.md`, a
+     readable file to look over. It is gitignored because it's personal
+     profile data.
+   - The sidebar's profile editor gets a "To work on" section in Phase 8.
+4. **Clearing.** The user clears an item after learning it, for example after
+   finishing the course. This sets `cleared_at` rather than deleting, so it
+   leaves the list and is no longer auto-left-out, but its sightings history is
+   kept. An item clears automatically when the profile gains a skill with the
+   same normalised name (e.g. a later "Yes" answer, or adding it in the
+   editor).
+
+**Prerequisite: a short skill name per requirement.** Requirements are
+sentences in the employer's words ("Experience building dashboards in Power
+BI"). Two ads won't word them the same, so counting needs a short name.
+`analyze_job` gains a `skill` field per requirement ("Power BI"; empty for
+attitudes and other non-skills), and `ANALYSIS_VERSION` is bumped so cached
+checklists are rebuilt. A "no" to a requirement with no `skill` is still
+remembered, keyed by its normalised wording, but it will rarely recur, which
+is correct for one-off asks.
+
+**Not counted (on purpose, for now):** gaps the user was never asked about
+(nice-to-haves, eligibility), and `partial` matches. The list holds only skills
+the user has said they don't have. Counting every unasked gap is a possible
+extension once the basic list proves useful.
+
+**Done when:** a "No" in the sidebar adds the skill once; scanning an ad that
+lists it adds exactly one sighting, and re-scanning it adds none; the report
+ranks a skill seen in 5 ads above one seen in 2; clearing a skill removes it
+from the list without losing its count. Tests cover the dedupe, the 90-day
+window and auto-clear.
 
 ---
 
@@ -546,10 +615,18 @@ Alembic migrations. Use the portable styles (BigInteger variant,
   dump (§5.4). It is a column rather than a preference because it can be long
   and is profile content, not a setting.
 - **`gap_decisions`** (Phase 7): `gap_decisions(id, user_id FK CASCADE,
-  skill_key, requirement_text, created_at)`, UNIQUE `(user_id, skill_key)`.
-  It stores remembered **"no"** answers only; "yes" answers become real profile
-  rows. `skill_key` is the normalised name and is not FK'd to `skills`,
-  consistent with `job_skills`.
+  skill_key, label, requirement_text, created_at, cleared_at NULL)`, UNIQUE
+  `(user_id, skill_key)`. It stores remembered **"no"** answers only; "yes"
+  answers become real profile rows. `skill_key` is the normalised name and is
+  not FK'd to `skills`, consistent with `job_skills`. It is also the
+  to-work-on list (§5.9); `cleared_at` takes an item off it without losing
+  its history.
+- **`gap_sightings`** (Phase 7, §5.9): `gap_sightings(id, gap_id FK →
+  gap_decisions CASCADE, job_id, job_title, importance NULL, source
+  ('scan'|'letter_run'|'seed'), seen_at)`, UNIQUE `(gap_id, job_id)`. This is
+  the counter: one row per ad that asked for a skill the user said no to.
+  `job_id` has **no FK** and the title is copied in, so retention purges of
+  job rows don't erase the counts (the same reasoning as `llm_usage`).
 - **Rows created by `ask_user`** go into the existing `experiences` /
   `skills` / `qualifications` / `experience_skills` tables, with no new
   columns. 🧪 Optionally tag their origin (e.g. a `source` value like
@@ -582,8 +659,11 @@ app/llm/
     agent.py             # orchestrator loop
   skills/cover_letter_style/
     SKILL.md  banned_phrases.txt  us_to_au.txt   # voice comes from the DB, not here
+app/
+  gaps.py                # to-work-on list (§5.9): save a "no", record sightings, rank, clear. Code only
 scripts/
   letter_lab.py          # run eval set × engine, write rubric results + cost to markdown
+  gap_report.py          # writes the ranked to-work-on list to reports/to-work-on.md (gitignored)
 evals/
   jobs/                  # 10–15 saved ads (fixtures; no profile data committed)
   rubric.md
@@ -664,8 +744,8 @@ budget guard comes in Phase 1.
 | 4 | ✅ **Style skill + `style_lint` + voice** | Skill folder, banned list shared by prompt and lint, AU spelling list; `profiles.writing_sample` + a "Your writing" paste box in the profile editor; experience-text fallback | 2 |
 | 5 | **Draft + check tools** | `generate_letter`, `check_claims` (both stages), `check_requirements`, `revise_letter`; planted-claim test | 3, 4 |
 | 6 | **Fixed workflow = baseline** | `workflow.py`: analyze → match → unanswered gaps treated as `leave_out` (evals only; there is no UI yet) → draft → checks → revise ≤2 → finish, with the guardrails. Run evals. **Usable on its own; could ship here** | 5 |
-| 7 | **Agent + ask_user** | `ask_user` (sidebar question card with Yes + text box / No, answer → profile rows, run resume), `gap_decisions` for remembered "no"s, side-output tools, tool descriptions, orchestrator prompt, `agent.py`. Run evals and fill in the comparison table. Set the `letter_engine` default from the result | 6 |
-| 8 | **Integration** | Idle-loop trigger (§6), SSE progress, sidebar: final letter + open issues, "not claimed" list, side-output sections, Personalise controls (wired like `auto_cover_letter_min_score`: `DEFAULTS` → `PreferencesUpdate` with bounds → `sidebar.js`) | 7 (or 6 if the workflow ships first) |
+| 7 | **Agent + ask_user** | `ask_user` (sidebar question card with Yes + text box / No, answer → profile rows, run resume), `gap_decisions` for remembered "no"s, **the to-work-on list (§5.9): `skill` field on `analyze_job`, `gap_sightings` counter hooked into extraction and letter runs, `GET /gaps/to-work-on`, `gap_report.py`**, side-output tools, tool descriptions, orchestrator prompt, `agent.py`. Run evals and fill in the comparison table. Set the `letter_engine` default from the result | 6 |
+| 8 | **Integration** | Idle-loop trigger (§6), SSE progress, sidebar: final letter + open issues, "not claimed" list, side-output sections, a "To work on" section in the profile editor (ranked list with counts + clear button, §5.9), Personalise controls (wired like `auto_cover_letter_min_score`: `DEFAULTS` → `PreferencesUpdate` with bounds → `sidebar.js`) | 7 (or 6 if the workflow ships first) |
 | 9 | **Later / optional** | Read the live screening questions from Seek's Quick Apply page (needs the parked apply-flow detection); `research_company` tool with search grounding (recruiter-posted ads are a risk); tune the agent's "hiring manager" framing and addressing; learn-from-edits style notes; "Polish" button; Batch API for the extract/match backlog | 8 |
 
 The baseline and harness come before any agent work on purpose. Without them we
@@ -793,3 +873,4 @@ well-prompted Pro call.
 | 2026-10-03 | Voice = the user's `writing_sample` (3 samples, 921 words, contact lines and dates removed; two are cover letters, one a uni reflection; the user says some is AI-assisted), trimmed to 1,500 words, tone and rhythm only. Fallback: summary + experience descriptions | Plan Q5 |
 | 2026-10-03 | **Early test, `oneshot-styled`** (the one-shot writer + style guide + voice, otherwise identical inputs; eval-only, production unchanged): 9 letters, $0.039/letter (baseline $0.026), 9/9 pass the rubric's code checks (baseline: generic-phrase limit 6/9), `style_lint` 8/9 (one with 6 body paragraphs), 290-340 words (aim 250-300, so the writer runs long). Awaits the user's grades. 🧪 Watch: it copies stock lines from the sample verbatim across letters ("the most relevant ... I can point to", "What I took from that project") | Tests style + voice alone before Phase 5 builds on them |
 | 2026-10-03 | **Grading `styled-oneshot` deferred.** Making the voice (`writing_sample`) switchable and comparing voice on vs off moves to `future_work/voice-toggle-and-comparison.md`, to run on the finished agent | Grading the one-shot stand-in says little about the final writer; the comparison is worth more once the agent exists |
+| 2026-10-03 | **To-work-on list added to Phase 7** (§5.9, user request). Every `ask_user` "No" is saved, and each later ad asking for that skill is counted (`gap_sightings`, once per ad, from every scan via `job_skills` plus letter runs). The ranked list (90-day count, then essential count) is served at `GET /gaps/to-work-on` and written to `reports/to-work-on.md`. Builds on `gap_decisions` rather than adding a separate store; `analyze_job` gains a short `skill` name per requirement so different wordings count as one item | The user wants to see which missing skills and tools keep coming up, to decide what to learn. The data lives in the DB (real/test envs, Postgres later) and the readable file is generated from it. Counting from `job_skills` covers every scanned ad, not just the ≥85 ones that get letter runs |
