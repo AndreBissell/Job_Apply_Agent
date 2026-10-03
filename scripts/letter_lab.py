@@ -544,6 +544,10 @@ def cmd_analyze(args) -> int:
             if state.job.screening_questions:
                 lines.append("\n**Screening questions in the ad:**")
                 lines += [f"- {q}" for q in state.job.screening_questions]
+            if state.job.application_instructions:
+                lines.append("
+**Application instructions in the ad:**")
+                lines += [f"- {q}" for q in state.job.application_instructions]
             if state.eligibility_notes():
                 lines.append("\n**Eligibility notes (heads-up on the job card, never in the letter):**")
                 lines += [f"- {t}" for t in state.eligibility_notes()]

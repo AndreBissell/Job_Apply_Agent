@@ -224,6 +224,9 @@ class JobInfo(BaseModel):
     tone: str | None = None
     keywords: list[str] = Field(default_factory=list)
     screening_questions: list[str] = Field(default_factory=list)
+    # What the ad asks applicants to include ("show off projects you've built in your
+    # cover letter", "attach your transcript"). The writer follows the letter ones.
+    application_instructions: list[str] = Field(default_factory=list)
     # Concrete facts the ad states about the employer/product/team that a letter can
     # cite: the raw material for the rubric's "specific detail" item.
     company_facts: list[str] = Field(default_factory=list)

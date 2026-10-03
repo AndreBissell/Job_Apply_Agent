@@ -252,7 +252,8 @@ evals/rubric.md). Evals use the REAL profile in a scratch `evals/eval.db` copied
 read-only from real.db; ads/letters/eval.db are gitignored. The one-shot baseline
 run is `baseline-oneshot`; it needs the user's grades in
 evals/runs/baseline-oneshot/grades.csv, then `letter_lab.py report`.
-Phase 3 is BUILT (2026-10-02), awaiting the user's hand-check: `analyze_job`
+Phase 3 is DONE (built 2026-10-02; hand-check adjudicated by the user and fixed
+2026-10-03, ANALYSIS_VERSION 2, stays on mid; see the plan's Decision log): `analyze_job`
 (requirements checklist; each item has `importance` essential/important/
 nice_to_have AND `letter_role` headline/mention/implied/not_for_letter, plus
 theme, tone, keywords, screening questions, company_facts; cached on

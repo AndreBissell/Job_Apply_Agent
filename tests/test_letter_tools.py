@@ -87,6 +87,7 @@ def _analysis(requirements=None, **extra) -> dict:
         "tone": "technical",
         "keywords": ["logistics"],
         "screening_questions": [],
+        "application_instructions": [],
         "company_facts": ["They build logistics software"],
     }
     base.update(extra)
@@ -170,8 +171,28 @@ def test_implied_by_must_point_at_a_leading_item_and_only_on_implied_rows():
     ])
     by = {r["id"]: r for r in out}
     assert by["R2"]["implied_by"] == ["R1"]
-    assert by["R3"]["implied_by"] == []
+    assert (by["R3"]["letter_role"], by["R3"]["implied_by"]) == ("mention", [])  # parentless
     assert by["R4"]["implied_by"] == []
+
+
+def test_implied_with_no_parent_becomes_a_mention():
+    out = _post([_req(1, "Strong problem-solving skills", "essential", "implied")])
+    assert out[0]["letter_role"] == "mention"
+
+
+@pytest.mark.parametrize("text", [
+    "A genuine interest in improving their skills and learning from senior developers",
+    "Pro-active person who is a team player and is eager to learn new technologies",
+    "Curious with a passion for learning",
+])
+def test_attitudes_are_never_essential_headlines(text):
+    out = _post([_req(1, text, "essential", "headline")])
+    assert (out[0]["importance"], out[0]["letter_role"]) == ("important", "mention")
+
+
+def test_skills_are_not_mistaken_for_attitudes():
+    out = _post([_req(1, "Strong problem-solving and debugging skills", "essential", "headline")])
+    assert (out[0]["importance"], out[0]["letter_role"]) == ("essential", "headline")
 
 
 def test_duplicates_blank_text_and_missing_theme_are_cleaned():
@@ -182,6 +203,27 @@ def test_duplicates_blank_text_and_missing_theme_are_cleaned():
 def test_requirements_capped():
     out = _post([_req(i, f"Req {i}") for i in range(1, 30)])
     assert len(out) == aj.MAX_REQUIREMENTS
+
+
+def test_cap_drops_nice_to_haves_before_late_must_haves_and_keeps_ad_order():
+    reqs = [_req(i, f"Nice {i}", "nice_to_have") for i in range(1, aj.MAX_REQUIREMENTS + 1)]
+    reqs += [_req(30, "Excellent communication skills", "essential"),
+             _req(31, "Bring quantitative models into production", "important")]
+    texts = [r["text"] for r in _post(reqs)]
+    assert len(texts) == aj.MAX_REQUIREMENTS
+    assert texts[-2:] == ["Excellent communication skills", "Bring quantitative models into production"]
+    assert texts[:-2] == [f"Nice {i}" for i in range(1, aj.MAX_REQUIREMENTS - 1)]
+
+
+def test_application_instructions_reach_the_state(db, fake_llm):
+    fake_llm.by_task["analyze_job"] = _analysis(
+        application_instructions=["Include a cover letter showing projects you've built"])
+    state, ctx = _fresh(db)
+    aj.analyze_job(state, ctx)
+    assert state.job.application_instructions == ["Include a cover letter showing projects you've built"]
+    state2, ctx2 = _fresh(db)
+    aj.analyze_job(state2, ctx2)  # from the cache
+    assert state2.job.application_instructions == state.job.application_instructions
 
 
 # ---------------------------------------------------------------------------

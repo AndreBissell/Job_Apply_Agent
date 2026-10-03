@@ -51,12 +51,25 @@ For EVERY requirement id, return a status, evidence pointers and a short note.
 
 status:
 - supported: the profile directly shows the candidate has done, used or holds this, at \
-the level the requirement asks.
+the level the requirement asks, as the SAME kind of activity. Building a product about \
+X is not using X as a tool in day-to-day work (an AI thesis does not show "uses AI \
+tools in daily delivery"); studying X is not working with X in production. A shared \
+subject is not evidence: if the activity differs, it is a gap (the candidate is then \
+asked, and may well have it). Partial means the same kind of activity with a different \
+tool or at a lower level, not a different activity on the same topic.
 - partial: related but not the same thing (Tableau when Power BI is asked), shown only \
 lightly (one university project when "strong experience" is asked), or only listed as \
 a skill with no experience demonstrating it. The letter can frame these as related \
-experience but must not claim more.
-- gap: nothing in the profile supports it. Use gap rather than stretching.
+experience but must not claim more. A requirement that bundles several asks \
+("software development with a focus on cyber security") is partial when the profile \
+covers some of them.
+- gap: nothing in the profile supports it. Before choosing gap, check BOTH the skills \
+list and every experience sentence: if a listed skill or a sentence relates to the \
+requirement, it is partial, not gap. Use gap rather than stretching.
+
+Be consistent across requirements: a profile sentence that counts as evidence for one \
+requirement (e.g. teamwork, customer requests, software development, problem solving) \
+counts for every other requirement it equally supports.
 
 evidence: pointers copied EXACTLY from the square brackets in the profile, e.g. \
 experience:12#s3 (the text between the brackets, WITHOUT the brackets). Prefer the narrowest pointer (a sentence, not the whole role). At \
@@ -74,7 +87,11 @@ follow from.
 Requirements marked not_for_letter are eligibility items (work rights, licence, \
 clearance, availability). Judge them against the PROFILE FACTS only; evidence stays \
 empty. supported only if a profile fact clearly states it, otherwise gap with the note \
-"not stated in profile".
+"not stated in profile". A location matching the profile's location or target \
+location is supported. Terms the candidate accepts simply by applying (contract \
+length, full-time hours, start in the office) are not gaps: judge only the parts a \
+profile fact could confirm or contradict, and if a fact confirms those, it is \
+supported.
 """
 
 

@@ -17,8 +17,9 @@ split, so importance is inferred from the wording, not the heading.
 The result depends only on the job, never the profile, so it is cached on
 ``job_listings.requirements_checklist`` keyed by a fingerprint of the description.
 The model's judgement is then constrained in code (``_postprocess``): a nice-to-have
-can't be a headline, headlines are capped, and obvious eligibility items are forced
-to ``not_for_letter`` whatever the model said.
+can't be a headline, headlines are capped, obvious eligibility items are forced
+to ``not_for_letter``, attitudes are never essential headlines, and an "implied" item
+with nothing to be implied by becomes a mention, whatever the model said.
 """
 
 from __future__ import annotations
@@ -40,9 +41,13 @@ from app.models import JobListing
 logger = logging.getLogger(__name__)
 
 # Bump when the prompt or schema changes meaning, so stale cached analyses are redone.
-ANALYSIS_VERSION = 1
+# v2 (2026-10-03): fixes from the analysis-2 hand-check (attitudes, cap, implied, intro
+# duties, application instructions).
+ANALYSIS_VERSION = 2
 
-MAX_REQUIREMENTS = 16
+# Was 16, which dropped real must-haves on long ads while nice-to-haves kept their
+# slots. Over the cap, the least important items go first (_postprocess).
+MAX_REQUIREMENTS = 20
 # A one-page letter can make about this many lead points; more is a list, not a letter.
 MAX_HEADLINES = 5
 
@@ -65,6 +70,7 @@ class JobAnalysis(BaseModel):
     tone: Literal["formal_corporate", "professional_friendly", "startup_casual", "technical", "other"]
     keywords: list[str]
     screening_questions: list[str]
+    application_instructions: list[str]
     company_facts: list[str]
 
 
@@ -78,8 +84,14 @@ questions.
 REQUIREMENTS: each is one distinct thing the employer asks for, in the employer's own \
 words (lightly trimmed, not paraphrased into generic terms). Number them n=1,2,3... \
 Cover both explicit requirements and the skills/experience the described duties \
-clearly demand. Give at most 16; merge near-duplicates, and where the ad lists several \
-closely related technologies or duties as one idea, make that one requirement.
+clearly demand. Read the WHOLE ad, including the opening paragraphs: the most \
+role-specific duty is often stated in the intro, not the bullet list ("help bring our \
+models into production"). Every listed duty and every listed requirement should be \
+covered by at least one item; merge near-duplicates, and where the ad lists several \
+closely related technologies or duties as one idea, make that one requirement. Give at \
+most 20. If you must leave things out, leave out nice-to-haves, never a stated \
+must-have. Skip what the employer OFFERS ("what you'll get", benefits, training, \
+exposure you will gain): those are not requirements.
 
 For EACH requirement set two separate ratings.
 
@@ -90,28 +102,44 @@ with no must/should split.
 role makes no sense without it ("you will own the production systems").
 - important: strongly asked for but not framed as mandatory ("strong experience in", \
 "solid understanding of", "you likely have").
-- nice_to_have: "desirable", "bonus", "highly regarded", "exposure to", "advantageous".
+- nice_to_have: "desirable", "bonus", "highly regarded", "exposure to", "advantageous", \
+"ideally", "familiarity with", "beneficial", "a plus". Items in one "ideally you'd be \
+familiar with" list get the same rating.
 Do NOT mark everything essential. In a flat list, separate the core items from the \
-supporting ones.
+supporting ones. Attitudes and dispositions (genuine interest, eagerness or passion to \
+learn, curiosity, motivation, being a team player) are at most important, even under a \
+"must have" heading: they are not something a candidate can be missing in a way a \
+letter should resolve. In graduate and junior ads, duties the new hire will \
+"contribute to" or "assist with" are at most important unless the ad makes them the \
+core of the role.
 
 letter_role = what the LETTER should do with it. This is a different question from \
 importance.
-- headline: a core requirement that distinguishes a strong candidate; a lead point \
-the letter should make with concrete evidence. Choose at most 5, and never a \
-nice_to_have.
+- headline: a core skill or experience requirement that distinguishes a strong \
+candidate; a lead point the letter should make with concrete evidence. Choose at most \
+5, and never a nice_to_have. Prefer the stated must-haves and the role's distinctive \
+duty. NOT headlines: attitude or soft-skill lines (team player, eager to learn); \
+"you will work with X, Y and Z" stack listings, unless the ad centres on that stack; \
+one bullet among many equal ones in a tech list; duties beyond the stated seniority \
+(architecting client solutions in a 0-3 year role). For a graduate, fundamentals the \
+ad lists (data structures, algorithms, problem solving) can be headlines.
 - mention: relevant, and worth a brief mention if the candidate has it, but not a \
-lead point.
-- implied: anyone competent at a headline/mention item would obviously have it, so \
-naming it adds nothing (e.g. git, CI/CD, debugging or deployment when the ad asks for \
+lead point. Soft skills, attitudes, distinct duties like documentation, and \
+separately listed nice-to-haves go here.
+- implied: anyone competent at a SPECIFIC headline/mention item would obviously have \
+it, so naming it adds nothing (e.g. git, CI/CD or deployment when the ad asks for \
 experience building and running production web applications; basic data integrity or \
 idempotency under "design reliable systems"). The letter will not list it, but may \
-use it if it fits a sentence naturally. For these, put the n of the headline/mention \
-item(s) it follows from in implied_by; otherwise implied_by is empty.
+use it if it fits a sentence naturally. Put the n of the headline/mention item(s) it \
+follows from in implied_by. If you cannot name that item, it is not implied: use \
+mention. Something the ad lists as its own must-have (problem solving, communication, \
+fundamentals) or as its own duty is never implied.
 - not_for_letter: eligibility, admin or logistics facts a letter should not state, \
 even when essential: work rights, citizenship or visa status, security clearance, \
 police or working-with-children checks, a driver's licence, own transport, location \
-or onsite days, availability or start date, hours, salary. These are screened at \
-application time and shown to the candidate as a note.
+or onsite days, availability or start date, hours, contract length, salary. Include \
+conditions that apply only to some candidates ("junior candidates start in the Brisbane \
+office"). These are screened at application time and shown to the candidate as a note.
 
 theme: a short label (2-4 words) grouping related requirements, e.g. "APIs and \
 integrations", "Production operations", "AI-assisted development". Related items \
@@ -126,6 +154,11 @@ echoing in the letter (the employer's vocabulary, not generic words).
 
 screening_questions: questions the ad explicitly asks applicants to answer in their \
 application. Empty if none.
+
+application_instructions: what the ad asks applicants to include or do when applying, \
+especially anything about the cover letter itself ("include a cover letter showing \
+interesting projects you've built", "attach your university transcript", "quote \
+reference ABC123"). Short phrases in the ad's words. Empty if none.
 
 company_facts: up to 5 concrete things the ad states about the employer, product, \
 team or mission that a letter could genuinely refer to (what they build, who they \
@@ -147,6 +180,18 @@ _ELIGIBILITY_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Attitude/disposition wording. An essential + headline item with no evidence blocks
+# drafting and asks the user a question, and "do you have a genuine interest in
+# learning?" is not a question worth pausing a letter for. So these are capped at
+# important / mention whatever the model said. A compound item ("Python and a passion
+# for clean code") loses its headline too; the prompt asks for them to be split.
+_ATTITUDE_RE = re.compile(
+    r"\b(genuine interest|passion(?:ate)?|eager(?:ness)?|keen(?:ness)? to learn|"
+    r"willing(?:ness)? to learn|desire to (?:learn|grow)|curio(?:us|sity)|enthusias\w*|"
+    r"self[- ]?motivated|positive attitude|can-do|team player|growth mindset)\b",
+    re.IGNORECASE,
+)
+
 _IMPORTANCE_RANK = {"essential": 0, "important": 1, "nice_to_have": 2}
 
 
@@ -164,8 +209,17 @@ def _postprocess(analysis: JobAnalysis) -> list[dict[str, Any]]:
         if not text or key in seen:
             continue
         seen.add(key)
-        kept.append(r.model_copy(update={"text": text}))
-    kept = kept[:MAX_REQUIREMENTS]
+        update: dict[str, Any] = {"text": text}
+        if _ATTITUDE_RE.search(text):
+            if r.importance == "essential":
+                update["importance"] = "important"
+            if r.letter_role == "headline":
+                update["letter_role"] = "mention"
+        kept.append(r.model_copy(update=update))
+    if len(kept) > MAX_REQUIREMENTS:
+        # Drop the least important, latest-listed first; keep the ad's order.
+        ranked = sorted(range(len(kept)), key=lambda i: (_IMPORTANCE_RANK[kept[i].importance], i))
+        kept = [kept[i] for i in sorted(ranked[:MAX_REQUIREMENTS])]
 
     id_for_n: dict[int, str] = {}
     for pos, r in enumerate(kept, start=1):
@@ -202,6 +256,8 @@ def _postprocess(analysis: JobAnalysis) -> list[dict[str, Any]]:
             r["implied_by"] = []
         else:  # it can only follow from something the letter actually leads with
             r["implied_by"] = [i for i in r["implied_by"] if by_id[i]["letter_role"] in ("headline", "mention")]
+            if not r["implied_by"]:
+                r["letter_role"] = "mention"  # implied by nothing: the letter shouldn't skip it
     return reqs
 
 
@@ -219,6 +275,7 @@ def _apply_to_state(state: LetterState, payload: dict[str, Any]) -> None:
     state.job.tone = payload["tone"]
     state.job.keywords = payload["keywords"]
     state.job.screening_questions = payload["screening_questions"]
+    state.job.application_instructions = payload.get("application_instructions", [])
     state.job.company_facts = payload["company_facts"]
 
 
@@ -293,6 +350,7 @@ def analyze_job(state: LetterState, ctx: ToolContext, force: bool = False) -> di
         "tone": analysis.tone,
         "keywords": _clean_list(analysis.keywords, 8),
         "screening_questions": _clean_list(analysis.screening_questions, 10),
+        "application_instructions": _clean_list(analysis.application_instructions, 5),
         "company_facts": _clean_list(analysis.company_facts, 5),
     }
     job.requirements_checklist = json.dumps(payload, ensure_ascii=False)
