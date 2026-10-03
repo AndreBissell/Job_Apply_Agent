@@ -102,6 +102,26 @@ def can_generate(state: LetterState) -> str | None:
     return drafting_blocked(state)
 
 
+# Check tool name -> the key its result is stored under on a draft.
+CHECK_TOOLS = {"check_claims": "claims", "check_requirements": "requirements", "style_lint": "style"}
+_CHECK_TOOL_OF = {v: k for k, v in CHECK_TOOLS.items()}
+
+
+def can_check(state: LetterState, tool: str) -> str | None:
+    """A check runs once per draft: its result belongs to that draft, and running it
+    again on the same text only spends money (and a small model may flip its verdict)."""
+    draft = state.latest_draft
+    if draft is None:
+        return f"no draft to check yet: call generate_letter before {tool}"
+    check = draft.checks.get(CHECK_TOOLS[tool])
+    if check is not None:
+        return (
+            f"{tool} already ran on draft {draft.version} ({'pass' if check.passed else 'FAIL'}); "
+            "a check runs once per draft, so run it again only on a new draft"
+        )
+    return None
+
+
 def checks_not_run(state: LetterState) -> list[str]:
     draft = state.latest_draft
     return [n for n in REQUIRED_CHECKS if draft is None or n not in draft.checks]
@@ -133,7 +153,7 @@ def can_revise(state: LetterState) -> str | None:
         )
     missing = checks_not_run(state)
     if missing:
-        return f"run {', '.join('check_' + n if n != 'style' else 'style_lint' for n in missing)} on draft {draft.version} before revising it"
+        return f"run {', '.join(_CHECK_TOOL_OF[n] for n in missing)} on draft {draft.version} before revising it"
     if not failed_checks(state):
         return f"every check passed on draft {draft.version}: there is nothing to revise; call finish"
     return None
@@ -151,6 +171,17 @@ def can_finish(state: LetterState) -> str | None:
     if failed:
         return f"{', '.join(failed)} failed on draft {draft.version}: revise_letter, or stop at the draft limit"
     return None
+
+
+def out_of_drafts(state: LetterState) -> bool:
+    """Nothing is left to try: the draft cap is reached, every check ran on the latest
+    draft and one failed. The run ends with the best draft and its open issues."""
+    return (
+        state.latest_draft is not None
+        and len(state.drafts) >= state.budget.max_drafts
+        and not checks_not_run(state)
+        and bool(failed_checks(state))
+    )
 
 
 # ---------------------------------------------------------------------------

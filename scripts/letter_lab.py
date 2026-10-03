@@ -22,6 +22,7 @@ mechanical items, you grade the judgement items in a CSV.
 
     python scripts/letter_lab.py run --engine workflow   # Phase 6: the fixed loop (revise <=2, best draft) -> drafts.md + states/
     python scripts/letter_lab.py loop-report <run> [--against tools-v1]   # per-draft checks + revision regressions
+    python scripts/letter_lab.py run --engine agent      # Phase 7a: the agent over the same tools; loop-report adds path + overhead
 
 Privacy: evals/jobs/, evals/eval.db, evals/set.json and evals/runs/ hold ad text,
 your profile and letters written as you — all gitignored. Only the summary in
@@ -415,9 +416,53 @@ def _engine_workflow(job_id: int):
     }
 
 
+def _engine_agent(job_id: int):
+    """Phase 7a: the agent (app/llm/letter/agent.py) over the same tools and guardrails,
+    with the same leave-out gap policy as the workflow. Returns what the workflow
+    engine does, plus the step log (tool calls and refusals) and the orchestrator's
+    own calls, for the path and overhead comparison in loop-report."""
+    from sqlalchemy import func, select
+
+    from app.db import SessionLocal
+    from app.llm.client import BudgetExceededError
+    from app.llm.letter.agent import run_agent
+    from app.llm.letter.runner import REFUSED
+    from app.models import LetterRunStep, LlmUsage
+
+    with SessionLocal() as db:
+        result = run_agent(db, job_id, PROFILE_ID)
+        steps = []
+        for st in db.scalars(select(LetterRunStep).where(LetterRunStep.run_id == result.run_id)
+                             .order_by(LetterRunStep.seq)):
+            row = {"tool": st.tool}
+            if (st.error or "").startswith(REFUSED):
+                row["refused"] = st.error.removeprefix(REFUSED)
+            elif st.error:
+                row["error"] = st.error
+            steps.append(row)
+        calls, cost, tin, tout = db.execute(
+            select(func.count(), func.coalesce(func.sum(LlmUsage.cost_usd), 0),
+                   func.coalesce(func.sum(LlmUsage.input_tokens), 0),
+                   func.coalesce(func.sum(LlmUsage.output_tokens + LlmUsage.thinking_tokens), 0))
+            .where(LlmUsage.run_id == result.run_id, LlmUsage.task == "orchestrate")
+        ).one()
+    if result.account_limit:
+        raise BudgetExceededError(result.account_limit)
+    if result.draft is None:
+        raise RuntimeError(f"no draft ({result.status}): {result.stop_reason}")
+    return {
+        "text": result.draft.text, "state": result.state.model_dump(mode="json"),
+        "letter_run_id": result.run_id, "final_version": result.draft.version,
+        "status": result.status, "clean": result.clean, "open_issues": result.open_issues,
+        "stop_reason": result.stop_reason, "steps": steps,
+        "orchestrator": {"calls": calls, "cost_usd": float(cost), "input_tokens": int(tin),
+                         "output_tokens": int(tout)},
+    }
+
+
 ENGINES = {
     "oneshot": _engine_oneshot, "oneshot-styled": _engine_oneshot_styled,
-    "tools": _engine_tools, "workflow": _engine_workflow,
+    "tools": _engine_tools, "workflow": _engine_workflow, "agent": _engine_agent,
 }
 
 
@@ -525,7 +570,8 @@ def cmd_run(args) -> int:
                 "drafts": len(drafts),
                 "final_version": final_version,
                 "tool_checks": {n: c["passed"] for n, c in final["checks"].items()},
-                **{k: out[k] for k in ("status", "clean", "open_issues", "stop_reason") if k in out},
+                **{k: out[k] for k in ("status", "clean", "open_issues", "stop_reason", "steps", "orchestrator")
+                   if k in out},
             }
         text = text or ""
         (run_dir / "letters" / f"{key}.txt").write_text(text, encoding="utf-8")
@@ -923,10 +969,84 @@ def _summary_table(cols: list[tuple[str, dict]]) -> list[str]:
     return out
 
 
+_CHECK_STEPS = ("check_claims", "check_requirements", "style_lint")
+
+
+def _workflow_path(drafts: int, asked: bool) -> list[str]:
+    """The tool calls the fixed workflow makes for a run with this many drafts."""
+    path = ["analyze_job", "match_profile"] + (["ask_user"] if asked else []) + ["generate_letter", *_CHECK_STEPS]
+    for _ in range(drafts - 1):
+        path += ["revise_letter", *_CHECK_STEPS]
+    return path
+
+
+def _sorted_checks(path: list[str]) -> list[str]:
+    """The path with each run of consecutive checks sorted: check order is free."""
+    out: list[str] = []
+    run: list[str] = []
+    for t in path + [""]:
+        if t in _CHECK_STEPS:
+            run.append(t)
+            continue
+        out += sorted(run) + ([t] if t else [])
+        run = []
+    return out
+
+
+def _agent_section(rows: list[dict]) -> list[str]:
+    """Agent-only measures: path vs the workflow's, refusals, orchestrator overhead."""
+    agent = [r for r in rows if "steps" in r]
+    n = len(agent) or 1
+    same = reordered = differs = 0
+    refusal_lines: list[str] = []
+    table = ["| Job | Steps ((refused) in brackets) | vs workflow | Refused | Orch. calls | Orch. cost | "
+             "Share of cost |", "|---|---|---|---|---|---|---|"]
+    for r in agent:
+        executed = [s["tool"] for s in r["steps"] if "refused" not in s and s["tool"] != "finish"]
+        expected = _workflow_path(len(r["per_draft"]), asked="ask_user" in executed)
+        if executed == expected:
+            verdict, same = "same", same + 1
+        elif _sorted_checks(executed) == _sorted_checks(expected):
+            verdict, reordered = "check order only", reordered + 1
+        else:
+            verdict, differs = "**different**", differs + 1
+        refused = [s for s in r["steps"] if "refused" in s]
+        refusal_lines += [f"- {r['title'][:40]}: `{s['tool']}`: {s['refused']}" for s in refused]
+        path = " → ".join(f"({s['tool']})" if "refused" in s else s["tool"] for s in r["steps"])
+        o = r["orchestrator"]
+        share = o["cost_usd"] / r["cost_usd"] if r["cost_usd"] else 0
+        table.append(f"| {r['title'][:32].replace('|', '/')} | {path} | {verdict} | {len(refused)} | "
+                     f"{o['calls']} | ${o['cost_usd']:.4f} | {share:.0%} |")
+    orch = [r["orchestrator"] for r in agent]
+    orch_cost = sum(o["cost_usd"] for o in orch)
+    total_cost = sum(r["cost_usd"] for r in agent)
+    lines = [
+        "", "## Agent: path, refusals and orchestrator overhead", "",
+        "vs workflow: the fixed workflow's tool sequence for the same number of drafts. \"check order only\" "
+        "means the same calls with the three checks in a different order.", "",
+        *table, "",
+        "| Measure | Value |", "|---|---|",
+        f"| Same path as the workflow | {same}/{len(agent)} (+{reordered} with only the check order changed) |",
+        f"| Different path | {differs}/{len(agent)} |",
+        f"| Guardrail refusals | {sum(len([s for s in r['steps'] if 'refused' in s]) for r in agent)} in "
+        f"{sum(any('refused' in s for s in r['steps']) for r in agent)}/{len(agent)} runs |",
+        f"| Orchestrator calls / letter | {sum(o['calls'] for o in orch) / n:.1f} |",
+        f"| Orchestrator tokens / letter | {sum(o['input_tokens'] for o in orch) // n} in, "
+        f"{sum(o['output_tokens'] for o in orch) // n} out+thinking |",
+        f"| Orchestrator cost / letter | ${orch_cost / n:.4f} "
+        f"({orch_cost / total_cost if total_cost else 0:.0%} of the run cost) |",
+        f"| Avg tokens / letter (all calls) | {sum(r['input_tokens'] for r in agent) // n} in, "
+        f"{sum(r['output_tokens'] for r in agent) // n} out+thinking |",
+    ]
+    if refusal_lines:
+        lines += ["", "Refusals (the reason the orchestrator was given):", "", *refusal_lines]
+    return lines
+
+
 def cmd_loop_report(args) -> int:
     run_dir = RUNS_DIR / args.run_id
     if not (run_dir / "states").exists():
-        print(f"{args.run_id} has no states/: loop-report needs a `run --engine tools|workflow` run")
+        print(f"{args.run_id} has no states/: loop-report needs a `run --engine tools|workflow|agent` run")
         return 1
     rows = _loop_rows(run_dir)
     mark = {True: "✓", False: "✗", None: "–"}
@@ -970,6 +1090,8 @@ def cmd_loop_report(args) -> int:
                 *_summary_table([(args.run_id, _loop_summary([r for r in rows if r["key"] in shared])),
                                  (args.against, _loop_summary([r for r in other if r["key"] in shared]))]),
             ]
+    if any("steps" in r for r in rows):
+        lines += _agent_section(rows)
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     out = RESULTS_DIR / f"{args.run_id}-loop.md"
     out.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -1421,7 +1543,7 @@ def main() -> int:
     p.set_defaults(fn=cmd_report)
 
     p = sub.add_parser("loop-report", help="per-draft checks and what each revision changed -> evals/results/<run>-loop.md")
-    p.add_argument("run_id", help="a `run --engine tools|workflow` run")
+    p.add_argument("run_id", help="a `run --engine tools|workflow|agent` run")
     p.add_argument("--against", help="another tools/workflow run to compare on the jobs both ran (e.g. tools-v1)")
     p.set_defaults(fn=cmd_loop_report)
 

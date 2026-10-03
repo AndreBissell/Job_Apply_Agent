@@ -79,7 +79,9 @@ def _run_cost(db: Session, run_id: int) -> float:
     return float(total or 0)
 
 
-def _persist(ctx: ToolContext, state: LetterState) -> None:
+def persist(ctx: ToolContext, state: LetterState) -> None:
+    """Save the state and the run's counters; refreshes ``budget.cost_usd`` from
+    ``llm_usage``, so calls made outside a tool (the agent's orchestrator) count too."""
     state.budget.cost_usd = _run_cost(ctx.db, ctx.run.id)
     ctx.run.state = state.model_dump_json()
     ctx.run.tool_calls = state.budget.tool_calls
@@ -95,9 +97,7 @@ def execute_tool(
     **args: Any,
 ) -> ToolResult:
     """Run ``fn`` as step N of this run, log it, persist the state."""
-    seq = (ctx.db.scalar(
-        select(func.coalesce(func.max(LetterRunStep.seq), 0)).where(LetterRunStep.run_id == ctx.run.id)
-    ) or 0) + 1
+    seq = _next_seq(ctx)
     state.budget.tool_calls += 1
 
     start = time.monotonic()
@@ -114,6 +114,41 @@ def execute_tool(
 
     if error is not None:
         ctx.db.rollback()  # a tool that died mid-write must not leave a half-applied session
+    _log_step(ctx, seq, name, args, summary, error, start)
+    persist(ctx, state)
+    if stop is not None:
+        raise stop
+    return ToolResult(ok=error is None, summary=summary, error=error)
+
+
+REFUSED = "refused: "  # letter_run_steps.error prefix for a call a guardrail turned down
+
+
+def record_step(
+    ctx: ToolContext,
+    state: LetterState,
+    name: str,
+    args: dict[str, Any] | None = None,
+    *,
+    summary: dict[str, Any] | None = None,
+    refused: str | None = None,
+) -> None:
+    """Log a step that ran no tool and costs no tool call: a call a guardrail refused
+    (``refused`` is the reason the orchestrator was given) or the agent's accepted
+    ``finish``. Refusals are what the agent report counts."""
+    _log_step(ctx, _next_seq(ctx), name, args or {}, summary,
+              REFUSED + refused if refused is not None else None, time.monotonic())
+    persist(ctx, state)
+
+
+def _next_seq(ctx: ToolContext) -> int:
+    return (ctx.db.scalar(
+        select(func.coalesce(func.max(LetterRunStep.seq), 0)).where(LetterRunStep.run_id == ctx.run.id)
+    ) or 0) + 1
+
+
+def _log_step(ctx: ToolContext, seq: int, name: str, args: dict[str, Any], summary: dict[str, Any] | None,
+              error: str | None, start: float) -> None:
     ctx.db.add(
         LetterRunStep(
             run_id=ctx.run.id,
@@ -125,10 +160,6 @@ def execute_tool(
             duration_ms=int((time.monotonic() - start) * 1000),
         )
     )
-    _persist(ctx, state)
-    if stop is not None:
-        raise stop
-    return ToolResult(ok=error is None, summary=summary, error=error)
 
 
 def finish_run(ctx: ToolContext, state: LetterState, status: str, final_version: int | None = None) -> None:
@@ -143,4 +174,4 @@ def finish_run(ctx: ToolContext, state: LetterState, status: str, final_version:
     if final_version is None and state.latest_draft is not None:
         final_version = state.latest_draft.version
     ctx.run.final_draft_version = final_version
-    _persist(ctx, state)
+    persist(ctx, state)
