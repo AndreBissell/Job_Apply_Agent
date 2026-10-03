@@ -70,9 +70,22 @@ class Profile(Base):
     summary: Mapped[str | None] = mapped_column(Text)
     target_role: Mapped[str | None] = mapped_column(Text)
     target_location: Mapped[str | None] = mapped_column(Text)
+    preferences: Mapped[str | None] = mapped_column(Text)  # JSON object; see app/preferences.py
+    # Explicit "my profile changed" marker. The suggestion miner already derives
+    # a revision time from MAX(updated_at) over experiences/skills/qualifications
+    # (see app/retention.py::profile_revised_at), but that cannot see a DELETION
+    # — removing a skill leaves nothing behind to have a newer timestamp. Bump
+    # this from any code path that deletes profile content.
+    profile_revised_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    # Pasted samples of the user's own writing: the letter writer's voice
+    # reference (tone and rhythm only, never facts). Not evidence, so editing it
+    # does not bump profile_revised_at. See app/llm/letter/style.py.
+    writing_sample: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), 
-        nullable=False, 
+        DateTime(timezone=True),
+        nullable=False,
         server_default=func.now()
     )
     updated_at: Mapped[datetime.datetime] = mapped_column(
@@ -329,6 +342,11 @@ class JobListing(Base):
     subclassification: Mapped[str | None] = mapped_column(Text)
     work_type: Mapped[str | None] = mapped_column(Text)
     salary: Mapped[str | None] = mapped_column(Text)
+    # The Seek search that surfaced this listing, so search performance can be
+    # measured (see GET /jobs/search-performance). NULL for jobs opened
+    # directly rather than from a results page, and for everything captured
+    # before migration c5b21d7f4e3a.
+    discovered_query: Mapped[str | None] = mapped_column(Text)
     close_date: Mapped[datetime.date | None] = mapped_column(Date)
     start_date: Mapped[datetime.date | None] = mapped_column(Date)
     qualification_requirements: Mapped[str | None] = mapped_column(Text)
@@ -341,6 +359,11 @@ class JobListing(Base):
     key_responsibilities: Mapped[str | None] = mapped_column(Text)
     summary: Mapped[str | None] = mapped_column(Text)
     extracted_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    # analyze_job's cached output (JSON object) — see docs/database-schema.md.
+    requirements_checklist: Mapped[str | None] = mapped_column(Text)
+    requirements_checklist_at: Mapped[datetime.datetime | None] = mapped_column(
         DateTime(timezone=True)
     )
     # Stamped by app/llm/quickscreen.py's cheap pre-extraction pass, on both
@@ -430,6 +453,14 @@ class Match(Base):
         nullable=False,
     )
     score: Mapped[Decimal | None] = mapped_column(Numeric)  # 0-100, source of truth
+    # When ``score`` was last WRITTEN (match_job / quick-screen). Distinct from
+    # created_at: a job re-scored against an updated profile keeps its old
+    # created_at but must stop counting as stale, which is what the miner's
+    # post-profile-update weighting keys off. NULL on rows from before this
+    # column existed; read those as created_at.
+    scored_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
     reasoning: Mapped[str | None] = mapped_column(Text)
     gaps: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(
@@ -440,10 +471,23 @@ class Match(Base):
     applied_at: Mapped[datetime.datetime | None] = mapped_column(
         DateTime(timezone=True)
     )
+    # Soft delete for the sidebar's bulk "delete jobs below score" action.
+    # NULL = visible. The row is kept rather than deleted because the
+    # suggestion miner ranks phrases against the baseline of ALL scored
+    # matches, and removing the low scorers raises that baseline and flattens
+    # the contrast the ranking depends on. Hidden matches stay out of /jobs
+    # but still count toward the baseline and toward search-performance yield.
+    hidden_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
     # Durable Centrelink evidence, set by POST /jobs/{id}/screenshot — see
     # app/api/main.py. screenshot_path is relative to the app dir (served under
     # /screenshots); overwritten (old file deleted) on repeat capture, so it's
     # always the latest screenshot for this match, not a history of all of them.
+    # Screenshots expire (see app/retention.py): the FILE is deleted and
+    # screenshot_path nulled after SCREENSHOT_TTL_DAYS, but screenshot_taken_at
+    # is kept, so "path NULL + taken_at set" means "captured, since expired" and
+    # the application record still shows that evidence once existed.
     screenshot_path: Mapped[str | None] = mapped_column(Text)
     screenshot_taken_at: Mapped[datetime.datetime | None] = mapped_column(
         DateTime(timezone=True)
@@ -473,6 +517,7 @@ class Match(Base):
         UniqueConstraint("user_id", "job_id", name="uq_matches_user_job"),
         Index("idx_matches_user_score", "user_id", score.desc()),  # ranked dashboard
         Index("idx_matches_status", "status"),
+        Index("idx_matches_created", "created_at"),  # retention sweep / miner window
     )
 
 
@@ -505,3 +550,91 @@ class CoverLetter(Base):
     match: Mapped["Match"] = relationship(back_populates="cover_letter")
 
     __table_args__ = (UniqueConstraint("match_id", name="uq_cover_letters_match"),)
+
+
+# ---------------------------------------------------------------------------
+# Cover-letter pipeline runs
+# ---------------------------------------------------------------------------
+class LetterRun(Base):
+    """One execution of the cover-letter pipeline for a match (persisted state)."""
+
+    __tablename__ = "letter_runs"
+
+    id: Mapped[int] = mapped_column(BIG_INT_PK, primary_key=True)
+    match_id: Mapped[int] = mapped_column(
+        BIG_INT_FK, ForeignKey("matches.id", ondelete="CASCADE"), nullable=False
+    )
+    engine: Mapped[str] = mapped_column(Text, nullable=False)  # 'workflow' | 'agent'
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="running")
+    state: Mapped[str | None] = mapped_column(Text)  # JSON LetterState
+    final_draft_version: Mapped[int | None] = mapped_column(Integer)
+    tool_calls: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    cost_usd: Mapped[Decimal] = mapped_column(Numeric(12, 6), nullable=False, server_default="0")
+    started_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    finished_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))
+
+    steps: Mapped[list["LetterRunStep"]] = relationship(
+        back_populates="run", passive_deletes=True, order_by="LetterRunStep.seq"
+    )
+
+    __table_args__ = (Index("idx_letter_runs_match", "match_id"),)
+
+
+class LetterRunStep(Base):
+    """One tool call within a run."""
+
+    __tablename__ = "letter_run_steps"
+
+    id: Mapped[int] = mapped_column(BIG_INT_PK, primary_key=True)
+    run_id: Mapped[int] = mapped_column(
+        BIG_INT_FK, ForeignKey("letter_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    tool: Mapped[str] = mapped_column(Text, nullable=False)
+    args: Mapped[str | None] = mapped_column(Text)  # JSON
+    result_summary: Mapped[str | None] = mapped_column(Text)  # JSON
+    error: Mapped[str | None] = mapped_column(Text)
+    duration_ms: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    run: Mapped["LetterRun"] = relationship(back_populates="steps")
+
+    __table_args__ = (UniqueConstraint("run_id", "seq", name="uq_letter_run_steps_seq"),)
+
+
+# ---------------------------------------------------------------------------
+# LLM cost tracking
+# ---------------------------------------------------------------------------
+class LlmUsage(Base):
+    """One row per LLM call: tokens + estimated USD. Feeds the budget guard.
+
+    ``job_id`` / ``match_id`` / ``run_id`` are plain labels, deliberately NOT
+    foreign keys: the spend log must outlive the rows it describes (a retention
+    purge or a deleted match must not erase what was already spent, or the
+    total-budget cap would quietly reset).
+    """
+
+    __tablename__ = "llm_usage"
+
+    id: Mapped[int] = mapped_column(BIG_INT_PK, primary_key=True)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    task: Mapped[str] = mapped_column(Text, nullable=False)  # 'extract', 'match', ...
+    tier: Mapped[str] = mapped_column(Text, nullable=False)  # 'small' | 'mid' | 'strong'
+    model: Mapped[str] = mapped_column(Text, nullable=False)
+    input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    thinking_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    cached_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    cost_usd: Mapped[Decimal] = mapped_column(Numeric(12, 6), nullable=False, server_default="0")
+    duration_ms: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    job_id: Mapped[int | None] = mapped_column(BIG_INT_FK)
+    match_id: Mapped[int | None] = mapped_column(BIG_INT_FK)
+    run_id: Mapped[int | None] = mapped_column(BIG_INT_FK)
+
+    __table_args__ = (Index("idx_llm_usage_created", "created_at"),)

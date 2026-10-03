@@ -16,6 +16,20 @@ const SELECTORS = {
   CARD_SALARY:        '[data-automation="jobSalary"]',
   DETAIL_DESCRIPTION: '[data-automation="jobAdDetails"]',
   DETAIL_TITLE:       '[data-automation="job-detail-title"]',
+  // Seek's own taxonomy on the detail page, e.g. "Developers/Programmers" and
+  // "Information & Communication Technology". UNVERIFIED against the live DOM —
+  // readJsonLdJobPosting() is the primary source and these are only the
+  // fallback, so a wrong guess here costs nothing. Confirm and fix on a real
+  // job page when convenient.
+  DETAIL_SUBCLASSIFICATION: '[data-automation="job-detail-classifications"]',
+  DETAIL_CLASSIFICATION:    '[data-automation="job-detail-classification"]',
+  // Employer / location / work type on the detail page. Same status as the two
+  // above: UNVERIFIED fallbacks behind readJsonLdJobPosting(), and the backend
+  // additionally recovers the employer name from the ad text, so a wrong guess
+  // here costs nothing. Confirm on a real job page when convenient.
+  DETAIL_COMPANY:   '[data-automation="advertiser-name"]',
+  DETAIL_LOCATION:  '[data-automation="job-detail-location"]',
+  DETAIL_WORK_TYPE: '[data-automation="job-detail-work-type"]',
 };
 
 // Extract the Seek numeric job id from a /job/{id} href or path.

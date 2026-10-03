@@ -167,7 +167,8 @@ def quick_screen(
 
         try:
             data = complete_json(
-                _SYSTEM_PROMPT, prompt, schema=QuickScreenOutput, temperature=0.1
+                _SYSTEM_PROMPT, prompt, schema=QuickScreenOutput, temperature=0.1,
+                tier="small", task="quickscreen", job_id=job_id,
             )
             result = QuickScreenOutput.model_validate(data)
             score = max(0, min(100, result.score))
@@ -197,6 +198,7 @@ def quick_screen(
                 existing.reasoning = reasoning
                 existing.gaps = "[]"
                 existing.status = "new"
+                existing.scored_at = datetime.datetime.now(datetime.timezone.utc)
             else:
                 db.add(
                     Match(
@@ -206,6 +208,7 @@ def quick_screen(
                         reasoning=reasoning,
                         gaps="[]",
                         status="new",
+                        scored_at=datetime.datetime.now(datetime.timezone.utc),
                     )
                 )
             db.commit()

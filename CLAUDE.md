@@ -40,8 +40,10 @@ Auto-navigate the user's active tab to job links that already appear on a page t
 user opened — i.e. links on the opened search-results page are fair game. This is
 1 hop: the page the user opened → the listings linked from it.
 Paced and capped so it stays a trickle, not a crawl: ≥5s between pages
-(SCAN_DELAY_MS = 5000), and a sane per-scan cap (MAX_SCAN_PAGES, currently 3 —
-raise deliberately if needed, don't remove the cap).
+(SCAN_DELAY_MS = 5000), and a per-scan cap. The cap is now user-tunable in the
+sidebar's Personalise panel (`scan_max_pages`, default 10) but hard-bounded at 25
+by both the API (PreferencesUpdate le=25) and the sidebar (SCAN_PAGES_CEILING) —
+that ceiling is the policy cap: raise it deliberately if needed, don't remove it.
 
 
 The hard line that still holds — no second hop:
@@ -75,7 +77,7 @@ Language: Python 3.11+
 ORM: SQLAlchemy 2.0 (typed, declarative mapped style)
 Migrations: Alembic
 API: FastAPI + uvicorn (local backend for the extension)
-LLM: Groq (free tier, llama-3.3-70b-versatile) — see the LLM Layer section below
+LLM: Gemini on Vertex AI (small/mid/strong tiers) — see the LLM Layer section below
 Config: python-dotenv — app/db.py loads .env so DATABASE_URL (and
 later secrets) can live in a gitignored .env file.
 DB: SQLite for local dev, Postgres-ready for hosting. The database URL
@@ -88,66 +90,58 @@ everything portable so a Postgres DATABASE_URL works with no code changes.
 
 🤖 LLM LAYER
 
-Active provider: OpenAI (platform.openai.com), paid — chosen 2026-09-11 after
-Groq deprecated its free-tier models (llama-3.1-8b-instant cut 2026-08-16,
-llama-3.3-70b-versatile went enterprise-only 2026-08-26) and Gemini's fallback
-default (gemini-2.0-flash) was retired 2026-06-01. Neither old default works
-anymore. Cost is negligible at this project's volume — a few cents/month even
-at dozens of applications — so the model choice below is optimised for quality
-where it matters (cover letters), not absolute cheapness everywhere.
+Active provider: **Gemini on Vertex AI**, authenticating with Application Default
+Credentials (no API key — the $300 trial project's org disallows keys). Trial
+window 2026-10-01 → 2026-12-30; Flash intro prices double 2027-01-01, so re-check
+prices (and the plan's cost tables) before running past the trial. OpenAI
+(gpt-5-nano / gpt-5-mini, mini shuts down 2026-12-11) and Groq remain as dormant
+fallbacks in client.py. Switched 2026-10-01 (Phase 1 of
+docs/cover-letter-loop-plan.md); see that file for the model-choice reasoning.
 
-Split by task — two different models, not one:
-  Extraction + matching (complete_json) → OPENAI_MODEL_SMALL, default
-    gpt-5-nano. Structured JSON, low judgment required — the cheap tier is
-    genuinely fine here.
-  Cover letters (complete_text) → OPENAI_MODEL_LETTER, default gpt-5-mini.
-    This is the one output a human (an employer) actually reads, so it gets
-    the better model even though the dollar difference is trivial either way.
+Callers name a **tier**, never a model:
+  small  (GEMINI_MODEL_SMALL,  default gemini-3.1-flash-lite) — quick-screen,
+         extract, match, search_refine. `complete_json` defaults to this.
+  mid    (GEMINI_MODEL_MID,    default gemini-3.8-flash) — orchestration/analysis
+         (not used yet; the cover-letter agent will).
+  strong (GEMINI_MODEL_STRONG, default gemini-3.1-pro-preview) — cover letters.
+         `complete_text` defaults to this. A *preview* model: may change; falling
+         back is one env var.
 
-⚠️ gpt-5-mini is scheduled for shutdown 2026-12-11, successor is gpt-5.6-terra
-(pricier tier — re-check current pricing/model landscape before migrating,
-don't assume today's numbers still hold). Swap is a single .env change
-(OPENAI_MODEL_LETTER), never a code change — see provider abstraction below.
+Provider abstraction: ALL LLM calls go through app/llm/client.py —
+`complete_json` (structured), `complete_text` (prose), `complete_tools` (one
+tool-calling turn; provider-neutral `ToolSpec`, returns a `ToolStep`). Provider,
+models, prices and thinking levels live in exactly ONE place. Never call a
+provider SDK from extract.py / match.py / cover-letter code. Pass `task=` (and
+`job_id` / `match_id` / `run_id` where known) so the usage row is labelled.
 
-Provider abstraction: ALL LLM calls go through app/llm/client.py
-(complete_json for structured extraction; complete_text for prose). Provider
-and models live in exactly ONE place. Do not call the OpenAI/Groq/Gemini SDKs
-directly from extract.py / match.py / cover-letter code.
+Cost control (all in client.py + app/llm/usage.py):
+  * Every call writes an `llm_usage` row (tokens, thinking tokens, estimated USD).
+    `cost_usd` is an estimate from the PRICES dict; Cloud Billing is the authority.
+  * Budget guard: `llm_daily_budget_usd` ($5) / `llm_total_budget_usd` ($200) in
+    `profiles.preferences`. At the cap, mid/strong calls raise
+    `BudgetExceededError` BEFORE any request; `small` is never blocked. The idle
+    loop pauses cover letters for 10 min and the sidebar shows a banner
+    (`GET /llm/usage`, SSE `llm_budget_blocked`). The guard fails open if the
+    usage table is unreadable. Don't add FKs from llm_usage (spend log must
+    outlive the rows it describes) or purge it without keeping a running total.
+  * Thinking tokens bill as output and dominate small calls: GEMINI_THINKING_*
+    sets the level per tier (default low/medium/high).
+  * Gemini 3 is called WITHOUT `temperature` (Google: leave it at 1.0, lowering
+    risks looping); the `temperature` argument is ignored there, like GPT-5.
 
-Temperature:
-  Extraction → 0.1 (deterministic, consistent structure).
-  Cover letters → higher (~0.7) for natural prose.
+Rate-limit handling: on HTTP 429, client.py backs off and retries (max 3);
+delays > 300s are treated as daily exhaustion → DailyQuotaError. The idle loop
+(_processing_idle_loop in main.py) serialises LLM work through a single-worker
+executor and backs off 3 minutes when extraction fails. Local throttle: LLM_RPM=8.
 
-Rate-limit handling: on HTTP 429, client.py backs off and retries (max 3).
-OpenAI/Groq provide a retry-after header; delays > 300s are treated as daily
-exhaustion → DailyQuotaError. The idle processing loop (_processing_idle_loop
-in main.py) serialises all LLM work through a single-worker executor and backs
-off 3 minutes when extraction fails. Local throttle: LLM_RPM=8 (~7.5s spacing).
+Env vars (gitignored .env): LLM_PROVIDER=gemini, GOOGLE_GENAI_USE_VERTEXAI=true,
+GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_LOCATION=global, GEMINI_MODEL_SMALL/_MID/
+_STRONG, GEMINI_THINKING_SMALL/_MID/_STRONG (optional), LLM_RPM. The old
+GEMINI_MODEL is still read as the small model. Verify with
+`python scripts/check_llm.py` (every tier + a tool call + usage logging).
 
-TLS note (this machine): OpenAI/Groq both use httpx internally. The AV does TLS
-interception with a local CA cert that certifi doesn't trust. truststore's
-inject_into_ssl() doesn't affect httpcore's start_tls path, so both httpx
-clients are created with verify=False. Acceptable on a local dev machine with a
-trusted AV proxy.
-
-Env vars (gitignored .env):
-  OPENAI_API_KEY — from platform.openai.com/api-keys
-  OPENAI_MODEL_SMALL=gpt-5-nano
-  OPENAI_MODEL_LETTER=gpt-5-mini
-  LLM_PROVIDER=openai
-  LLM_RPM=8
-
-Dormant fallbacks (kept working, not required): Groq (LLM_PROVIDER=groq,
-GROQ_API_KEY, GROQ_MODEL) and Gemini (LLM_PROVIDER=gemini, GEMINI_API_KEY,
-GEMINI_MODEL) are still wired in client.py. Neither has a currently-valid free
-default model as of 2026-09-11 — check current model availability before
-switching back. Gemini TLS works via truststore.inject_into_ssl() (urllib3
-path, unlike httpx).
-
-Data privacy: check OpenAI's current data-usage terms for API traffic before
-sending personal profile data (as of this writing, API inputs are not used for
-training by default, unlike the old Groq free tier — verify this hasn't
-changed if it matters for your use case).
+Data privacy: profile data goes to Google. Verify the paid-tier / Vertex data-use
+terms if it matters (not used for training at the time of writing).
 
 
 Repo layout (actual)
@@ -166,7 +160,8 @@ job-app-assistant/
     api/
       main.py          # FastAPI backend for the extension
     llm/
-      client.py        # provider abstraction (Gemini now; Claude later) — ONE place
+      client.py        # provider abstraction: tiers, tool calling, usage log, budget guard — ONE place
+      usage.py         # spend totals + budget cap status (reads llm_usage)
       extract.py       # job → structured fields (DONE 2026-06-23)
       prefilter.py     # cheap pre-LLM match signals (DONE 2026-06-23)
       match.py         # job vs profile → score/reasoning/gaps (DONE 2026-06-23)
@@ -183,6 +178,7 @@ job-app-assistant/
     run_extraction.py  # batch LLM extraction
     run_matching.py    # batch LLM matching/scoring
     run_cover_letters.py  # batch cover-letter generation (dev/testing only)
+    letter_lab.py      # cover-letter eval harness (evals/rubric.md); analyze = Phase 3 hand-check pack
     check_matching.py  # scoring diagnostic report vs expected bands
     check_llm.py       # validate the LLM key before a batch
     smoke_test.py
@@ -221,7 +217,174 @@ relationships set passive_deletes=True so deletes rely on DB-level cascade.
 
 
 
-🔄 CURRENT TASK: TBD
+TWO ENVIRONMENTS — real vs test (2026-09-21)
+
+`python scripts/run_api.py real|test` (the argument is required). Each environment
+is a separate SQLite file, screenshots folder and port, and holds exactly ONE
+profile, which is id 1 in both — so the hardcoded `profile_id=1` / `user_id == 1`
+in the API, idle loop and extension stay correct. Do not put two profiles in one
+DB without first removing those assumptions (`/profile-ui/data` uses
+`select(Profile).limit(1)`, and `DELETE /profile-ui/data` would delete whichever
+profile is first).
+  real → real.db,  port 8000, app/screenshots_real/   (the profile you apply from)
+  test → app.db,   port 8001, app/screenshots/        (fake "bob john" profile)
+`app_env()` in app/db.py reads APP_ENV (set by run_api.py) and defaults to "test",
+so pytest / bare uvicorn can never act as real. /health returns `env`. In real,
+DELETE /profile-ui/data is a 403 (applied matches are Centrelink evidence), and
+scripts/load_test_profile.py refuses to run unless /health says env=test.
+Extension: extension/config.js defines BACKEND from chrome.storage.local
+(`backendEnv`, default real); every context awaits `backendReady` first. The
+sidebar's REAL/TEST pill flips it and reloads. Not verified in a loaded Chrome.
+
+🔄 CURRENT TASK: Cover-letter agent + Gemini migration
+
+Living plan: docs/cover-letter-loop-plan.md (DRAFT v0.4, a tool-calling agent
+with a shared state object and code-enforced guardrails; workflow baseline
+first, then agent, compared on an eval set. Expect it to change; update its
+Decision log when it does).
+
+Phases 0–2 are DONE (2026-10-01). Phase 0/1: trial confirmed to 2026-12-30,
+model IDs verified on Vertex, client.py has tiers, `complete_tools`,
+`llm_usage` logging and the budget guard (see the LLM Layer section). Phase 2:
+`app/llm/letter/state.py` (LetterState + pointer resolver), `rubric.py`, and the
+eval harness `scripts/letter_lab.py` (snapshot → prepare → run → report; see
+evals/rubric.md). Evals use the REAL profile in a scratch `evals/eval.db` copied
+read-only from real.db; ads/letters/eval.db are gitignored. The one-shot baseline
+run is `baseline-oneshot`; it needs the user's grades in
+evals/runs/baseline-oneshot/grades.csv, then `letter_lab.py report`.
+Phase 3 is DONE (built 2026-10-02; hand-check adjudicated by the user and fixed
+2026-10-03, ANALYSIS_VERSION 2, stays on mid; see the plan's Decision log): `analyze_job`
+(requirements checklist; each item has `importance` essential/important/
+nice_to_have AND `letter_role` headline/mention/implied/not_for_letter, plus
+theme, tone, keywords, screening questions, company_facts; cached on
+`job_listings.requirements_checklist`), `match_profile` (per-requirement evidence
+pointers, validated in code), `app/llm/letter/runner.py` (logs every tool call to
+`letter_run_steps`, persists `letter_runs.state`, costs from `llm_usage.run_id`),
+migration `c7a3e1f5d284`. Not-for-letter items (work rights etc.) surface as
+`eligibility_notes` on GET /jobs; sidebar display waits for Phase 8. Hand-check:
+`python scripts/letter_lab.py analyze` -> evals/runs/<run>/review.md + checks.csv,
+then `analysis-report`. Company-name bug FIXED 2026-10-02 (detail-page JSON-LD capture,
+/ingest backfill of card fields, employer name recovered from ad text at
+extraction; `scripts/backfill_company.py` repairs old rows). Unverified in a live
+Chrome; also no Seek row has a location/discovered_query, which suggests the
+search-card capture path may not be firing (check the console on a search page).
+Phase 4 is BUILT (2026-10-03): `profiles.writing_sample` (migration `e8b4f2a61c93`;
+"Your writing" box in both profile editors; PUT only writes it when the request
+includes the key, so the sidebar can't wipe it), the style skill folder
+`app/llm/skills/cover_letter_style/` (SKILL.md, banned_phrases.txt, us_to_au.txt),
+`app/llm/letter/style.py` (style guide + voice as prompt text; voice falls back to
+summary/experience text), and `app/llm/letter/tools/style_lint.py` (code-only
+check; rubric.py now imports its helpers; one em dash allowed, same as the eval).
+`cover_letter.py` got an eval-only `styled=True` path (`letter_lab.py run --engine
+oneshot-styled`); production letters are unchanged. Early result in
+evals/results/styled-oneshot.md; grading it is deferred to future_work/voice-toggle-and-comparison.md (voice on/off, compared on the finished agent).
+The real profile's writing_sample is set (921 words, 3 samples). Next up is Phase 5
+(draft + check tools). Grow the eval set (only 9 ads, none at 75-84) before Phase 6
+compares engines.
+
+Parked fast-follows. Both need a live Seek session rather than guesswork:
+1. §5.2's apply-flow detection (see the extension-revamp entry below).
+2. Verify the classification capture added 2026-09-21. readJsonLdJobPosting()
+   is the primary source and should work, but SELECTORS.DETAIL_CLASSIFICATION /
+   DETAIL_SUBCLASSIFICATION (the fallback) are UNVERIFIED guesses. Open a real
+   job page, check job_listings.classification is populated, and fix the
+   selectors if the JSON-LD path ever stops covering it.
+
+
+✅ COMPLETED: Rolling retention + post-profile-update weighting — 2026-09-21
+
+Age-based deletion for the match history the suggestion miner learns from,
+without moving its baseline. New `app/retention.py` + `app/screenshots.py`,
+migration `a7d2c9e15b48` (`matches.scored_at`, `profiles.profile_revised_at`,
+index on `matches.created_at`). Full reasoning in docs/database-schema.md
+(*Retention* under `matches`); the load-bearing decisions:
+- **Delete by age, never by score.** Age is uncorrelated with score so the
+  baseline survives; score-based deletion is what `hidden_at` soft-deletes
+  exist to avoid. Don't turn the bulk hide into a real DELETE.
+- **122-day window + 150-match floor**, one function (`effective_cutoff`)
+  shared by the daily sweep AND the miner's read, so applied matches (kept
+  forever, skew high) can't inflate the baseline. Only `status='new'` with
+  `applied_at IS NULL` is purgeable — a whitelist. Applied = Centrelink
+  evidence, never deleted.
+- **Screenshots**: file deleted 30 days after capture, `screenshot_taken_at`
+  kept ("captured, since expired"); downscaled to 1200px on upload;
+  `GET /jobs/evidence-export` zips CSV + surviving files; Applied cards show
+  the expiry date.
+- **Profile drift**: matches scored before the profile last changed get
+  weight 0.35 in the miner (baseline weighted too) — but only when a fresh
+  match exists to prefer (`relative_weights`); uniform discounting re-ordered
+  the live suggestions with no new information.
+- The sweep runs at the TOP of `_processing_idle_loop` (not the tail — LLM
+  phases `continue` and would starve it), once/24h, on the single worker.
+Not built: the "re-score against updated profile" button (item 10), and
+nothing yet bumps `profiles.profile_revised_at` on a deletion because no
+profile-edit endpoint exists for experiences/skills. Tunables live in
+`profiles.preferences`; the sidebar does not expose them.
+Verified: `python -m pytest` (175 passed, 43 new in tests/test_retention.py),
+migration applied to the dev DB, live-data ranking unchanged. NOT verified:
+the sweep against a real aged DB (dev data is all <1 day old, so it purged
+nothing), and the sidebar's new expiry note / evidence button in Chrome.
+
+
+✅ COMPLETED: Search-suggestion overhaul — 4-layer pipeline — 2026-09-21
+
+Replaced the frequency-based suggested-searches miner, which ranked by how
+often a phrase appeared rather than how well it scored. On the dev profile it
+put "software engineer" top (12 titles, avg 60.9, against a 69.4 baseline) and
+emitted fragments — "Intermediate Software" alongside "Intermediate Software
+Engineer". Four layers, cheapest first; only the last costs money.
+- **Layer 1 — app/search_suggest.py** (new, pure Python): rank by
+  `(shrunk_mean - baseline) * log1p(support)` with a Bayesian shrink (K=3)
+  toward the baseline, so one lucky 92 can't outrank a phrase with real
+  support. Mines only the leading title segment (kills `| I.T Services |
+  5 Days Onsite` junk), drops MODIFIER_TOKENS (seniority is a *filter* on
+  Seek, not a keyword — "Intermediate" in a query shrinks the result set),
+  gates on a phrase ending in a ROLE_NOUNS head noun (deletes essentially
+  every fragment in one rule), then dedups nested phrases and role families.
+  Ranks over the WHOLE score distribution, not just score>=75 — the low
+  scores are what make the baseline mean anything.
+- **Layer 2 — capture what was being thrown away**: `job_listings
+  .discovered_query` (migration `c5b21d7f4e3a`) set from the search page, and
+  classification/subclassification finally populated (the columns and /ingest
+  accepted them since aa057c74b513; the extension never sent them, so all 25
+  rows were NULL). Primary source is the page's schema.org JSON-LD JobPosting
+  block — already-rendered DOM, no extra Seek request. /ingest now backfills
+  any NULL field from a later capture without overwriting, so the card
+  (query) and the detail page (description + taxonomy) complete each other.
+- **Layer 3 — yield feedback**: `GET /jobs/search-performance` reports
+  volume/hits/yield per query; a query with >=5 jobs and <15% yield halves the
+  rank of any phrase it contains. Demotes, never deletes — the same role may
+  still be worth searching under different wording.
+- **Location scoping**: clicking a suggestion opens the search scoped to the
+  profile's target_location, falling back to location, else nationwide
+  (_search_location()). The URL keeps the slug path and puts the place in
+  ?where=, because currentSearchQuery() reads keywords-then-path — so the
+  location never enters the attribution key and Brisbane/Melbourne runs of the
+  same role aggregate under one query in the yield stats.
+- **Bulk hide is now a soft delete** (`matches.hidden_at`, migration
+  `d3f8a1c60b92`). DELETE /jobs?below_score= stamps hidden_at and nulls the
+  job's raw_description to reclaim space, instead of deleting the row. Hidden
+  matches leave every /jobs view but still feed the baseline and the yield
+  stats. This is load-bearing, not tidiness: hard-deleting the low scorers
+  moved the dev baseline 69.4 → 82.5 in one click and flattened the ranking
+  the whole pipeline depends on. Don't "clean this up" back into a real DELETE.
+- **Layer 4 — optional LLM re-rank** (app/llm/search_refine.py), OFF by
+  default behind the `llm_search_suggestions` preference and a checkbox in the
+  sidebar's Personalise panel. One complete_json call on OPENAI_MODEL_SMALL
+  that *picks and generalises among mined candidates* rather than generating
+  freely — a hallucinated search term wastes a whole scan, which costs far
+  more than the call. Debounced (REFRESH_AFTER_NEW_MATCHES=10) and cached in
+  profiles.preferences; any failure falls back to the mined list.
+
+Verified: `python -m pytest` (132 passed, 44 new across
+tests/test_search_suggest.py + tests/test_search_endpoints.py), `node --check`
+on the three edited JS files, and the endpoint run against the live dev DB —
+suggestions went from ["Administration Assistant", "Intermediate Software",
+"Intermediate Software Engineer"] to ["Administration Assistant", "Data
+Analyst", "Software Engineering"].
+Not verified: the sidebar UI in a loaded Chrome extension, and the
+classification selectors against a live Seek page (see CURRENT TASK above).
+
 
 Everything in docs/extension-revamp-plan.md landed 2026-09-11 (see the
 ✅ COMPLETED entry below) except one deliberate fast-follow: §5.2's

@@ -42,10 +42,15 @@
       border: 1px solid #d1d5db; border-radius: 5px;
       font-size: 13px; font-family: inherit; color: #1c2330; background: #fff;
     }
+    input.month-input.invalid { border-color: #dc2626; background: #fef2f2; }
     input:focus, textarea:focus, select:focus {
       outline: none; border-color: #2557a7; box-shadow: 0 0 0 2px #dbeafe;
     }
     textarea { resize: vertical; min-height: 76px; }
+    /* Experience description: grows with its text so the whole thing is readable
+       without scrolling inside the box, then caps and scrolls. Pure CSS
+       (Chrome 123+); on anything older it just stays a fixed-size box. */
+    textarea[name=description] { field-sizing: content; max-height: 360px; }
     .remove-btn {
       position: absolute; top: 8px; right: 8px;
       background: none; border: none; color: #9ca3af;
@@ -141,6 +146,16 @@
     </div>
   </section>
 
+  <!-- Your writing -->
+  <section>
+    <div class="section-header"><h2>Your Writing</h2></div>
+    <div class="card">
+      <label for="p-writing-sample">Paste anything you've written</label>
+      <textarea id="p-writing-sample" rows="8"
+        placeholder="An old cover letter, a uni essay, a long email — no structure needed. Cover letters use this so the tone and rhythm sound like you. It's never used as a source of facts; leave this empty and letters fall back to your summary and experience descriptions."></textarea>
+    </div>
+  </section>
+
   <!-- Qualifications -->
   <section>
     <div class="section-header">
@@ -174,7 +189,7 @@
 </main>
 
 <script>
-const API = 'http://localhost:8000';
+const API = location.origin; // served by the backend itself, so this is whichever env (port) you opened
 let _uid = 0;
 let globalSkills = [];
 
@@ -190,6 +205,37 @@ function esc(s) {
 }
 
 function uid() { return ++_uid; }
+
+// Month fields are plain text ("YYYY-MM"), not <input type="month">: the native
+// control makes you scroll or click through segments to change a year, where a
+// typed field lets you just retype it. The value stays "YYYY-MM".
+function normaliseMonth(raw) {
+  const m = /^(\d{4})-(\d{1,2})$/.exec((raw || '').trim());
+  if (!m) return null;
+  const month = Number(m[2]);
+  return month >= 1 && month <= 12 ? `${m[1]}-${String(month).padStart(2, '0')}` : null;
+}
+
+// Valid "YYYY-MM" or '' — a half-typed date is treated as empty, never saved.
+function monthValue(input) { return normaliseMonth(input.value) || ''; }
+
+document.addEventListener('input', (e) => {
+  const el = e.target;
+  if (!el.classList?.contains('month-input')) return;
+  if (/[^\d-]/.test(el.value)) el.value = el.value.replace(/[^\d-]/g, '');
+  // Add the dash as the 4th digit is typed at the end — never on delete or
+  // mid-string, so fixing the year in place isn't reformatted under the caret.
+  if (e.inputType === 'insertText' && /^\d{4}$/.test(el.value)) el.value += '-';
+  el.classList.remove('invalid');
+});
+
+document.addEventListener('focusout', (e) => {
+  const el = e.target;
+  if (!el.classList?.contains('month-input')) return;
+  const normalised = normaliseMonth(el.value);
+  if (normalised) el.value = normalised;
+  el.classList.toggle('invalid', !!el.value.trim() && !normalised);
+});
 
 function showBanner(msg, type) {
   const b = document.getElementById('banner');
@@ -291,11 +337,11 @@ function addQual(q) {
       </div>
       <div>
         <label>Start Date</label>
-        <input type="month" name="start_date" value="${esc(q.start_date)}">
+        <input type="text" class="month-input" inputmode="numeric" maxlength="7" placeholder="YYYY-MM" autocomplete="off" name="start_date" value="${esc(q.start_date)}">
       </div>
       <div>
         <label>End Date / Expected</label>
-        <input type="month" name="end_date" value="${esc(q.end_date)}">
+        <input type="text" class="month-input" inputmode="numeric" maxlength="7" placeholder="YYYY-MM" autocomplete="off" name="end_date" value="${esc(q.end_date)}">
       </div>
       <div>
         <label>Grade / Result</label>
@@ -341,11 +387,11 @@ function addExp(e) {
       </div>
       <div>
         <label>Start Date</label>
-        <input type="month" name="start_date" value="${esc(e.start_date)}">
+        <input type="text" class="month-input" inputmode="numeric" maxlength="7" placeholder="YYYY-MM" autocomplete="off" name="start_date" value="${esc(e.start_date)}">
       </div>
       <div>
         <label>End Date</label>
-        <input type="month" name="end_date" value="${e.is_current ? '' : esc(e.end_date)}">
+        <input type="text" class="month-input" inputmode="numeric" maxlength="7" placeholder="YYYY-MM" autocomplete="off" name="end_date" value="${e.is_current ? '' : esc(e.end_date)}">
       </div>
       <div class="full">
         <div class="checkbox-row">
@@ -395,6 +441,7 @@ async function load() {
     document.getElementById('p-target-role').value = p.target_role || '';
     document.getElementById('p-target-location').value = p.target_location || '';
     document.getElementById('p-summary').value = p.summary || '';
+    document.getElementById('p-writing-sample').value = p.writing_sample || '';
 
     (data.qualifications || []).forEach(q => addQual(q));
     (data.experiences || []).forEach(e => addExp(e));
@@ -417,6 +464,7 @@ function collectState() {
     target_role: document.getElementById('p-target-role').value.trim() || null,
     target_location: document.getElementById('p-target-location').value.trim() || null,
     summary: document.getElementById('p-summary').value.trim() || null,
+    writing_sample: document.getElementById('p-writing-sample').value.trim() || null,
   };
 
   const qualifications = [...document.querySelectorAll('.qual-card')].map(card => ({
@@ -425,8 +473,8 @@ function collectState() {
     institution: card.querySelector('[name=institution]').value.trim() || null,
     field_of_study: card.querySelector('[name=field_of_study]').value.trim() || null,
     grade: card.querySelector('[name=grade]').value.trim() || null,
-    start_date: card.querySelector('[name=start_date]').value || null,
-    end_date: card.querySelector('[name=end_date]').value || null,
+    start_date: monthValue(card.querySelector('[name=start_date]')) || null,
+    end_date: monthValue(card.querySelector('[name=end_date]')) || null,
     status: card.querySelector('[name=status]').value,
   })).filter(q => q.title);
 
@@ -438,8 +486,8 @@ function collectState() {
       experience_type: card.querySelector('[name=experience_type]').value,
       title: card.querySelector('[name=title]').value.trim(),
       organization: card.querySelector('[name=organization]').value.trim() || null,
-      start_date: card.querySelector('[name=start_date]').value || null,
-      end_date: isCurrent ? null : (card.querySelector('[name=end_date]').value || null),
+      start_date: monthValue(card.querySelector('[name=start_date]')) || null,
+      end_date: isCurrent ? null : (monthValue(card.querySelector('[name=end_date]')) || null),
       is_current: isCurrent,
       description: card.querySelector('[name=description]').value.trim() || null,
       skills: expSkills,

@@ -1,0 +1,49 @@
+# American spelling -> Australian spelling. One pair per line: us=au
+# Deliberately short and unambiguous — words that are correct in Australian
+# English depending on context (program, license/licence, practice/practise,
+# check/cheque) are left out on purpose; a long list raises false warnings.
+# Matched case-insensitively on word boundaries by style_lint.py.
+organize=organise
+organized=organised
+organizing=organising
+organization=organisation
+organizations=organisations
+analyze=analyse
+analyzed=analysed
+analyzing=analysing
+color=colour
+colors=colours
+favor=favour
+favorite=favourite
+behavior=behaviour
+behaviors=behaviours
+honor=honour
+labor=labour
+center=centre
+centers=centres
+fulfill=fulfil
+fulfillment=fulfilment
+skillful=skilful
+enrollment=enrolment
+traveled=travelled
+traveling=travelling
+modeling=modelling
+counselor=counsellor
+realize=realise
+realized=realised
+recognize=recognise
+recognized=recognised
+specialize=specialise
+specialized=specialised
+utilize=utilise
+utilized=utilised
+summarize=summarise
+summarized=summarised
+emphasize=emphasise
+emphasized=emphasised
+prioritize=prioritise
+prioritized=prioritised
+customize=customise
+customized=customised
+optimize=optimise
+optimized=optimised

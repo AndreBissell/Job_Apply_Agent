@@ -2,7 +2,7 @@
 // DOM and POSTs the job data to the local backend. Makes NO request to Seek — it
 // only reads the page the user is already viewing.
 
-const BACKEND = 'http://localhost:8000';
+// BACKEND comes from config.js (real vs test environment).
 
 async function ingest(listings) {
   try {
@@ -28,8 +28,108 @@ function textOrNull(root, selector) {
   return text || null;
 }
 
+// Seek embeds a schema.org JobPosting block on detail pages. It's part of the
+// already-rendered DOM (no extra request to Seek) and it's the most stable
+// source of the classification/subclassification pair, since data-automation
+// attribute names change more often than the JSON-LD contract does. Returns
+// null whenever the block is absent or unparseable, so callers fall back to
+// the selectors above.
+function readJsonLdJobPosting() {
+  for (const script of document.querySelectorAll('script[type="application/ld+json"]')) {
+    let data;
+    try { data = JSON.parse(script.textContent || ''); } catch { continue; }
+    // Seek sometimes wraps the posting in an array or an @graph list.
+    const nodes = Array.isArray(data) ? data : (data['@graph'] || [data]);
+    for (const node of nodes) {
+      if (node && node['@type'] === 'JobPosting') return node;
+    }
+  }
+  return null;
+}
+
+// "Developers/Programmers (Information & Communication Technology)" splits into
+// a subclassification and a classification. Seek writes it that way on the
+// detail page and as occupationalCategory in the JSON-LD.
+function splitOccupationalCategory(raw) {
+  const text = (raw || '').trim();
+  if (!text) return { classification: null, subclassification: null };
+  const m = text.match(/^(.*?)\s*\((.+)\)\s*$/);
+  if (m) return { subclassification: m[1].trim(), classification: m[2].trim() };
+  return { classification: text, subclassification: null };
+}
+
+// schema.org fields come in several shapes: a string, an object with .name,
+// or an array of either. Returns the first usable string or null.
+function ldText(value, key = 'name') {
+  if (!value) return null;
+  if (typeof value === 'string') return value.trim() || null;
+  if (Array.isArray(value)) {
+    for (const v of value) { const t = ldText(v, key); if (t) return t; }
+    return null;
+  }
+  return typeof value === 'object' ? ldText(value[key], key) : null;
+}
+
+// "FULL_TIME" -> "Full time", matching the wording search cards use.
+function humaniseEmploymentType(raw) {
+  const t = ldText(raw);
+  if (!t) return null;
+  const s = t.replace(/_/g, ' ').toLowerCase();
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+function ldLocation(jobLocation) {
+  const loc = Array.isArray(jobLocation) ? jobLocation[0] : jobLocation;
+  const addr = loc && loc.address;
+  if (!addr || typeof addr !== 'object') return ldText(loc);
+  const parts = [addr.addressLocality, addr.addressRegion].map((p) => ldText(p)).filter(Boolean);
+  return parts.length ? parts.join(', ') : null;
+}
+
+// Employer, location and work type for a detail page: JSON-LD first (Seek's own
+// structured data), then the on-page elements. Before 2026-10-02 the detail page
+// sent none of these, and every captured job had company = NULL, so letters said
+// "at Unknown". Any of them may still be null; the backend backfills company from
+// a later search-card capture, or from the ad text at extraction.
+function readDetailMeta() {
+  const posting = readJsonLdJobPosting() || {};
+  return {
+    company:   ldText(posting.hiringOrganization) || textOrNull(document, SELECTORS.DETAIL_COMPANY),
+    location:  ldLocation(posting.jobLocation) || textOrNull(document, SELECTORS.DETAIL_LOCATION),
+    work_type: humaniseEmploymentType(posting.employmentType) || textOrNull(document, SELECTORS.DETAIL_WORK_TYPE),
+  };
+}
+
+function readClassification() {
+  const posting = readJsonLdJobPosting();
+  const fromLd = posting && (
+    typeof posting.occupationalCategory === 'string' ? posting.occupationalCategory : null
+  );
+  if (fromLd) return splitOccupationalCategory(fromLd);
+  // Fallback: the on-page classification links.
+  const sub = textOrNull(document, SELECTORS.DETAIL_SUBCLASSIFICATION);
+  const cls = textOrNull(document, SELECTORS.DETAIL_CLASSIFICATION);
+  if (sub && !cls) return splitOccupationalCategory(sub);
+  return { classification: cls, subclassification: sub };
+}
+
+// The search that produced this results page, normalised to a comparable key
+// so the backend can aggregate yield per query. Seek expresses the same search
+// two ways — an SEO slug (/software-engineer-jobs/in-Perth) and a ?keywords=
+// param — and both must reduce to the same string or the stats fragment.
+// Reads only location.*; makes no request to Seek.
+function currentSearchQuery() {
+  const params = new URLSearchParams(location.search);
+  const keywords = (params.get('keywords') || '').trim();
+  if (keywords) return keywords.toLowerCase();
+  const slug = (location.pathname.match(/\/([^/]+)-jobs(?:\/|$)/) || [])[1];
+  if (slug) return decodeURIComponent(slug).replace(/-/g, ' ').trim().toLowerCase();
+  return null;
+}
+
 function parseSearchPage() {
   const cards = document.querySelectorAll(SELECTORS.JOB_CARD);
+  const discovered_query = currentSearchQuery();
   const listings = [];
   for (const card of cards) {
     const link = card.querySelector(SELECTORS.CARD_TITLE_LINK);
@@ -47,6 +147,7 @@ function parseSearchPage() {
       location:  textOrNull(card, SELECTORS.CARD_LOCATION),
       work_type: textOrNull(card, SELECTORS.CARD_WORK_TYPE),
       salary:    textOrNull(card, SELECTORS.CARD_SALARY),
+      discovered_query,
       raw_description: null,
     });
   }
@@ -63,10 +164,17 @@ function parseDetailPage() {
   const title = textOrNull(document, SELECTORS.DETAIL_TITLE)
     || (document.title || '').replace(/\s*[|-]\s*SEEK.*$/i, '').trim()
     || 'Untitled';
+  const { classification, subclassification } = readClassification();
+  const { company, location: jobLocation, work_type } = readDetailMeta();
   return [{
     source_job_id: job_id,
     url: window.location.href,
     title,
+    company,
+    location: jobLocation,
+    work_type,
+    classification,
+    subclassification,
     raw_description,
   }];
 }
@@ -388,4 +496,4 @@ async function main() {
   }
 }
 
-main();
+backendReady.then(main);

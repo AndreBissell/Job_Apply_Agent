@@ -6,8 +6,9 @@ Usage
     python scripts/load_test_profile.py --file data/my_profile.json
     python scripts/load_test_profile.py --reset   # deletes existing profile first
 
-The FastAPI backend must be running before you call this script:
-    python scripts/run_api.py
+The TEST backend must be running before you call this script:
+    python scripts/run_api.py test
+It refuses to run against the real environment.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ import sys
 import urllib.error
 import urllib.request
 
-BASE_URL = "http://localhost:8000"
+BASE_URL = "http://localhost:8001"  # the TEST environment — see scripts/run_api.py
 
 
 def _request(method: str, path: str, body: dict | None = None) -> dict:
@@ -55,6 +56,14 @@ def main() -> int:
 
     with open(args.file, encoding="utf-8") as f:
         profile_data = json.load(f)
+
+    # Belt and braces: this script overwrites the profile (and --reset deletes
+    # it), so refuse to run against anything that isn't the test environment.
+    env = _request("GET", "/health").get("env")
+    if env != "test":
+        print(f"Refusing to run: backend at {BASE_URL} reports env={env!r}, not 'test'.",
+              file=sys.stderr)
+        return 1
 
     if args.reset:
         _request("DELETE", "/profile-ui/data")

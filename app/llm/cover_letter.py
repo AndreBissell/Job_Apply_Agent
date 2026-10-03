@@ -20,12 +20,14 @@ from sqlalchemy.orm import selectinload
 from app.db import SessionLocal
 from app.llm.client import complete_text
 from app.models import CoverLetter, Experience, JobListing, Match, Profile
+from app.preferences import DEFAULT_AUTO_LETTER_MIN_SCORE, get_auto_letter_min_score
 
 logger = logging.getLogger(__name__)
 
-# Only generate for matches at or above this score (0-100). Quality gate:
-# a weak match produces a weak letter and wastes an LLM call.
-THRESHOLD = 75
+# Default for the per-user "auto-generate cover letters at or above this score"
+# preference (0-100) — the live value is read per profile, see app/preferences.py.
+# Quality gate: a weak match produces a weak letter and wastes an LLM call.
+THRESHOLD = DEFAULT_AUTO_LETTER_MIN_SCORE
 
 _SYSTEM_PROMPT = (
     "You are an expert cover letter writer. "
@@ -37,6 +39,25 @@ _SYSTEM_PROMPT = (
     "If the candidate is a recent or current graduate, foreground their degree and "
     "university by name in the opening paragraph."
 )
+
+
+def _styled_system_prompt(profile: Profile) -> str:
+    """The one-shot prompt with Phase 4's style guide and the user's voice added.
+
+    Eval-only for now (``letter_lab.py run --engine oneshot-styled``): it measures
+    what style + voice alone do, before Phase 5's tools build on them.
+    """
+    from app.llm.letter.style import style_guide_prompt, voice_prompt
+
+    parts = [
+        "You write cover letters in first person as the candidate. Use ONLY facts "
+        "from the candidate profile supplied; never invent or embellish experience. "
+        "Write the letter from 'Dear Hiring Manager,' to the sign-off, with no "
+        "subject line, date or address block.",
+        style_guide_prompt(),
+        voice_prompt(profile),
+    ]
+    return "\n\n".join(p for p in parts if p)
 
 
 def _json_list(raw: str | None) -> list:
@@ -150,8 +171,10 @@ def generate_cover_letter(
     session=None,
     force: bool = False,
     bypass_threshold: bool = False,
+    styled: bool = False,
 ) -> CoverLetter | None:
-    """Draft a cover letter for a job/profile match, if score >= THRESHOLD.
+    """Draft a cover letter for a job/profile match, if score >= the profile's
+    auto-letter minimum (default THRESHOLD).
 
     Idempotent: a second call updates the existing row rather than duplicating.
     Returns the CoverLetter row when generated/updated, or None when below
@@ -174,12 +197,14 @@ def generate_cover_letter(
             )
             return None
 
-        if not bypass_threshold and (match.score is None or float(match.score) < THRESHOLD):
-            logger.info(
-                "generate_cover_letter: job %s score %s below threshold %s — skipping",
-                job_id, match.score, THRESHOLD,
-            )
-            return None
+        if not bypass_threshold:
+            threshold = get_auto_letter_min_score(db, profile_id)
+            if match.score is None or float(match.score) < threshold:
+                logger.info(
+                    "generate_cover_letter: job %s score %s below threshold %s — skipping",
+                    job_id, match.score, threshold,
+                )
+                return None
 
         if match.cover_letter is not None and not force:
             logger.info(
@@ -210,7 +235,11 @@ def generate_cover_letter(
             return None
 
         prompt = _build_prompt(profile, job, match)
-        content = complete_text(_SYSTEM_PROMPT, prompt, temperature=0.7)
+        system = _styled_system_prompt(profile) if styled else _SYSTEM_PROMPT
+        content = complete_text(
+            system, prompt, temperature=0.7,
+            tier="strong", task="cover_letter", job_id=job_id, match_id=match.id,
+        )
 
         existing = match.cover_letter
         if existing is not None:

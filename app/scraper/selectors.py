@@ -45,6 +45,11 @@ CARD_LISTING_DATE = '[data-automation="jobListingDate"]'
 # excluding everything rendered outside it (the noise sections).
 DETAIL_DESCRIPTION = '[data-automation="jobAdDetails"]'
 DETAIL_TITLE = '[data-automation="job-detail-title"]'
+# UNVERIFIED fallbacks (mirrors extension/selectors.js); JSON-LD hiringOrganization /
+# jobLocation / employmentType is the primary source on the extension side.
+DETAIL_COMPANY = '[data-automation="advertiser-name"]'
+DETAIL_LOCATION = '[data-automation="job-detail-location"]'
+DETAIL_WORK_TYPE = '[data-automation="job-detail-work-type"]'
 
 # Defence-in-depth: if a future layout nests noise *inside* the description
 # container, these selectors are stripped from the extracted node before reading

@@ -569,6 +569,28 @@ class TestDeleteProfileData:
         assert r.status_code == 200
         assert r.json()["ok"] is True
 
+    def test_refused_in_real_environment(self, client, db, monkeypatch):
+        """The real profile's matches are Centrelink evidence — never deletable."""
+        monkeypatch.setenv("APP_ENV", "real")
+        client.put("/profile-ui/data", json=_body())
+        r = client.delete("/profile-ui/data")
+        assert r.status_code == 403
+        assert len(db.scalars(select(Profile)).all()) == 1
+
+
+class TestEnvironment:
+    def test_health_reports_test_by_default(self, client, monkeypatch):
+        monkeypatch.delenv("APP_ENV", raising=False)
+        assert client.get("/health").json()["env"] == "test"
+
+    def test_health_reports_real_when_configured(self, client, monkeypatch):
+        monkeypatch.setenv("APP_ENV", "real")
+        assert client.get("/health").json()["env"] == "real"
+
+    def test_unrecognised_value_falls_back_to_test(self, client, monkeypatch):
+        monkeypatch.setenv("APP_ENV", "prod")
+        assert client.get("/health").json()["env"] == "test"
+
     def test_children_cascade_on_delete(self, client, db):
         body = _body(
             skills=["Python"],
@@ -742,3 +764,45 @@ class TestFullProfileRoundTrip:
         assert r1.json()["profile_id"] == r2.json()["profile_id"]
         exps = client.get("/profile-ui/data").json()["experiences"]
         assert len(exps) == 3
+
+
+# ---------------------------------------------------------------------------
+# writing_sample ("Your writing" box, cover-letter plan Phase 4)
+# ---------------------------------------------------------------------------
+
+def _with_sample(sample) -> dict:
+    body = _body()
+    body["profile"]["writing_sample"] = sample
+    return body
+
+
+class TestWritingSample:
+    def test_null_by_default(self, client):
+        client.put("/profile-ui/data", json=_body())
+        assert client.get("/profile-ui/data").json()["profile"]["writing_sample"] is None
+
+    def test_round_trip(self, client):
+        client.put("/profile-ui/data", json=_with_sample("I write plainly.\n\nShort, then long."))
+        p = client.get("/profile-ui/data").json()["profile"]
+        assert p["writing_sample"] == "I write plainly.\n\nShort, then long."
+
+    def test_put_without_the_key_keeps_it(self, client):
+        """A client that doesn't know the field (an older sidebar, a script) must not wipe it."""
+        client.put("/profile-ui/data", json=_with_sample("my voice"))
+        client.put("/profile-ui/data", json=_body())  # no writing_sample key at all
+        assert client.get("/profile-ui/data").json()["profile"]["writing_sample"] == "my voice"
+
+    def test_explicit_null_clears_it(self, client):
+        client.put("/profile-ui/data", json=_with_sample("my voice"))
+        client.put("/profile-ui/data", json=_with_sample(None))
+        assert client.get("/profile-ui/data").json()["profile"]["writing_sample"] is None
+
+    def test_empty_string_stored_as_null(self, client):
+        client.put("/profile-ui/data", json=_with_sample(""))
+        assert client.get("/profile-ui/data").json()["profile"]["writing_sample"] is None
+
+    def test_does_not_bump_profile_revised_at(self, client, db):
+        """It is a voice reference, not evidence, so it must not discount match scores."""
+        client.put("/profile-ui/data", json=_with_sample("my voice"))
+        profile = db.scalars(select(Profile)).one()
+        assert profile.profile_revised_at is None

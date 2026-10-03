@@ -28,7 +28,9 @@ from app.models import JobListing  # noqa: E402
 
 def _select_job_ids(db, args) -> list[int]:
     if args.job_id is not None:
-        return [args.job_id]
+        # extract_job() only logs a warning for a missing id, so check here —
+        # otherwise a typo'd id is reported as "succeeded".
+        return [args.job_id] if db.get(JobListing, args.job_id) is not None else []
     stmt = select(JobListing.id).where(JobListing.raw_description.is_not(None))
     if not args.force:
         stmt = stmt.where(JobListing.extracted_at.is_(None))
@@ -58,6 +60,9 @@ def main() -> int:
         db.close()
 
     if not job_ids:
+        if args.job_id is not None:
+            print(f"Job {args.job_id} not found.")
+            return 1
         print("No jobs to extract (need raw_description present and extracted_at null).")
         return 0
 

@@ -1,19 +1,25 @@
 // Side panel: tabbed Jobs + Profile editor.
-// Vanilla JS, no build step. Talks to the FastAPI backend on localhost:8000.
+// Vanilla JS, no build step. Talks to the FastAPI backend — BACKEND comes from
+// config.js and is either the real (8000) or test (8001) environment.
 
-const BACKEND = 'http://localhost:8000';
+// Each environment is its own database with exactly one profile, and that
+// profile is id 1 in both — so this constant is correct for either.
 const PROFILE_ID = 1;
 
-// Score tiers (docs/extension-revamp-plan.md §1). GREEN_MIN reuses the same
-// number as app/llm/cover_letter.py's THRESHOLD deliberately — "green or
-// better" and "eligible for an auto-generated cover letter" are always the
-// same set of jobs.
+// Score tiers (docs/extension-revamp-plan.md §1) — purely visual colouring.
+const GOLD_MIN = 95;
 const BLUE_MIN = 90;
 const GREEN_MIN = 75;
 const AMBER_MIN = 60;
 
+// Minimum score for an auto-generated cover letter. User-tunable in the
+// "Personalise metrics" panel and stored server-side (profiles.preferences),
+// since the backend idle loop is what acts on it. 75 is only the pre-load default.
+let autoLetterMin = GREEN_MIN;
+
 function tierOf(score) {
   if (score == null) return 'amber';
+  if (score >= GOLD_MIN) return 'gold';
   if (score >= BLUE_MIN) return 'blue';
   if (score >= GREEN_MIN) return 'green';
   if (score >= AMBER_MIN) return 'amber';
@@ -33,6 +39,47 @@ function fmtDate(ym) {
   return new Date(Number(y), Number(m) - 1, 1)
     .toLocaleDateString('en-AU', { month: 'short', year: 'numeric' });
 }
+
+// Month fields are plain text ("YYYY-MM"), not <input type="month">: the native
+// control makes you scroll or click through segments to change a year, where a
+// typed field lets you just retype it. The value stays "YYYY-MM", so the
+// save/load code is unchanged.
+function monthInputHtml(cls) {
+  return `<input class="${cls} month-input" type="text" inputmode="numeric" maxlength="7" placeholder="YYYY-MM" autocomplete="off">`;
+}
+
+// "2025-3" / "2025-03" -> "2025-03"; anything else (incl. month 13) -> null.
+function normaliseMonth(raw) {
+  const m = /^(\d{4})-(\d{1,2})$/.exec((raw || '').trim());
+  if (!m) return null;
+  const month = Number(m[2]);
+  return month >= 1 && month <= 12 ? `${m[1]}-${String(month).padStart(2, '0')}` : null;
+}
+
+// The value to save/summarise for a month input: valid "YYYY-MM" or ''. A
+// half-typed or invalid date is treated as empty rather than sent to the backend.
+function monthValue(input) {
+  return normaliseMonth(input.value) || '';
+}
+
+document.addEventListener('input', (e) => {
+  const el = e.target;
+  if (!el.classList?.contains('month-input')) return;
+  if (/[^\d-]/.test(el.value)) el.value = el.value.replace(/[^\d-]/g, '');
+  // Add the dash as the 4th digit is typed at the end. Never on delete or
+  // mid-string, so fixing the year in place ("2026-03" -> "2025-03") isn't
+  // reformatted under the caret.
+  if (e.inputType === 'insertText' && /^\d{4}$/.test(el.value)) el.value += '-';
+  el.classList.remove('invalid');
+});
+
+document.addEventListener('focusout', (e) => {
+  const el = e.target;
+  if (!el.classList?.contains('month-input')) return;
+  const normalised = normaliseMonth(el.value);
+  if (normalised) el.value = normalised;
+  el.classList.toggle('invalid', !!el.value.trim() && !normalised);
+});
 
 function truncate(str, n) {
   if (!str || str.length <= n) return str;
@@ -81,7 +128,26 @@ function renderSectionHeader(text, kind) {
   return li;
 }
 
+// Jobs captured but still waiting on the LLM pass have no match row, so /jobs
+// can't list them — show a count under the list instead. Separate element from
+// the <ul> so it can update mid-scan without re-rendering (and collapsing) cards.
+const analysingEl = document.getElementById('analysing-row');
+
+async function refreshPendingCount() {
+  try {
+    const res = await fetch(`${BACKEND}/jobs/pending-count?profile_id=${PROFILE_ID}`);
+    if (!res.ok) throw new Error();
+    const { pending } = await res.json();
+    if (!pending) { analysingEl.hidden = true; return; }
+    analysingEl.textContent = `⏳ ${pending} more job app${pending === 1 ? '' : 's'} scanned — analysing…`;
+    analysingEl.hidden = false;
+  } catch {
+    analysingEl.hidden = true;
+  }
+}
+
 async function loadJobs() {
+  refreshPendingCount();
   jobStatusEl.textContent = 'Loading…';
   jobListEl.innerHTML = '';
   let jobs;
@@ -96,7 +162,7 @@ async function loadJobs() {
     jobStatusEl.textContent = 'No matched jobs yet. Browse Seek with the extension active to capture listings.';
     return;
   }
-  jobStatusEl.textContent = `${jobs.length} matched job(s).`;
+  jobStatusEl.textContent = ''; // status line is only for loading/error/empty states
 
   const ready = [];
   const waiting = [];
@@ -154,12 +220,12 @@ function renderFold(jobs) {
 
 // Cover-letter card state (docs/extension-revamp-plan.md §5.1):
 //  - 'ready'   letter generated, has_cover_letter is true
-//  - 'pending' score >= GREEN_MIN, idle loop hasn't reached it yet
-//  - 'none'    below GREEN_MIN and no letter — no collapsed-card affordance;
+//  - 'pending' score >= autoLetterMin, idle loop hasn't reached it yet
+//  - 'none'    below autoLetterMin and no letter — no collapsed-card affordance;
 //              a manual force-generate lives only in the expanded detail view
 function coverLetterState(job) {
   if (job.has_cover_letter) return 'ready';
-  if (job.score != null && job.score >= GREEN_MIN) return 'pending';
+  if (job.score != null && job.score >= autoLetterMin) return 'pending';
   return 'none';
 }
 
@@ -226,7 +292,11 @@ function renderJob(job, tier) {
   const delBtn = document.createElement('button');
   delBtn.className = 'del-btn';
   delBtn.title = 'Delete';
-  delBtn.textContent = '🗑';
+  // Inline SVG (not the 🗑 emoji) so the icon can take the hover colour via currentColor.
+  delBtn.innerHTML =
+    '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+    'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/></svg>';
   delBtn.addEventListener('click', async (e) => {
     e.stopPropagation();
     if (!confirm(`Delete "${job.title}"?`)) return;
@@ -251,9 +321,9 @@ function renderJob(job, tier) {
   meta.textContent = metaParts.join(' · ') || '—';
   li.appendChild(meta);
 
-  // Blue-tier cards show a reasoning snippet + top skill chips inline, no
+  // Gold- and blue-tier cards show a reasoning snippet + top skill chips inline, no
   // click needed — everything else stays click-to-expand as before.
-  if (tier === 'blue' && (job.reasoning || job.top_skills?.length)) {
+  if ((tier === 'blue' || tier === 'gold') && (job.reasoning || job.top_skills?.length)) {
     const preview = document.createElement('div');
     preview.className = 'job-preview';
     if (job.reasoning) preview.appendChild(document.createTextNode(truncate(job.reasoning, 90)));
@@ -307,7 +377,7 @@ async function fillDetail(detailEl, job) {
     const cl = data.cover_letter;
     if (cl?.generated_content) {
       renderCoverLetterEditor(detailEl, job.job_id, cl);
-    } else if (job.score != null && job.score >= GREEN_MIN) {
+    } else if (job.score != null && job.score >= autoLetterMin) {
       const note = document.createElement('div');
       note.style.cssText = 'margin-top:6px;color:#6b7280;';
       note.textContent = 'Cover letter pending — the idle loop will generate it shortly.';
@@ -445,8 +515,35 @@ function renderAppliedRow(job) {
   meta.textContent = [job.company, job.location].filter(Boolean).join(' · ') || '—';
   li.appendChild(meta);
 
+  const evidence = evidenceNote(job);
+  if (evidence) li.appendChild(evidence);
+
   li.addEventListener('click', () => chrome.tabs.create({ url: job.url }));
   return li;
+}
+
+// Screenshot files are deleted after a fixed TTL (30 days by default) while the
+// application record stays. Say so on the card rather than letting the image
+// vanish silently: an expiry date, a warning inside the last week, and a
+// distinct 'expired' state (screenshot_taken_at kept, no file).
+function evidenceNote(job) {
+  const fmt = iso => new Date(iso).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
+  const note = document.createElement('div');
+  note.className = 'evidence-note';
+  if (job.screenshot_url && job.screenshot_expires_at) {
+    const daysLeft = (new Date(job.screenshot_expires_at) - Date.now()) / 86400000;
+    note.textContent = `Screenshot kept until ${fmt(job.screenshot_expires_at)}`;
+    if (daysLeft <= 7) {
+      note.classList.add('soon');
+      note.textContent += ' — export it first';
+    }
+    return note;
+  }
+  if (job.screenshot_taken_at) {
+    note.textContent = `Screenshot taken ${fmt(job.screenshot_taken_at)} — file since expired`;
+    return note;
+  }
+  return null;
 }
 
 function csvEscape(val) {
@@ -463,7 +560,9 @@ document.getElementById('export-applied-btn').addEventListener('click', () => {
       job.company || '',
       job.location || '',
       job.url || '',
-      job.screenshot_taken_at ? job.screenshot_taken_at.slice(0, 10) : 'No',
+      // taken_at outlives the file, so distinguish expired from never-captured.
+      job.screenshot_url ? job.screenshot_taken_at.slice(0, 10)
+        : job.screenshot_taken_at ? `${job.screenshot_taken_at.slice(0, 10)} (file expired)` : 'No',
     ]);
   }
   const csv = rows.map(r => r.map(csvEscape).join(',')).join('\r\n');
@@ -476,16 +575,19 @@ document.getElementById('export-applied-btn').addEventListener('click', () => {
   URL.revokeObjectURL(url);
 });
 
-// ---------------------------------------------------------------------------
-// Resize hint — dismissible one-time nudge that the panel edge is draggable
-// ---------------------------------------------------------------------------
-const resizeHintEl = document.getElementById('resize-hint');
-if (localStorage.getItem('resizeHintDismissed')) {
-  resizeHintEl.hidden = true;
-}
-document.getElementById('resize-hint-close').addEventListener('click', () => {
-  localStorage.setItem('resizeHintDismissed', '1');
-  resizeHintEl.hidden = true;
+document.getElementById('export-evidence-btn').addEventListener('click', async () => {
+  try {
+    const res = await fetch(`${BACKEND}/jobs/evidence-export?profile_id=${PROFILE_ID}`);
+    if (!res.ok) throw new Error(res.status);
+    const url = URL.createObjectURL(await res.blob());
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `application-evidence-${new Date().toISOString().slice(0, 10)}.zip`;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    alert('Could not export evidence — is the backend running?');
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -493,25 +595,50 @@ document.getElementById('resize-hint-close').addEventListener('click', () => {
 // ---------------------------------------------------------------------------
 const SUGGESTION_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
-async function maybeShowSuggestions() {
+// Builds the Seek search a suggestion opens. Keeps the SEO-slug path form
+// ("/data-analyst-jobs") and adds the location as ?where=, because that is the
+// combination content_script.js's currentSearchQuery() already normalises back
+// to the bare phrase — so a job found this way is attributed to "data analyst",
+// not "data analyst brisbane", and search-performance stats stay comparable
+// across locations.
+function seekSearchUrl(phrase, searchLocation) {
+  const slug = phrase.toLowerCase().trim().replace(/\s+/g, '-') + '-jobs';
+  const where = (searchLocation || '').trim();
+  return `https://au.seek.com/${slug}`
+    + (where ? `?where=${encodeURIComponent(where)}` : '');
+}
+
+// Renders whatever the backend ranked. `forceLlm` is only set by the explicit
+// "Refresh now" button, which re-runs the LLM layer regardless of its cache
+// and regardless of the saved preference.
+async function maybeShowSuggestions({ forceLlm = false, ignoreCooldown = false } = {}) {
   const banner = document.getElementById('suggestion-banner');
   try {
-    const stored = await chrome.storage.local.get('suggestionsDismissedUntil');
-    if (stored.suggestionsDismissedUntil && Date.now() < stored.suggestionsDismissedUntil) return;
+    if (!ignoreCooldown) {
+      const stored = await chrome.storage.local.get('suggestionsDismissedUntil');
+      if (stored.suggestionsDismissedUntil && Date.now() < stored.suggestionsDismissedUntil) return;
+    }
 
-    const res = await fetch(`${BACKEND}/jobs/suggested-searches?profile_id=${PROFILE_ID}`);
+    let url = `${BACKEND}/jobs/suggested-searches?profile_id=${PROFILE_ID}`;
+    if (forceLlm) url += '&use_llm=true';
+    const res = await fetch(url);
     if (!res.ok) return;
-    const { suggestions } = await res.json();
+    // Named searchLocation, not location — `location` would shadow
+    // window.location inside this function.
+    const { suggestions, llm_used, location: searchLocation } = await res.json();
     if (!suggestions?.length) return;
 
+    const scope = searchLocation ? ` in ${searchLocation}` : '';
+    banner.querySelector('span').textContent =
+      `${llm_used ? '✨' : '💡'} Try searching${scope}:`;
     const linksEl = document.getElementById('sugg-links');
     linksEl.innerHTML = '';
     suggestions.forEach((phrase, i) => {
       const a = document.createElement('a');
       a.textContent = `"${phrase}"`;
+      a.title = `Search Seek for "${phrase}"${scope}`;
       a.addEventListener('click', () => {
-        const slug = phrase.toLowerCase().trim().replace(/\s+/g, '-') + '-jobs';
-        chrome.tabs.create({ url: `https://au.seek.com/${slug}` }); // normal user-initiated open, not a fetch — still 0-hop
+        chrome.tabs.create({ url: seekSearchUrl(phrase, searchLocation) }); // normal user-initiated open, not a fetch — still 0-hop
       });
       linksEl.appendChild(a);
       if (i < suggestions.length - 1) linksEl.appendChild(document.createTextNode(' · '));
@@ -528,9 +655,13 @@ document.getElementById('sugg-close').addEventListener('click', async () => {
 // ---------------------------------------------------------------------------
 // Scan Page (1-hop rule: links from a page the user opened, ≥5s apart, capped)
 // ---------------------------------------------------------------------------
-// MAX_SCAN_PAGES is now mostly a safety ceiling, not the primary cost control —
-// WEAK_STREAK_LIMIT below does the real work of cutting a bad search short.
-const MAX_SCAN_PAGES = 10;
+// How many job pages one scan opens. User-tunable in "Personalise metrics"
+// (stored server-side as scan_max_pages) between 1 and SCAN_PAGES_CEILING; the
+// ceiling mirrors the API's own validation and is the policy cap — the setting
+// can move under it but never past it. WEAK_STREAK_LIMIT below still does the
+// real work of cutting a bad search short.
+const SCAN_PAGES_CEILING = 25;
+let scanMaxPages = 10;
 const SCAN_DELAY_MS = 5000;
 
 // Early-exit: if this many consecutive scraped jobs come back weak on the
@@ -547,10 +678,16 @@ const scanBtn = document.getElementById('scan-btn');
 const scanLogEl = document.getElementById('scanlog');
 let scanning = false;
 
+// Per-page progress goes to the console only — the list itself is the progress
+// display (the "N more scanned — analysing" row at the bottom). scanNotice is
+// for the few messages the user needs to act on (wrong page, nothing found…).
 function scanLog(msg) {
-  const line = document.createElement('div');
-  line.textContent = msg;
-  scanLogEl.appendChild(line);
+  console.log(`[scan] ${msg}`);
+}
+
+function scanNotice(msg) {
+  scanLog(msg);
+  scanLogEl.textContent = msg;
 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
@@ -625,19 +762,19 @@ async function scanPage() {
   if (scanning) return;
   scanning = true;
   scanBtn.disabled = true;
-  scanLogEl.innerHTML = '';
+  scanLogEl.textContent = '';
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab || !/^https:\/\/(au\.seek\.com|www\.seek\.com\.au)\/[^?#]*jobs/i.test(tab.url || '')) {
-      scanLog('Open a Seek search results page in this tab first, then click Scan Page.');
+      scanNotice('Open a Seek search results page in this tab first, then click Scan Page.');
       return;
     }
     let allUrls;
     try { allUrls = await injectFn(tab.id, pageCollectJobLinks); }
-    catch (e) { scanLog(`Could not read the page: ${e.message}`); return; }
+    catch (e) { scanNotice(`Could not read the page: ${e.message}`); return; }
 
     allUrls = allUrls || [];
-    if (!allUrls.length) { scanLog('No job links found on this page.'); return; }
+    if (!allUrls.length) { scanNotice('No job links found on this page.'); return; }
 
     // Filter out URLs whose source_job_id is already in the database.
     let knownIds = new Set();
@@ -653,10 +790,10 @@ async function scanPage() {
 
     const newUrls = allUrls.filter(u => !knownIds.has(extractJobId(u)));
     const skipped = allUrls.length - newUrls.length;
-    const urls = newUrls.slice(0, MAX_SCAN_PAGES);
+    const urls = newUrls.slice(0, scanMaxPages);
 
     if (skipped) scanLog(`Skipped ${skipped} already-captured job(s).`);
-    if (!urls.length) { scanLog('All jobs on this page already captured.'); return; }
+    if (!urls.length) { scanNotice('All jobs on this page already captured.'); return; }
     scanLog(`Found ${newUrls.length} new link(s); scraping up to ${urls.length} (5s apart), screening as we go…`);
 
     // Scraping (the "producer") and quick-screening (the "consumer") run
@@ -697,6 +834,7 @@ async function scanPage() {
           if (jobId != null) {
             scanLog(`${label} captured ✓ (${desc})`);
             screenQueue.push({ label, jobId });
+            refreshPendingCount();
           } else {
             scanLog(`${label} backend error ✗`);
           }
@@ -724,8 +862,8 @@ async function scanPage() {
             consecutiveWeak = weak ? consecutiveWeak + 1 : 0;
             if (consecutiveWeak >= WEAK_STREAK_LIMIT) {
               abort = true;
-              scanLog(`${WEAK_STREAK_LIMIT} weak results in a row — this search doesn't look productive. `
-                + 'Stopping early; try a different search.');
+              scanNotice(`${WEAK_STREAK_LIMIT} weak results in a row — this search doesn't look productive. `
+                + 'Stopped early; try a different search.');
             }
           } catch (e) {
             scanLog(`${label} quick-screen error: ${e.message}`);
@@ -751,6 +889,180 @@ async function scanPage() {
 scanBtn.addEventListener('click', scanPage);
 document.getElementById('refresh-btn').addEventListener('click', loadJobs);
 
+// ---------------------------------------------------------------------------
+// Personalise metrics — collapsible panel of user-tunable thresholds
+// ---------------------------------------------------------------------------
+const personaliseToggle = document.getElementById('personalise-toggle');
+const personalisePanel = document.getElementById('personalise-panel');
+const autoLetterInput = document.getElementById('auto-letter-min');
+const autoLetterSaveBtn = document.getElementById('auto-letter-save');
+const scanPagesInput = document.getElementById('scan-pages');
+const scanPagesSaveBtn = document.getElementById('scan-pages-save');
+const llmSuggestCheckbox = document.getElementById('llm-suggest');
+const llmSuggestRefreshBtn = document.getElementById('llm-suggest-refresh');
+
+personaliseToggle.addEventListener('click', () => {
+  const open = personalisePanel.hidden; // about to open
+  personalisePanel.hidden = !open;
+  personaliseToggle.setAttribute('aria-expanded', String(open));
+});
+
+// Resolves once the stored preferences (if reachable) have been applied, so the
+// first loadJobs() can classify "pending" letters against the real threshold.
+async function loadPreferences() {
+  try {
+    const res = await fetch(`${BACKEND}/profile/${PROFILE_ID}/preferences`);
+    if (!res.ok) return;
+    const prefs = await res.json();
+    if (Number.isInteger(prefs.auto_cover_letter_min_score)) {
+      autoLetterMin = prefs.auto_cover_letter_min_score;
+      autoLetterInput.value = autoLetterMin;
+    }
+    if (Number.isInteger(prefs.scan_max_pages)
+        && prefs.scan_max_pages >= 1 && prefs.scan_max_pages <= SCAN_PAGES_CEILING) {
+      scanMaxPages = prefs.scan_max_pages;
+    }
+    scanPagesInput.value = scanMaxPages;
+    llmSuggestCheckbox.checked = prefs.llm_search_suggestions === true;
+  } catch { /* backend down — keep defaults; loadJobs shows its own error */ }
+}
+
+autoLetterSaveBtn.addEventListener('click', async () => {
+  const value = parseInt(autoLetterInput.value, 10);
+  if (!Number.isInteger(value) || value < 0 || value > 100) {
+    autoLetterInput.value = autoLetterMin;
+    return;
+  }
+  autoLetterSaveBtn.disabled = true;
+  autoLetterSaveBtn.textContent = '…';
+  try {
+    const res = await fetch(`${BACKEND}/profile/${PROFILE_ID}/preferences`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ auto_cover_letter_min_score: value }),
+    });
+    if (!res.ok) throw new Error();
+    autoLetterMin = value;
+    autoLetterSaveBtn.textContent = 'Saved ✓';
+    loadJobs(); // cards move between "pending" and "no letter" states
+  } catch {
+    autoLetterSaveBtn.textContent = 'Error';
+  }
+  setTimeout(() => { autoLetterSaveBtn.textContent = 'Save'; autoLetterSaveBtn.disabled = false; }, 1500);
+});
+
+scanPagesSaveBtn.addEventListener('click', async () => {
+  const value = parseInt(scanPagesInput.value, 10);
+  if (!Number.isInteger(value) || value < 1 || value > SCAN_PAGES_CEILING) {
+    scanPagesInput.value = scanMaxPages; // out of range — snap back, don't save
+    return;
+  }
+  scanPagesSaveBtn.disabled = true;
+  scanPagesSaveBtn.textContent = '…';
+  try {
+    const res = await fetch(`${BACKEND}/profile/${PROFILE_ID}/preferences`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scan_max_pages: value }),
+    });
+    if (!res.ok) throw new Error();
+    scanMaxPages = value;
+    scanPagesSaveBtn.textContent = 'Saved ✓';
+  } catch {
+    scanPagesSaveBtn.textContent = 'Error';
+  }
+  setTimeout(() => { scanPagesSaveBtn.textContent = 'Save'; scanPagesSaveBtn.disabled = false; }, 1500);
+});
+
+// Layer 4 opt-in. Unticked, /jobs/suggested-searches never reaches the LLM;
+// ticked, it spends one cached call. Ticking it also refreshes the banner
+// immediately so the effect is visible rather than deferred to the next load.
+llmSuggestCheckbox.addEventListener('change', async () => {
+  const enabled = llmSuggestCheckbox.checked;
+  llmSuggestCheckbox.disabled = true;
+  try {
+    const res = await fetch(`${BACKEND}/profile/${PROFILE_ID}/preferences`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ llm_search_suggestions: enabled }),
+    });
+    if (!res.ok) throw new Error();
+    await maybeShowSuggestions({ ignoreCooldown: true });
+  } catch {
+    llmSuggestCheckbox.checked = !enabled; // revert — the setting didn't stick
+  } finally {
+    llmSuggestCheckbox.disabled = false;
+  }
+});
+
+// Forces a refine even when the cache is still warm, and even when the
+// checkbox is off (a one-off look, without turning the feature on).
+llmSuggestRefreshBtn.addEventListener('click', async () => {
+  llmSuggestRefreshBtn.disabled = true;
+  llmSuggestRefreshBtn.textContent = '…';
+  try {
+    await maybeShowSuggestions({ forceLlm: true, ignoreCooldown: true });
+    llmSuggestRefreshBtn.textContent = 'Done ✓';
+  } catch {
+    llmSuggestRefreshBtn.textContent = 'Error';
+  }
+  setTimeout(() => {
+    llmSuggestRefreshBtn.textContent = 'Refresh now';
+    llmSuggestRefreshBtn.disabled = false;
+  }, 1500);
+});
+
+// Layer 3: which searches actually paid off. Volume is also the LLM cost of a
+// search, so a big-volume/low-yield row is the one worth retiring.
+const searchPerfEl = document.getElementById('search-perf');
+document.getElementById('search-perf-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('search-perf-btn');
+  if (!searchPerfEl.hidden) {
+    searchPerfEl.hidden = true;
+    btn.textContent = 'Show';
+    return;
+  }
+  btn.disabled = true;
+  try {
+    const res = await fetch(`${BACKEND}/jobs/search-performance?profile_id=${PROFILE_ID}`);
+    if (!res.ok) throw new Error();
+    const { performance, underperforming } = await res.json();
+    if (!performance.length) {
+      searchPerfEl.textContent =
+        'No data yet — searches are tracked from the next results page you open.';
+    } else {
+      const weak = new Set(underperforming);
+      searchPerfEl.innerHTML = '';
+      const table = document.createElement('table');
+      const head = table.insertRow();
+      ['Search', 'Jobs', 'Good', 'Yield'].forEach((label, i) => {
+        const th = document.createElement('th');
+        th.textContent = label;
+        if (i > 0) th.className = 'num';
+        head.appendChild(th);
+      });
+      for (const row of performance) {
+        const tr = table.insertRow();
+        if (weak.has(row.query)) tr.className = 'weak';
+        tr.insertCell().textContent = row.query;
+        [row.volume, row.hits, `${Math.round(row.yield * 100)}%`].forEach((v) => {
+          const td = tr.insertCell();
+          td.textContent = v;
+          td.className = 'num';
+        });
+      }
+      searchPerfEl.appendChild(table);
+    }
+    searchPerfEl.hidden = false;
+    btn.textContent = 'Hide';
+  } catch {
+    searchPerfEl.textContent = 'Could not load search performance.';
+    searchPerfEl.hidden = false;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
 document.getElementById('bulk-delete-btn').addEventListener('click', async () => {
   const score = parseFloat(document.getElementById('bulk-score').value);
   if (isNaN(score)) return;
@@ -761,15 +1073,15 @@ document.getElementById('bulk-delete-btn').addEventListener('click', async () =>
     const res = await fetch(`${BACKEND}/jobs?below_score=${score}&profile_id=${PROFILE_ID}`, { method: 'DELETE' });
     const data = await res.json();
     if (res.ok) {
-      btn.textContent = `Deleted ${data.deleted}`;
-      setTimeout(() => { btn.textContent = 'Delete'; btn.disabled = false; }, 2000);
+      btn.textContent = `Hid ${data.hidden ?? data.deleted}`;
+      setTimeout(() => { btn.textContent = 'Hide'; btn.disabled = false; }, 2000);
       loadJobs();
     } else {
       throw new Error();
     }
   } catch {
     btn.textContent = 'Error';
-    setTimeout(() => { btn.textContent = 'Delete'; btn.disabled = false; }, 2000);
+    setTimeout(() => { btn.textContent = 'Hide'; btn.disabled = false; }, 2000);
   }
 });
 
@@ -778,11 +1090,45 @@ document.getElementById('bulk-delete-btn').addEventListener('click', async () =>
 // ---------------------------------------------------------------------------
 const profileMsg = document.getElementById('profile-msg');
 
-function showMsg(text, type) {
+function showMsg(text, type, ms = 3000) {
   profileMsg.textContent = text;
   profileMsg.className = type;
-  setTimeout(() => { profileMsg.className = ''; }, 3000);
+  setTimeout(() => { profileMsg.className = ''; }, ms);
 }
+
+// Unsaved-changes tracking. The profile form is only persisted by Save Profile
+// (a card's "Done" merely collapses it). "Dirty" means the form's data differs
+// from what was last loaded from or accepted by the backend — a snapshot
+// comparison, not "something changed in the DOM". Flagging on any mutation
+// re-dirtied the form straight after every save (the "Saved ✓" button text and
+// the status message are mutations too), and also on Edit/Done or an edit typed
+// then undone. Input/change events and DOM mutations now just re-run the check.
+const dirtyNote = document.getElementById('dirty-note');
+const saveBar = document.getElementById('save-bar');
+let savedSnapshot = null; // JSON of the last loaded/saved form data; null = not loaded yet
+
+function setProfileDirty(dirty) {
+  dirtyNote.hidden = !dirty;
+  saveBar.classList.toggle('dirty', dirty);
+}
+
+function refreshProfileDirty() {
+  if (savedSnapshot === null) return setProfileDirty(false);
+  setProfileDirty(JSON.stringify(readProfileForm()) !== savedSnapshot);
+}
+
+// Called after the form is (re)filled from the backend or saved. `snapshot` is
+// the JSON of what the backend now holds; it defaults to the form as it stands.
+function markProfileClean(snapshot = JSON.stringify(readProfileForm())) {
+  savedSnapshot = snapshot;
+  refreshProfileDirty();
+}
+
+const profileSectionEl = document.getElementById('profile-section');
+new MutationObserver(refreshProfileDirty)
+  .observe(profileSectionEl, { childList: true, subtree: true });
+profileSectionEl.addEventListener('input', refreshProfileDirty);
+profileSectionEl.addEventListener('change', refreshProfileDirty);
 
 // -- Qualification card --
 
@@ -832,8 +1178,8 @@ function makeQualCard(data = {}, isNew = false) {
       </label>
     </div>
     <div class="two-col">
-      <label class="field"><span>Start</span><input class="f-start" type="month"></label>
-      <label class="field"><span>End</span><input class="f-end" type="month"></label>
+      <label class="field"><span>Start</span>${monthInputHtml('f-start')}</label>
+      <label class="field"><span>End</span>${monthInputHtml('f-end')}</label>
     </div>
     <label class="field"><span>Status</span>
       <select class="f-status">
@@ -866,8 +1212,8 @@ function makeQualCard(data = {}, isNew = false) {
     const title  = formEl.querySelector('.f-title').value || '(untitled)';
     const inst   = formEl.querySelector('.f-institution').value;
     const field  = formEl.querySelector('.f-field').value;
-    const start  = formEl.querySelector('.f-start').value;
-    const end    = formEl.querySelector('.f-end').value;
+    const start  = monthValue(formEl.querySelector('.f-start'));
+    const end    = monthValue(formEl.querySelector('.f-end'));
     const status = formEl.querySelector('.f-status').value;
 
     summaryEl.querySelector('.summary-title').textContent = title;
@@ -902,8 +1248,8 @@ function readQualCard(card) {
     institution:        card.querySelector('.f-institution').value.trim() || null,
     field_of_study:     card.querySelector('.f-field').value.trim() || null,
     grade:              card.querySelector('.f-grade').value.trim() || null,
-    start_date:         card.querySelector('.f-start').value || null,
-    end_date:           card.querySelector('.f-end').value || null,
+    start_date:         monthValue(card.querySelector('.f-start')) || null,
+    end_date:           monthValue(card.querySelector('.f-end')) || null,
     status:             card.querySelector('.f-status').value,
   };
 }
@@ -948,8 +1294,8 @@ function makeExpCard(data = {}, isNew = false) {
       <input class="f-org" type="text" placeholder="Company or project name">
     </label>
     <div class="two-col">
-      <label class="field"><span>Start</span><input class="f-start" type="month"></label>
-      <label class="field f-end-label"><span>End</span><input class="f-end" type="month"></label>
+      <label class="field"><span>Start</span>${monthInputHtml('f-start')}</label>
+      <label class="field f-end-label"><span>End</span>${monthInputHtml('f-end')}</label>
     </div>
     <div class="check-row">
       <input class="f-current" type="checkbox"><label>Current role</label>
@@ -993,8 +1339,8 @@ function makeExpCard(data = {}, isNew = false) {
     const type   = formEl.querySelector('.f-type').value;
     const title  = formEl.querySelector('.f-title').value || '(untitled)';
     const org    = formEl.querySelector('.f-org').value;
-    const start  = formEl.querySelector('.f-start').value;
-    const end    = formEl.querySelector('.f-end').value;
+    const start  = monthValue(formEl.querySelector('.f-start'));
+    const end    = monthValue(formEl.querySelector('.f-end'));
     const isCur  = formEl.querySelector('.f-current').checked;
     const desc   = formEl.querySelector('.f-desc').value;
 
@@ -1033,8 +1379,8 @@ function readExpCard(card) {
     experience_type: card.querySelector('.f-type').value,
     title:           card.querySelector('.f-title').value.trim(),
     organization:    card.querySelector('.f-org').value.trim() || null,
-    start_date:      card.querySelector('.f-start').value || null,
-    end_date:        isCurrent ? null : (card.querySelector('.f-end').value || null),
+    start_date:      monthValue(card.querySelector('.f-start')) || null,
+    end_date:        isCurrent ? null : (monthValue(card.querySelector('.f-end')) || null),
     is_current:      isCurrent,
     description:     card.querySelector('.f-desc').value.trim() || null,
     skills:          card.querySelector('.f-skills').value.split(',').map(s => s.trim()).filter(Boolean),
@@ -1079,12 +1425,34 @@ async function loadProfile() {
   profileLoaded = true;
   try {
     const res = await fetch(`${BACKEND}/profile-ui/data`);
-    if (res.status === 404) return; // no profile yet — blank form is fine
+    if (res.status === 404) return markProfileClean(); // no profile yet — blank form is the baseline
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     populateForm(await res.json());
   } catch (e) {
     showMsg(`Could not load profile: ${e.message}`, 'err');
+    markProfileClean(); // still flag edits typed into the (blank) form
   }
+}
+
+// The form's data in the PUT /profile-ui/data shape. Every card is included,
+// titled or not, so an untitled card (which save skips) keeps the form dirty.
+function readProfileForm() {
+  const val = id => document.getElementById(id).value.trim();
+  return {
+    profile: {
+      name:            val('p-name'),
+      email:           val('p-email'),
+      phone:           val('p-phone')           || null,
+      location:        val('p-location')        || null,
+      summary:         val('p-summary')         || null,
+      writing_sample:  val('p-writing-sample')  || null,
+      target_role:     val('p-target-role')     || null,
+      target_location: val('p-target-location') || null,
+    },
+    qualifications: [...document.querySelectorAll('#quals-list .entry-card')].map(readQualCard),
+    experiences:    [...document.querySelectorAll('#exps-list .entry-card')].map(readExpCard),
+    skills:         [...skillsData],
+  };
 }
 
 function populateForm(data) {
@@ -1096,6 +1464,7 @@ function populateForm(data) {
   document.getElementById('p-summary').value         = p.summary         || '';
   document.getElementById('p-target-role').value     = p.target_role     || '';
   document.getElementById('p-target-location').value = p.target_location || '';
+  document.getElementById('p-writing-sample').value  = p.writing_sample  || '';
 
   const qualsList = document.getElementById('quals-list');
   qualsList.innerHTML = '';
@@ -1107,46 +1476,76 @@ function populateForm(data) {
 
   skillsData = data.skills || [];
   renderSkillPills();
+  updateWritingStats();
+  markProfileClean();
 }
+
+// -- Your Writing view --
+// The sample is often several pages, so the form shows a button with a word
+// count and the text gets a view of its own. The textarea stays inside
+// #profile-section, so saving and the unsaved-changes note work unchanged.
+
+const writingInput = document.getElementById('p-writing-sample');
+const profileMain  = document.getElementById('profile-main');
+const writingView  = document.getElementById('writing-view');
+
+function updateWritingStats() {
+  const words = (writingInput.value.match(/\S+/g) || []).length;
+  const text = words ? `${words.toLocaleString()} word${words === 1 ? '' : 's'}` : 'Nothing added yet';
+  document.getElementById('writing-stats').textContent = text;
+  document.getElementById('writing-view-stats').textContent = text;
+}
+
+function showWritingView(open) {
+  profileMain.hidden = open;
+  writingView.hidden = !open;
+  profileSection.scrollIntoView({ block: 'start' });
+  if (open) writingInput.focus({ preventScroll: true });
+}
+
+writingInput.addEventListener('input', updateWritingStats);
+document.getElementById('open-writing-btn').addEventListener('click', () => showWritingView(true));
+document.getElementById('close-writing-btn').addEventListener('click', () => showWritingView(false));
 
 async function saveProfile() {
   const btn = document.getElementById('save-profile-btn');
   btn.disabled = true;
   btn.textContent = 'Saving…';
+  let savedLabel = 'Save Profile';
   try {
-    const quals = [...document.querySelectorAll('#quals-list .entry-card')]
-      .map(readQualCard).filter(q => q.title);
-    const exps = [...document.querySelectorAll('#exps-list .entry-card')]
-      .map(readExpCard).filter(e => e.title);
-    const skills = [...skillsData];
-
-    const body = {
-      profile: {
-        name:            document.getElementById('p-name').value.trim(),
-        email:           document.getElementById('p-email').value.trim(),
-        phone:           document.getElementById('p-phone').value.trim()           || null,
-        location:        document.getElementById('p-location').value.trim()        || null,
-        summary:         document.getElementById('p-summary').value.trim()         || null,
-        target_role:     document.getElementById('p-target-role').value.trim()     || null,
-        target_location: document.getElementById('p-target-location').value.trim() || null,
-      },
-      qualifications: quals,
-      experiences: exps,
-      skills,
-    };
+    const form  = readProfileForm();
+    const quals = form.qualifications.filter(q => q.title);
+    const exps  = form.experiences.filter(e => e.title);
+    // A card with no title can't be stored (the backend skips it too) — say so
+    // instead of letting it vanish on the next load.
+    const dropped = (form.qualifications.length - quals.length) + (form.experiences.length - exps.length);
+    const body = { ...form, qualifications: quals, experiences: exps };
+    const bodyJson = JSON.stringify(body);
 
     const res = await fetch(`${BACKEND}/profile-ui/data`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      body: bodyJson,
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    showMsg('Profile saved.', 'ok');
+    // Baseline = exactly what was sent, so edits typed while the request was in
+    // flight, and any skipped untitled cards, still show as unsaved.
+    markProfileClean(bodyJson);
+    if (dropped) {
+      showMsg(`Saved — but ${dropped} entr${dropped === 1 ? 'y' : 'ies'} with no title ${dropped === 1 ? 'was' : 'were'} skipped. Give ${dropped === 1 ? 'it' : 'them'} a title and save again.`, 'err', 8000);
+    } else {
+      showMsg('Profile saved.', 'ok');
+    }
+    savedLabel = dropped ? 'Save Profile' : 'Saved ✓';
   } catch (e) {
     showMsg(`Save failed: ${e.message}`, 'err');
+    savedLabel = 'Save failed — retry';
   } finally {
+    // The message above renders at the TOP of the panel, off-screen when you
+    // click the pinned button at the bottom — so the button itself confirms.
     btn.disabled = false;
-    btn.textContent = 'Save Profile';
+    btn.textContent = savedLabel;
+    if (savedLabel !== 'Save Profile') setTimeout(() => { btn.textContent = 'Save Profile'; }, 2500);
   }
 }
 
@@ -1242,6 +1641,7 @@ async function seekProfileExtract() {
   const out = {
     name: null, location: null, email: null, summary: null,
     experiences: [], qualifications: [], skills: [],
+    unrecognised: {},  // read-* sections seen on the page but not imported: { 'read-x': count }
   };
 
   // ── Personal details ──────────────────────────────────────────────────────
@@ -1304,6 +1704,53 @@ async function seekProfileExtract() {
       field_of_study: '', grade: '',
       start_date: startDate, end_date: endDate, status: 'completed',
     });
+  });
+
+  // ── Other sections (projects, volunteering, certifications, …) ────────────
+  // NOT confirmed against live HTML: only read-role / read-qualification have
+  // been seen. Seek's profile sections appear to share the read-<thing> naming
+  // and the h4 + time layout, so any OTHER read-* block is parsed the same way
+  // when its name says what it is (below). Anything whose name doesn't say — and
+  // any block with no h4/h3 title — is left out of the import and reported by
+  // name in `unrecognised`, so the status line tells us exactly what to add
+  // rather than silently dropping it.
+  const KNOWN_READ = new Set(['read-role', 'read-qualification']);
+  const EXP_TYPE_BY_NAME  = [[/volunteer/i, 'volunteer'], [/intern/i, 'internship'], [/project/i, 'project']];
+  const CERT_NAME = /licen[cs]e|certif|course|training/i;
+
+  document.querySelectorAll('[data-automation^="read-"]').forEach(item => {
+    const key = item.getAttribute('data-automation');
+    if (KNOWN_READ.has(key)) return;
+
+    const title = item.querySelector('h4, h3')?.innerText?.trim() || '';
+    const expType = EXP_TYPE_BY_NAME.find(([re]) => re.test(key))?.[1] || null;
+    const isCert  = CERT_NAME.test(key);
+    if (!title || (!expType && !isCert)) {
+      out.unrecognised[key] = (out.unrecognised[key] || 0) + 1;
+      return;
+    }
+
+    const dateRaw = item.querySelector('time')?.innerText?.trim() || '';
+    const [startDate, endDate, isCurrent] = parseDateRange(dateRaw);
+    const descEl = item.querySelector(':not([aria-hidden="true"]) [data-hj-masked]')
+                || item.querySelector('[data-hj-masked]');
+    const description = descEl?.innerText?.trim().replace(/^[•·]\s*/, '') || '';
+    const rest = cleanText(item, `h4, h3, time, [data-hj-masked], ${NOISE}`)
+      .split('\n')[0]?.trim() || '';
+
+    if (expType) {
+      out.experiences.push({
+        experience_type: expType, title, organization: rest,
+        start_date: startDate, end_date: endDate, is_current: isCurrent,
+        description, skills: [],
+      });
+    } else {
+      out.qualifications.push({
+        qualification_type: 'certificate', title, institution: rest,
+        field_of_study: '', grade: '',
+        start_date: startDate, end_date: endDate, status: 'completed',
+      });
+    }
   });
 
   // ── Skills ────────────────────────────────────────────────────────────────
@@ -1372,17 +1819,28 @@ async function importFromSeekProfile() {
 
     // Skills — merge without duplicates
     for (const s of (p.skills || [])) addSkill(s);
+    // Programmatic .value writes fire no input event — re-check explicitly.
+    refreshProfileDirty();
 
     const counts = [
-      p.experiences?.length && `${p.experiences.length} role(s)`,
+      p.experiences?.length && `${p.experiences.length} experience(s)`,
       p.qualifications?.length && `${p.qualifications.length} qualification(s)`,
       p.skills?.length && `${p.skills.length} skill(s)`,
     ].filter(Boolean);
 
+    // Sections the page has that the importer couldn't classify — surfaced by
+    // name (not silently dropped) so the right selector can be added.
+    const skippedSections = Object.entries(p.unrecognised || {})
+      .map(([k, n]) => `${k} ×${n}`).join(', ');
+
     if (!p.name && !counts.length) {
       setImportStatus('Nothing extracted — page may not have rendered. Check browser console (F12).', '#d97706');
     } else {
-      setImportStatus(`Imported: ${[p.name && 'name', ...counts].filter(Boolean).join(', ')}. Review & save.`, '#059669');
+      const skipped = skippedSections ? ` Not imported (unrecognised): ${skippedSections}.` : '';
+      setImportStatus(
+        `Imported: ${[p.name && 'name', ...counts].filter(Boolean).join(', ')}. Review & save.${skipped}`,
+        skippedSections ? '#d97706' : '#059669',
+      );
     }
   } catch (e) {
     console.error('[SeekImport] Error:', e);
@@ -1411,6 +1869,23 @@ document.getElementById('export-profile-btn').addEventListener('click', async ()
     setImportStatus(`Export failed: ${e.message}`, '#dc2626');
   }
 });
+
+// ---------------------------------------------------------------------------
+// LLM budget banner — shown while the backend's USD cap is blocking cover
+// letters (mid/strong calls). Scanning, extraction and matching keep running.
+// ---------------------------------------------------------------------------
+async function refreshBudgetBanner() {
+  const banner = document.getElementById('budget-banner');
+  try {
+    const res = await fetch(`${BACKEND}/llm/usage`);
+    if (!res.ok) return;
+    const status = await res.json();
+    banner.textContent = status.blocked
+      ? `${status.reason} Cover letters are paused; scanning and scoring continue.`
+      : '';
+    banner.hidden = !status.blocked;
+  } catch { /* the banner is advisory — fail silently */ }
+}
 
 // ---------------------------------------------------------------------------
 // SSE — live updates from the backend
@@ -1442,6 +1917,11 @@ function connectEvents() {
     loadJobs();
   });
 
+  // The idle loop hit the daily/total LLM budget cap and paused cover letters.
+  source.addEventListener('llm_budget_blocked', () => {
+    refreshBudgetBanner();
+  });
+
   source.onerror = () => {
     // EventSource auto-reconnects; onopen will fire again and trigger a reload
   };
@@ -1450,5 +1930,25 @@ function connectEvents() {
 // ---------------------------------------------------------------------------
 // Init
 // ---------------------------------------------------------------------------
-loadJobs();
-connectEvents();
+const envPill = document.getElementById('env-pill');
+
+function renderEnvPill() {
+  envPill.textContent = BACKEND_ENV.toUpperCase();
+  document.body.classList.toggle('env-test', BACKEND_ENV === 'test');
+}
+
+// Flipping the switch swaps the whole data set (a different database), so
+// reload the panel rather than patch state in place — nothing from the old
+// environment can linger on screen.
+envPill.addEventListener('click', async () => {
+  const next = BACKEND_ENV === 'real' ? 'test' : 'real';
+  await chrome.storage.local.set({ backendEnv: next });
+  location.reload();
+});
+
+backendReady.then(() => {
+  renderEnvPill();
+  loadPreferences().then(loadJobs);
+  refreshBudgetBanner();
+  connectEvents();
+});
