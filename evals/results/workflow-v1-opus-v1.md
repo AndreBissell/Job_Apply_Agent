@@ -1,6 +1,6 @@
 # Letter eval: workflow-v1
 
-Engine `workflow`, strong model `gemini-3.1-pro-preview`, run 2026-10-03T17:25:28. 15 letters (0 failed). Rubric: evals/rubric.md. Grades: `grades-opus.csv`.
+Engine `workflow`, strong model `gemini-3.1-pro-preview`, run 2026-10-03T17:25:28. 15 letters (0 failed). Rubric: evals/rubric.md. Grades: `grades-opus-v1.csv`.
 
 | Score | Job | Words | em_dash_limit | generic_phrase_limit | within_word_limit | no_placeholders | has_sign_off | supported_musts_covered | no_unsupported_claims | specific_detail | would_send | Pass | Cost | Time |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -51,20 +51,20 @@ Blocking issues plain, warnings in brackets. Sentence stdev: words; under 6 warn
 
 | Job | Pass | Sentence stdev | Issues (warnings) |
 |---|---|---|---|
-| Graduate LCNC Developer | ✓ | 5.21 | (flat_rhythm) |
-| Software Engineer Graduate | ✓ | 8.1 | - |
+| Graduate LCNC Developer | ✓ | 5.21 | (flat_rhythm), (gap_led) |
+| Software Engineer Graduate | ✓ | 8.1 | (gap_led) |
 | Junior-Intermediate Software Engineer | ✓ | 5.83 | (flat_rhythm) |
-| Software Engineering Graduate | ✓ | 8.3 | - |
+| Software Engineering Graduate | ✓ | 8.3 | (gap_led) |
 | Graduate / Intermediate .NET Developer | ✓ | 5.69 | (flat_rhythm) |
-| Software Developer 6 Month Contract | ✓ | 7.87 | - |
-| Software Engineer | ✓ | 7.94 | - |
-| Software Engineer - Business Systems (Automation & | ✓ | 6.53 | - |
-| Junior .Net Developer / I.T Services / 5 Days Onsi | ✓ | 5.68 | (flat_rhythm) |
+| Software Developer 6 Month Contract | ✓ | 7.87 | (gap_led) |
+| Software Engineer | ✓ | 7.94 | (gap_led) |
+| Software Engineer - Business Systems (Automation & | ✓ | 6.53 | (gap_led), (gap_led) |
+| Junior .Net Developer / I.T Services / 5 Days Onsi | ✓ | 5.68 | (flat_rhythm), (gap_led) |
 | Software engineer | ✓ | 6.44 | - |
 | AI Developer | ✓ | 6.32 | - |
 | Front End Developer - React | ✓ | 6.68 | - |
-| Developer/Support | ✓ | 7.8 | - |
+| Developer/Support | ✓ | 7.8 | (gap_led), (gap_led) |
 | Frontend Developer | ✓ | 6.7 | - |
-| Graduate AI & Technology Developer | ✓ | 7.36 | - |
+| Graduate AI & Technology Developer | ✓ | 7.36 | (gap_led) |
 
-15 letter(s) graded by the blind Opus panel (evals/grading-standard.md); their reasons are in evals/runs/workflow-v1/grades-opus.csv (gitignored: they quote the letters).
+15 letter(s) graded by the blind Opus panel (evals/grading-standard.md); their reasons are in evals/runs/workflow-v1/grades-opus-v1.csv (gitignored: they quote the letters).

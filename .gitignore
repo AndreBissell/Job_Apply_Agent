@@ -37,5 +37,6 @@ backups/
 # stay local. Only the rubric/README and the result summaries are committed.
 evals/jobs/
 evals/runs/
+evals/panels/
 evals/eval.db
 evals/set.json

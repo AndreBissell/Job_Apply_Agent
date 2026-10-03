@@ -824,7 +824,7 @@ def cmd_report(args) -> int:
                       "the letters)."]
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    # Grades from another file (grades-opus.csv) get their own report, so the user's
+    # Grades from another file (grades-opus-v1.csv) get their own report, so the user's
     # grades and a model grader's are never mixed in one results file.
     suffix = "" if args.grades == "grades.csv" else "-" + Path(args.grades).stem.removeprefix("grades-")
     out = RESULTS_DIR / f"{meta['run_id']}{suffix}.md"
@@ -1417,7 +1417,7 @@ def main() -> int:
     p = sub.add_parser("report", help="merge code checks + grades into evals/results/<run>.md")
     p.add_argument("run_id")
     p.add_argument("--grades", default="grades.csv",
-                   help="grades file in the run folder (grades-opus.csv -> evals/results/<run>-opus.md)")
+                   help="grades file in the run folder (grades-opus-v1.csv -> evals/results/<run>-opus-v1.md)")
     p.set_defaults(fn=cmd_report)
 
     p = sub.add_parser("loop-report", help="per-draft checks and what each revision changed -> evals/results/<run>-loop.md")

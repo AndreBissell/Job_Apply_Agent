@@ -30,7 +30,15 @@ the user's held-out grades. Workflow beat one-shot on every judgement item
 link an ad asked for, so `check_claims` now blocks links and emails that aren't
 in the profile.
 
-**Verified:** `python -m pytest` (458 passed, 53 new).
+**Follow-up (`workflow-v2`, the Phase 7 baseline):** skills the profile only
+lists no longer count as must-cover or as experience. Unsupported claims fell
+from 9 letters to 2, and gap-led sentences from 9 to 0; $0.184/letter, 15/15
+clean. `would_send` is still 0/15. Each letter recites the profile without
+applying it to the employer's work, which is the next thing to improve. The
+grading panel is now repeatable: `scripts/grading_panel.py` and
+`evals/grading-panel.md`.
+
+**Verified:** `python -m pytest` (464 passed, 59 new).
 
 ---
 

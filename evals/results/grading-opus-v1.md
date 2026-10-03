@@ -64,8 +64,9 @@ So the panel's **absolute** rates are not comparable with the user's grades; its
 | All four judgement items | 2/15 | 0/15 |
 | Full rubric pass (with the code checks) | **2/15** | 0/15 (generic_phrase_limit fails 14/15) |
 
-Per-letter tables: `workflow-v1-opus.md`, `baseline-oneshot-opus.md`. Reasons per N are
-in `evals/runs/<run>/grades-opus.csv` (gitignored: they quote the letters).
+Per-letter tables: `workflow-v1-opus-v1.md`, `baseline-oneshot-opus-v1.md`. Reasons per N are
+in `evals/runs/<run>/grades-opus-v1.csv` (gitignored: they quote the letters). The panel's
+files are in `evals/panels/opus-v1/` (gitignored); procedure in `evals/grading-panel.md`.
 
 ## What the panel found in the workflow letters
 

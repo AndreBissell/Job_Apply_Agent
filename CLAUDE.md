@@ -180,6 +180,7 @@ job-app-assistant/
     run_matching.py    # batch LLM matching/scoring
     run_cover_letters.py  # batch cover-letter generation (dev/testing only)
     letter_lab.py      # cover-letter eval harness (evals/rubric.md); analyze = Phase 3 hand-check pack; loop-report = revisions
+    grading_panel.py   # blind Opus grading panel: pack / disagreements / merge (evals/grading-panel.md)
     check_matching.py  # scoring diagnostic report vs expected bands
     check_llm.py       # validate the LLM key before a batch
     smoke_test.py
@@ -299,24 +300,22 @@ passed > fewest missing must-covers > style passed > later) with `open_issues`, 
 `clean` only if all 3 checks passed on it; `letter_runs.final_draft_version` is the
 draft handed back. `account_limit` is set when the USD guard / daily quota stopped it
 (stop the batch). The gap policy is the Phase 7 hook for `ask_user` (open questions ->
-`waiting_user`). registry.py waits for Phase 7. Eval set is now 15 ads (8 at 85+, 4 at
-75, 3 below; eval.db scores, which moved up to 50 points from real.db's).
-`letter_lab.py run --engine workflow` (`workflow-v1`: $0.194/letter, 14/15 clean,
-1 hit the revision limit, 0 revisions over length or breaking claims, 2/6 dropped a
-must-cover item) and `loop-report <run> --against tools-v1`. `--engine tools` now
-logs engine="tools". The one-shot baseline covers all 15 (6 new merged into
-evals/runs/baseline-oneshot/). GRADED 2026-10-03 by a blind Opus panel (user's
-request; evals/grading-standard.md = the base levels, 2 graders + adjudicator, 111/120
-agreement; vs the user's own grades 8/15 on held-out letters, the panel much stricter
-on claims). Panel, workflow vs one-shot: musts 15 vs 4, claims 6 vs 2, detail 11 vs 4,
-would_send 2 vs 0 (evals/results/grading-opus-v1.md). Panel grades are in
-grades-opus.csv and filled only blank grades.csv cells; `report <run> --grades
-grades-opus.csv`. Fixed: check_claims stage 1 blocks invented links/emails (a style
-revision made up a youtu.be link an ad asked for). Open for Phase 7, one root cause
-(bare skill listings): check_claims passes "experience with X" on a listed-only skill
-(7/9 workflow claim fails), and partial must-covers backed only by a listing force
-gap-led "I have not ..." sentences (10/13 would_send fails). Fix both, then re-run
-`plant` and the 15-ad set.
+`waiting_user`). registry.py waits for Phase 7. Eval set: 15 ads (8 at 85+, 4 at 75,
+3 below; eval.db scores, which moved up to 50 points from real.db's), and NONE of them
+triggers a pending must-have gap, so ask_user never fires on it.
+Follow-up done the same day (commit 907fe81): a must-have backed only by listed
+skills (`guardrails.listing_only`) is may_use, never must_cover; the writer and the
+claims judge treat a listing as "skills in", never experience; style_lint warns on
+gap-led sentences. check_claims stage 1 also blocks invented links/emails in code.
+THE BASELINE FOR PHASE 7 IS `workflow-v2`: $0.184/letter, 15/15 clean, 0 dropped
+must-covers, 0 gap-led sentences. Judgement items are graded by a blind Opus panel
+(evals/grading-panel.md + scripts/grading_panel.py; standard evals/grading-standard.md;
+grades in evals/runs/<run>/grades-<tag>.csv, user's own grades never overwritten).
+Panel opus-v2, v2 vs v1: claims 13 vs 6, musts 14 vs 15, detail 12 vs 13, would_send
+0 vs 1; the panel re-grades consistently (57/60) but is stricter than the user (8/15
+on held-out letters). Every v2 would_send fail: body paragraphs recite the profile
+without applying it to this employer's work, plus generic closes; that is the next
+writer lever. Eval spend 2026-10-03 is in the plan's Decision log.
 Next up is Phase 7 (agent + ask_user + to-work-on list). Known: Gemini implicit
 caching never hits (cached_tokens 0 on every call), and the writer still copies one
 stock line from the writing sample (future_work/voice-toggle-and-comparison.md).

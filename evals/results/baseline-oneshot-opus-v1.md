@@ -1,6 +1,6 @@
 # Letter eval: baseline-oneshot
 
-Engine `oneshot`, strong model `gemini-3.1-pro-preview`, run 2026-10-01T21:02:35. 15 letters (0 failed). Rubric: evals/rubric.md. Grades: `grades-opus.csv`.
+Engine `oneshot`, strong model `gemini-3.1-pro-preview`, run 2026-10-01T21:02:35. 15 letters (0 failed). Rubric: evals/rubric.md. Grades: `grades-opus-v1.csv`.
 
 | Score | Job | Words | em_dash_limit | generic_phrase_limit | within_word_limit | no_placeholders | has_sign_off | supported_musts_covered | no_unsupported_claims | specific_detail | would_send | Pass | Cost | Time |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -52,14 +52,14 @@ Blocking issues plain, warnings in brackets. Sentence stdev: words; under 6 warn
 | Job | Pass | Sentence stdev | Issues (warnings) |
 |---|---|---|---|
 | Software Engineer Graduate | ✗ | 5.93 | banned_phrase, (flat_rhythm), (us_spelling) |
-| Junior-Intermediate Software Engineer | ✗ | 5.1 | banned_phrase, (flat_rhythm), (us_spelling) |
+| Junior-Intermediate Software Engineer | ✗ | 5.1 | banned_phrase, (flat_rhythm), (us_spelling), (gap_led) |
 | Software Engineering Graduate | ✗ | 6.47 | banned_phrase, (us_spelling) |
 | Graduate / Intermediate .NET Developer | ✗ | 6.37 | banned_phrase, (us_spelling) |
 | Software Developer 6 Month Contract | ✓ | 5.58 | (short), (flat_rhythm), (us_spelling) |
 | Software Engineer | ✗ | 7.02 | banned_phrase, (short), (us_spelling) |
 | Graduate LCNC Developer | ✗ | 7.32 | banned_phrase, (us_spelling) |
 | Software Engineer - Business Systems (Automation & | ✗ | 5.25 | banned_phrase, (flat_rhythm) |
-| Junior .Net Developer / I.T Services / 5 Days Onsi | ✗ | 8.76 | banned_phrase, (us_spelling) |
+| Junior .Net Developer / I.T Services / 5 Days Onsi | ✗ | 8.76 | banned_phrase, (us_spelling), (gap_led) |
 | Software engineer | ✗ | 3.95 | banned_phrase, (flat_rhythm), (us_spelling) |
 | AI Developer | ✗ | 5.57 | banned_phrase, (flat_rhythm), (us_spelling) |
 | Front End Developer - React | ✗ | 4.81 | banned_phrase, (flat_rhythm) |
@@ -67,4 +67,4 @@ Blocking issues plain, warnings in brackets. Sentence stdev: words; under 6 warn
 | Frontend Developer | ✗ | 5.14 | banned_phrase, (flat_rhythm), (i_openers) |
 | Graduate AI & Technology Developer | ✗ | 6.99 | banned_phrase, (us_spelling) |
 
-15 letter(s) graded by the blind Opus panel (evals/grading-standard.md); their reasons are in evals/runs/baseline-oneshot/grades-opus.csv (gitignored: they quote the letters).
+15 letter(s) graded by the blind Opus panel (evals/grading-standard.md); their reasons are in evals/runs/baseline-oneshot/grades-opus-v1.csv (gitignored: they quote the letters).
