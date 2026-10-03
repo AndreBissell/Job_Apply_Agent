@@ -60,6 +60,11 @@ sys.path.insert(0, str(ROOT))
 SET_MAX = 15
 SET_MIN_SCORE = 50  # below this, nobody would write a letter — not a useful eval case
 PROFILE_ID = 1  # one profile per DB (CLAUDE.md "TWO ENVIRONMENTS")
+# Daily spend cap for eval.db only (user decision 2026-10-03): a full engine run
+# over the set costs ~$3-4, which the app's $5 default would cut off mid-run.
+# Re-applied on every command because `prepare` rebuilds eval.db from real.db,
+# whose profile carries the app default. real.db's own cap is unchanged.
+EVAL_DAILY_BUDGET_USD = 10.0
 
 _SNAPSHOT_COLUMNS = (
     "source", "source_job_id", "url", "title", "company", "location", "work_type",
@@ -144,6 +149,15 @@ def _build_eval_db(profile_source: Path) -> None:
         db.execute(delete(SavedSearch))
         db.execute(delete(LlmUsage))
         db.commit()
+    _set_eval_budget()
+
+
+def _set_eval_budget() -> None:
+    from app.db import SessionLocal
+    from app.preferences import set_preferences
+
+    with SessionLocal() as db:
+        set_preferences(db, PROFILE_ID, {"llm_daily_budget_usd": EVAL_DAILY_BUDGET_USD})
 
 
 def _migrate_eval_db() -> None:
@@ -153,6 +167,7 @@ def _migrate_eval_db() -> None:
     from alembic.config import Config
 
     command.upgrade(Config(str(ROOT / "alembic.ini")), "head")
+    _set_eval_budget()
 
 
 def _choose_set(scored: list[tuple[str, int]]) -> list[str]:
