@@ -814,11 +814,14 @@ well-prompted Pro call.
 - ~~Q10 Screening~~: ad text only at first; live Quick Apply questions later
   (Phase 9).
 
-**Still open (small, decide while building):**
-- **Q11 Confirm step.** Should `ask_user` show the parsed profile rows for a
+**Decided 2026-10-03 (user):** Q11 = confirm before saving; Q12 = a plain origin tag
+("added while applying to a job"), no job title. See the Decision log.
+
+**Was open:**
+- ~~**Q11 Confirm step.**~~ Should `ask_user` show the parsed profile rows for a
   one-click confirm before saving, or save straight away? Leaning towards
   confirm, because a wrong row becomes evidence everywhere.
-- **Q12 Origin tag.** Mark profile rows created by `ask_user` so the profile
+- ~~**Q12 Origin tag.**~~ Mark profile rows created by `ask_user` so the profile
   editor can show where they came from? This would need a small column on the
   three tables.
 
@@ -915,3 +918,4 @@ well-prompted Pro call.
 | 2026-10-03 | Follow-ups found by panel 3 (not done in 7a): the claims judge passes frequency claims ("daily routine", "daily workflow") and "apply my skills in X" on a listed-only skill. And the writer prompt (workflow-v3, the user's decision to do it after 7a): apply the evidence to this employer's work instead of reciting it, and no stock close | Both engines share the writer, so these apply to whichever ships |
 | 2026-10-03 | Eval spend on 2026-10-03, after 7a: **$14.99** ($12.32 before + agent-v1 $2.67 + a $0.001 schema smoke). eval.db shows $10.11 today (past the $10 warning, under the $20 cap). The three Opus panel agents used no Gemini | Running total |
 | 2026-10-03 | **User decision: `letter_engine` defaults to `agent`**, overriding the recommendation above. The user wants hands-on agent experience (their job next year is in agents), and at ~20 letters a month the agent's overhead is ~$0.26/month and a few minutes of background time. The workflow stays as the fallback engine; both share every tool and guardrail, so the agent can do nothing the workflow couldn't. Phase 7b and 7c are built agent-first: `ask_user` and the resume after the user's answers, re-matching after new profile rows, and the side-output tools are where the orchestrator gets real choices to make | Cost and quality were equal in 7a; the deciding factor is learning value, which is the user's call |
+| 2026-10-03 | **Q11 and Q12 decided (user), for Phase 7b.** Q11: a "Yes" answer is parsed into proposed profile rows that the user sees and confirms with one click before anything is saved; the run stays `waiting_user` until then. Q12: rows created this way get a plain origin tag shown as "added while applying to a job" (a nullable origin column on experiences / skills / qualifications, value e.g. `ask_user`); no job title or job id is stored with it | A wrong row would become evidence in every later letter; the tag lets the profile editor show where a row came from without tying it to a job row that retention may purge |
