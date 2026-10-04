@@ -52,6 +52,8 @@ matches
 job_listings (global pool, scraped once, shared across users)
   |-< job_skills            (extracted required skills, hard/soft)
   |-< matches               (a listing can match many users)
+  |-< job_screening_questions >- screening_questions
+        (the job's Quick Apply questions, in order)   (the question bank: global, no user_id)
 ```
 
 Two halves meet at `matches`: the **profile side** (everything hanging off
@@ -797,6 +799,105 @@ essential count, the three most recent job titles and the date of the "No".
 
 ---
 
+### screening_questions
+
+The **question bank** (plan §10.1, Phase 9). Every employer question the extension
+reads on a Seek Quick Apply "Answer employer questions" step is upserted here, so a
+question seen before is recognised next time with its kind and answering strategy
+already known, and only a genuinely new question ever needs sorting (and, from 9b, a
+model call, once). Questions are not personal data: the bank has **no `user_id`** and
+is shared across users when the app goes multi-user. **Never stored:** what was
+selected or typed (Seek pre-fills answers), the user's name, or anything under
+`[data-adora-mask]`.
+
+**Identity** (`identity_key`, unique):
+
+- `lib:AU_Q_<n>` for a Seek standard-library question (`AU_Q_<n>_V_<v>`, numeric
+  `<n>`). The same `AU_Q_<n>` is the same question on every job (confirmed for
+  `AU_Q_6` and `AU_Q_13`); the version is kept separately in `library_version` (the
+  latest seen), not in the key.
+- `fp:<32 hex>` otherwise: a SHA-256 fingerprint of the normalised text + input type
+  + the sorted normalised option labels (`app/screening/identity.py`). Seek's
+  generated per-role ids (`AU_Q_<32 hex>_V_<v>`) and employer ids (`indirect_...`)
+  are new for every role or questionnaire, so they are **not** identity: they are
+  kept per job on `job_screening_questions.seek_question_id`.
+
+**Sorting** (`kind`, `strategy`, `parameters`, `classified_by`): cheapest first, see
+`app/screening/sort.py`. `kind` is `user` (no AI help, never sent to the LLM),
+`assisted` (relates to the ad) or `unknown` (not sorted yet; layer 5, the model, is
+Phase 9b). `strategy` is `user` for a `user` question, one of `years_role_bracket`,
+`years_skill_text`, `skill_in_role_yes_no`, `skill_multi_select`,
+`free_text_describe` for an `assisted` one, NULL while `unknown`. `parameters` is a
+JSON object: `{"topic": "salary"}` for a `user` question, the role or skill asked
+about for an `assisted` one. `classified_by` is `library_id` / `keyword` / `template`
+/ `model` / `user` (NULL while unsorted). A bank hit reuses the row as it is; only
+an `unknown` row is re-sorted when it is seen again.
+
+**Review** (`status`): `new` until the user confirms or corrects the sorting in the
+review list; then `confirmed`. A correction sets `classified_by = 'user'` and is
+never overwritten by code, and because it lives on the bank row it applies to every
+later job. (Multi-user later: corrections would move to a per-user override table;
+single-user for now, like everything else.)
+
+`times_seen` is the number of distinct jobs whose form had the question (it goes up
+when a new `job_screening_questions` link is made, not on a re-capture of the same
+job). Job purges remove links, never bank rows, so the bank and its counts outlive
+the jobs that taught it.
+
+```sql
+CREATE TABLE screening_questions (
+    id               BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    identity_key     TEXT        NOT NULL UNIQUE,  -- 'lib:AU_Q_6' or 'fp:<32 hex>'
+    library_id       TEXT,                         -- 'AU_Q_6' (Seek library questions only)
+    library_version  TEXT,                         -- '10' (the latest version seen)
+    text             TEXT        NOT NULL,         -- as shown, trimmed
+    normalised_text  TEXT        NOT NULL,
+    input_type       TEXT        NOT NULL,         -- 'single','multi','dropdown','text'
+    options          TEXT,                         -- JSON array of option labels (NULL for text)
+    kind             TEXT        NOT NULL DEFAULT 'unknown',  -- 'user','assisted','unknown'
+    strategy         TEXT,                         -- see above; NULL while unknown
+    parameters       TEXT,                         -- JSON object
+    classified_by    TEXT,                         -- 'library_id','keyword','template','model','user'
+    status           TEXT        NOT NULL DEFAULT 'new',      -- 'new','confirmed'
+    times_seen       INTEGER     NOT NULL DEFAULT 0,          -- distinct jobs
+    first_seen_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_seen_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+
+---
+
+### job_screening_questions
+
+Which bank questions one job's Quick Apply form had, in order. One row per (job,
+question), so re-capturing the same form (the step re-rendering, the user going back
+a step) updates the row instead of adding one. Rows are only added or updated, never
+removed by a capture: a half-rendered form must not delete links.
+
+`seek_question_id` is Seek's id for the question on this form (`AU_Q_6_V_10`,
+`AU_Q_D29E..._V_2`, `indirect_<uuid>_<uuid>`), `field_name` the form field's `name`
+(`questionnaire.<id>`), and `option_values` a JSON array of `{"value", "label"}` in
+form order: option values repeat across questions (`generated_indirect_<uuid>_0` on
+two questions of one form), so they are only meaningful scoped to this question.
+These are ids, never the user's answer.
+
+```sql
+CREATE TABLE job_screening_questions (
+    job_id            BIGINT      NOT NULL REFERENCES job_listings(id) ON DELETE CASCADE,
+    question_id       BIGINT      NOT NULL REFERENCES screening_questions(id) ON DELETE CASCADE,
+    position          INTEGER     NOT NULL,   -- 0-based order on the form
+    seek_question_id  TEXT        NOT NULL,
+    field_name        TEXT        NOT NULL,
+    option_values     TEXT,                   -- JSON [{"value": ..., "label": ...}]
+    first_seen_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_seen_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (job_id, question_id)
+);
+```
+
+---
+
 ## Indexes
 
 Unique constraints above already create implicit indexes (`profiles.email`,
@@ -822,6 +923,8 @@ CREATE INDEX idx_llm_usage_created      ON llm_usage(created_at);          -- da
 CREATE INDEX idx_letter_runs_match      ON letter_runs(match_id);          -- "runs for this match"
 CREATE INDEX idx_letter_runs_status     ON letter_runs(status);            -- waiting_user / answered runs
 CREATE INDEX idx_gap_sightings_seen     ON gap_sightings(seen_at);         -- 90-day window
+CREATE INDEX idx_screening_questions_status ON screening_questions(status); -- the review list
+CREATE INDEX idx_job_screening_questions_question ON job_screening_questions(question_id);  -- "jobs that asked this"
 ```
 
 ---

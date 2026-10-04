@@ -673,6 +673,77 @@ class GapSighting(Base):
 
 
 # ---------------------------------------------------------------------------
+# Quick Apply question bank (plan §10.1, Phase 9)
+# ---------------------------------------------------------------------------
+class ScreeningQuestion(Base):
+    """One employer question from a Seek Quick Apply form, shared across jobs (and
+    users). Identity is ``lib:AU_Q_<n>`` for Seek library questions, else a
+    fingerprint of the normalised text, type and options (app/screening/identity.py).
+    Never holds an answer: Seek pre-fills those, and the extension never reads them."""
+
+    __tablename__ = "screening_questions"
+
+    id: Mapped[int] = mapped_column(BIG_INT_PK, primary_key=True)
+    identity_key: Mapped[str] = mapped_column(Text, nullable=False)
+    library_id: Mapped[str | None] = mapped_column(Text)       # "AU_Q_6"
+    library_version: Mapped[str | None] = mapped_column(Text)  # "10", latest seen
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    normalised_text: Mapped[str] = mapped_column(Text, nullable=False)
+    input_type: Mapped[str] = mapped_column(Text, nullable=False)  # single | multi | dropdown | text
+    options: Mapped[str | None] = mapped_column(Text)  # JSON array of labels
+    kind: Mapped[str] = mapped_column(Text, nullable=False, server_default="unknown")
+    strategy: Mapped[str | None] = mapped_column(Text)
+    parameters: Mapped[str | None] = mapped_column(Text)  # JSON object
+    classified_by: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="new")
+    times_seen: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    first_seen_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    last_seen_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("identity_key", name="uq_screening_questions_identity_key"),
+        Index("idx_screening_questions_status", "status"),
+    )
+
+
+class JobScreeningQuestion(Base):
+    """A bank question on one job's form, in order, with Seek's per-form ids. No
+    relationship on JobListing on purpose: job deletes rely on the DB cascade."""
+
+    __tablename__ = "job_screening_questions"
+
+    job_id: Mapped[int] = mapped_column(
+        BIG_INT_FK, ForeignKey("job_listings.id", ondelete="CASCADE"), primary_key=True
+    )
+    question_id: Mapped[int] = mapped_column(
+        BIG_INT_FK, ForeignKey("screening_questions.id", ondelete="CASCADE"), primary_key=True
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    seek_question_id: Mapped[str] = mapped_column(Text, nullable=False)
+    field_name: Mapped[str] = mapped_column(Text, nullable=False)
+    option_values: Mapped[str | None] = mapped_column(Text)  # JSON [{"value", "label"}]
+    first_seen_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    last_seen_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    question: Mapped["ScreeningQuestion"] = relationship()
+
+    __table_args__ = (
+        Index("idx_job_screening_questions_question", "question_id"),
+    )
+
+
+# ---------------------------------------------------------------------------
 # LLM cost tracking
 # ---------------------------------------------------------------------------
 class LlmUsage(Base):

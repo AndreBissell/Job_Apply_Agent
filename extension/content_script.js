@@ -441,8 +441,299 @@ async function maybeInjectQuickApply(jobId) {
   if (data?.cover_letter?.generated_content) buildQuickApplyPanel(jobId, data);
 }
 
+// ---------------------------------------------------------------------------
+// Quick Apply questions (plan §10.1, Phase 9a). On the "Answer employer questions"
+// step of an apply flow the user opened, read each question's text, type and
+// options and send them to the backend's question bank, then list them in a
+// small overlay with their kind. A pure read of the rendered DOM: no navigation,
+// no clicks, nothing filled in, no request to Seek. Never reads what is checked,
+// selected or typed (Seek pre-fills answers), or anything under [data-adora-mask].
+// Markup per docs/quick-apply-samples.md; unverified on a live page.
+// ---------------------------------------------------------------------------
+const QUESTIONS_HOST_ID = 'seek-assistant-questions-host';
+
+function cleanText(s) {
+  return (s || '').replace(/\s+/g, ' ').trim();
+}
+
+function isMasked(el) {
+  return !!(el && el.closest(SELECTORS.PERSONAL_DATA_MASK));
+}
+
+function labelTextFor(id) {
+  if (!id) return '';
+  const label = document.querySelector(`label[for="${CSS.escape(id)}"]`);
+  return label && !isMasked(label) ? cleanText(label.textContent) : '';
+}
+
+// The progress bar's current step label ("Answer employer questions"), or null.
+function currentApplyStep() {
+  const nav = document.querySelector(SELECTORS.APPLY_PROGRESS_NAV);
+  const step = nav && nav.querySelector(SELECTORS.APPLY_CURRENT_STEP);
+  return step ? cleanText(step.textContent) || null : null;
+}
+
+// Checkboxes have no fieldset or label for the question: its text is the first
+// <strong> in the closest container that holds every input of the group.
+function checkboxQuestionText(inputs) {
+  let box = inputs[0].parentElement;
+  while (box && !(inputs.every((i) => box.contains(i)) && box.querySelector('strong'))) {
+    if (box.tagName === 'FORM') return '';
+    box = box.parentElement;
+  }
+  const strong = box && box.querySelector('strong');
+  return strong && !isMasked(strong) ? cleanText(strong.textContent) : '';
+}
+
+// One question per name="questionnaire.<id>" group, in document order. Option ids
+// come from the value attribute (radios, <option>) or the input id (checkboxes):
+// ids, never the user's answer.
+function parseQuestionnaire() {
+  const groups = new Map();
+  for (const el of document.querySelectorAll(SELECTORS.QUESTION_FIELDS)) {
+    if (isMasked(el)) continue;
+    const name = el.getAttribute('name') || '';
+    if (!name.startsWith(SELECTORS.QUESTION_NAME_PREFIX)) continue;
+    if (!groups.has(name)) groups.set(name, []);
+    groups.get(name).push(el);
+  }
+
+  const questions = [];
+  for (const [name, els] of groups) {
+    const seek_question_id = name.slice(SELECTORS.QUESTION_NAME_PREFIX.length);
+    const first = els[0];
+    const tag = first.tagName.toLowerCase();
+    const type = (first.getAttribute('type') || '').toLowerCase();
+    let input_type;
+    let text = '';
+    let options = [];
+
+    if (tag === 'select') {
+      input_type = 'dropdown';
+      text = labelTextFor(first.id);
+      options = Array.from(first.querySelectorAll('option'))
+        .filter((o) => (o.getAttribute('value') || '') !== '') // blank placeholder
+        .map((o) => ({ value: o.getAttribute('value'), label: cleanText(o.textContent) }));
+    } else if (tag === 'textarea') {
+      input_type = 'text';
+      text = labelTextFor(first.id);
+    } else if (type === 'radio') {
+      input_type = 'single';
+      const legend = first.closest('fieldset')?.querySelector('legend');
+      text = legend && !isMasked(legend) ? cleanText(legend.textContent) : '';
+      options = els.map((r) => ({ value: r.getAttribute('value') || r.id, label: labelTextFor(r.id) }));
+    } else if (type === 'checkbox') {
+      input_type = 'multi';
+      text = checkboxQuestionText(els);
+      options = els.map((c) => ({ value: c.id, label: labelTextFor(c.id) }));
+    } else {
+      // Not seen in the samples (number, date, ...): take the label, treat as text.
+      input_type = 'text';
+      text = labelTextFor(first.id);
+    }
+
+    options = options.filter((o) => o.label);
+    if (!text || (input_type !== 'text' && !options.length)) {
+      console.warn('[SeekAssistant] Could not read question', seek_question_id, '— markup may have changed.');
+      continue;
+    }
+    questions.push({ seek_question_id, field_name: name, text, input_type, options });
+  }
+  return questions;
+}
+
+// The apply page's job title, for the rare case the job was never captured
+// before (the user reached Quick Apply without opening its detail page here).
+function applyPageTitle() {
+  const h1 = document.querySelector(`${SELECTORS.APPLY_JOB_HEADER} h1`) || document.querySelector('h1');
+  const title = h1 && !isMasked(h1) ? cleanText(h1.textContent) : '';
+  return title || (document.title || '').replace(/\s*[|-]\s*SEEK.*$/i, '').trim() || 'Untitled';
+}
+
+async function resolveOrCreateJob(sourceJobId) {
+  const known = await resolveInternalJobId(sourceJobId);
+  if (known) return known;
+  // A stub row (no description): the detail page fills it in on a later visit.
+  const result = await ingest([{
+    source_job_id: sourceJobId,
+    url: `${location.origin}/job/${sourceJobId}`,
+    title: applyPageTitle(),
+    raw_description: null,
+  }]);
+  return result?.job_ids?.[0] ?? null;
+}
+
+async function postScreeningQuestions(jobId, questions, step) {
+  try {
+    const res = await fetch(`${BACKEND}/jobs/${jobId}/screening-questions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ questions, step }),
+    });
+    if (!res.ok) {
+      console.warn('[SeekAssistant] Question capture rejected', res.status, await res.text());
+      return null;
+    }
+    return await res.json();
+  } catch (e) {
+    console.warn('[SeekAssistant] Backend not reachable (is run_api.py running?):', e.message);
+    return null;
+  }
+}
+
+const KIND_LABELS = {
+  user: 'Yours to answer',
+  assisted: 'We’ll help — coming in 9b',
+  unknown: 'New — not sorted yet',
+};
+
+function removeQuestionsPanel() {
+  document.getElementById(QUESTIONS_HOST_ID)?.remove();
+}
+
+function renderQuestionsPanel(questions) {
+  removeQuestionsPanel();
+  const host = document.createElement('div');
+  host.id = QUESTIONS_HOST_ID;
+  host.style.cssText = 'position:fixed;bottom:16px;left:16px;z-index:2147483647;';
+  document.body.appendChild(host);
+  const shadow = host.attachShadow({ mode: 'open' });
+
+  const style = document.createElement('style');
+  style.textContent = `
+    :host { all: initial; }
+    .panel { font-family: -apple-system, Segoe UI, Roboto, sans-serif; font-size: 13px;
+      width: 340px; max-width: calc(100vw - 32px); max-height: 60vh;
+      display: flex; flex-direction: column; background: #fff; border: 1px solid #cbd5e1;
+      border-radius: 10px; box-shadow: 0 4px 20px rgba(0,0,0,0.18); overflow: hidden;
+      color: #1c2330; }
+    .panel.collapsed .body { display: none; }
+    .hdr { display: flex; align-items: center; justify-content: space-between;
+      padding: 8px 10px; background: #2557a7; color: #fff; cursor: pointer; user-select: none; }
+    .hdr strong { font-size: 12px; }
+    .body { padding: 8px 10px; overflow-y: auto; }
+    .summary { font-size: 11px; color: #4b5563; margin-bottom: 6px; }
+    ol { margin: 0; padding-left: 18px; }
+    li { margin: 0 0 8px; }
+    .q { font-size: 12px; line-height: 1.35; }
+    .badge { display: inline-block; margin-top: 3px; font-size: 10px; padding: 1px 6px;
+      border-radius: 9px; border: 1px solid; }
+    .badge.user { color: #374151; border-color: #9ca3af; background: #f3f4f6; }
+    .badge.assisted { color: #065f46; border-color: #10b981; background: #ecfdf5; }
+    .badge.unknown { color: #92400e; border-color: #f59e0b; background: #fffbeb; }
+    .note { font-size: 10px; color: #6b7280; margin-top: 4px; }
+  `;
+  shadow.appendChild(style);
+
+  const panel = document.createElement('div');
+  panel.className = 'panel';
+  const hdr = document.createElement('div');
+  hdr.className = 'hdr';
+  const title = document.createElement('strong');
+  title.textContent = `Employer questions (${questions.length})`;
+  const caret = document.createElement('span');
+  caret.textContent = '▾';
+  hdr.append(title, caret);
+  hdr.addEventListener('click', () => panel.classList.toggle('collapsed'));
+  panel.appendChild(hdr);
+
+  const body = document.createElement('div');
+  body.className = 'body';
+  const counts = { user: 0, assisted: 0, unknown: 0 };
+  for (const q of questions) counts[q.kind in counts ? q.kind : 'unknown'] += 1;
+  const summary = document.createElement('div');
+  summary.className = 'summary';
+  summary.textContent = `${counts.user} yours to answer · ${counts.assisted} we'll help · ${counts.unknown} new`;
+  body.appendChild(summary);
+
+  const list = document.createElement('ol');
+  for (const q of questions) {
+    const kind = q.kind in KIND_LABELS ? q.kind : 'unknown';
+    const li = document.createElement('li');
+    li.dataset.kind = kind;
+    const text = document.createElement('div');
+    text.className = 'q';
+    text.textContent = q.text;
+    const badge = document.createElement('span');
+    badge.className = `badge ${kind}`;
+    const topic = kind === 'user' && q.parameters?.topic ? ` (${q.parameters.topic.replace(/_/g, ' ')})` : '';
+    badge.textContent = KIND_LABELS[kind] + topic;
+    li.append(text, badge);
+    list.appendChild(li);
+  }
+  body.appendChild(list);
+  const note = document.createElement('div');
+  note.className = 'note';
+  note.textContent = 'Nothing is filled in for you. New questions can be sorted in the profile editor.';
+  body.appendChild(note);
+  panel.appendChild(body);
+  shadow.appendChild(panel);
+}
+
+// The apply flow is a single-page app: the steps (and the jump from the detail
+// page into the flow) can change without a page load, so watch the DOM and
+// re-check after it settles. A capture is only sent when what was read changed.
+let lastQuestionsSig = null;
+let applyCheckRunning = false;
+let applyCheckAgain = false;
+
+async function checkApplyStep() {
+  if (applyCheckRunning) { applyCheckAgain = true; return; }
+  applyCheckRunning = true;
+  try {
+    do {
+      applyCheckAgain = false;
+      const sourceJobId = extractApplyJobId(location.pathname);
+      const questions = sourceJobId ? parseQuestionnaire() : [];
+      if (!questions.length) {
+        // Another step, or not an apply page: drop the panel.
+        lastQuestionsSig = null;
+        removeQuestionsPanel();
+        continue;
+      }
+      const sig = `${sourceJobId}|${JSON.stringify(questions)}`;
+      if (sig === lastQuestionsSig) continue;
+      lastQuestionsSig = sig;
+      const jobId = await resolveOrCreateJob(sourceJobId);
+      if (!jobId) { lastQuestionsSig = null; continue; }
+      const result = await postScreeningQuestions(jobId, questions, currentApplyStep());
+      if (!result) { lastQuestionsSig = null; continue; }
+      console.log(`[SeekAssistant] Captured ${questions.length} employer questions for job ${sourceJobId}.`);
+      if (lastQuestionsSig === sig) renderQuestionsPanel(result.questions);
+    } while (applyCheckAgain);
+  } finally {
+    applyCheckRunning = false;
+  }
+}
+
+function startApplyWatcher() {
+  let timer = null;
+  const schedule = () => {
+    clearTimeout(timer);
+    timer = setTimeout(checkApplyStep, 700);
+  };
+  // Our own overlay being added or removed is not a page change.
+  const ownOverlay = (m) => {
+    const nodes = [...m.addedNodes, ...m.removedNodes];
+    return m.type === 'childList' && nodes.length > 0 && nodes.every((n) => n.id === QUESTIONS_HOST_ID);
+  };
+  new MutationObserver((mutations) => {
+    if (mutations.every(ownOverlay)) return;
+    schedule();
+  }).observe(document.documentElement, {
+    childList: true, subtree: true, attributes: true, attributeFilter: ['aria-current'],
+  });
+  schedule();
+}
+
 async function main() {
   const path = window.location.pathname;
+  startApplyWatcher();
+
+  // A Quick Apply page (/job/{id}/apply/...) is not a detail page: it has no
+  // description, and treating it as one would mark the job expired. The watcher
+  // above handles it.
+  if (extractApplyJobId(path)) return;
 
   // Detail page first: a standalone /job/{id} page. Everything else that looks like
   // a results page (Seek uses SEO slugs like /software-engineer-jobs/in-... as well

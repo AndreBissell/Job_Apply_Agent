@@ -757,99 +757,177 @@ budget guard comes in Phase 1.
 | 6 | ✅ **Fixed workflow = baseline** | `workflow.py`: analyze → match → unanswered gaps treated as `leave_out` (evals only; there is no UI yet) → draft → checks → revise ≤2 → finish, with the guardrails. Run evals. **Usable on its own; could ship here** | 5 |
 | 7 | ✅ **Agent + ask_user** (7a ✅ agent + comparison, 2026-10-03; 7b ✅ ask_user + to-work-on list, 2026-10-03 (API only; sidebar card in Phase 8); writer v3 ✅ 2026-10-04 (apply evidence, no stock close; panel unchanged, would_send 0/15); 7c ✅ side outputs, 2026-10-04) | `ask_user` (sidebar question card with Yes + text box / No, answer → profile rows, run resume), `gap_decisions` for remembered "no"s, **the to-work-on list (§5.9): `skill` field on `analyze_job`, `gap_sightings` counter hooked into extraction and letter runs, `GET /gaps/to-work-on`, `gap_report.py`**, side-output tools, tool descriptions, orchestrator prompt, `agent.py`. Run evals and fill in the comparison table. Set the `letter_engine` default from the result | 6 |
 | 8 | ✅ **Integration** (built 2026-10-04; the side-output sections landed with 7c the same day; see the Decision log) | Idle-loop trigger (§6), SSE progress, sidebar: final letter + open issues, "not claimed" list, side-output sections, a "To work on" section in the profile editor (ranked list with counts + clear button, §5.9), Personalise controls (wired like `auto_cover_letter_min_score`: `DEFAULTS` → `PreferencesUpdate` with bounds → `sidebar.js`) | 7 (or 6 if the workflow ships first) |
-| 9 | **Live Quick Apply screening questions** (§10.1; rescoped 2026-10-04) | The content script reads the screening questions on Seek's Quick Apply page the user opened → backend → `answer_screening` answers them → sidebar + Quick-Apply overlay with Copy. **Blocked on** the parked apply-flow detection (a live session the user drives). The other old Phase 9 items moved out: company research, framing/addressing and learn-from-edits to `future_work/`; the "Polish" button is built (Regenerate, Phase 8); Batch API checked and not worth it (§10.2) | 8 + the live apply-flow session |
+| 9 | **Help with the live Quick Apply questions + a question bank** (9a DONE 2026-10-04: capture + bank, no LLM; 9b/9c next) (§10.1; rescoped 2026-10-04 from 5 sampled questionnaires, `docs/quick-apply-samples.md`) | Read the questions on the Quick Apply page the user opened; `user` questions are listed and never sent to the LLM; `assisted` ones get an answering strategy (years from dates, skill in a role, multi-select, free-text draft) with **what the employer wants** beside **what you have**, and wanted-but-missing skills go through the `ask_user` gap memory. Every question is stored in a **question bank**, so a repeat is recognised without a model call and only new ones are classified (once). 9a capture + bank (no LLM), 9b assist, 9c drafts + evals. The other old Phase 9 items moved out: company research, framing/addressing and learn-from-edits to `future_work/`; the "Polish" button is built (Regenerate, Phase 8); Batch API checked and not worth it (§10.2) | 8 |
 
 The baseline and harness come before any agent work on purpose. Without them we
 can't tell whether checks, revisions or an orchestrator beat one
 well-prompted Pro call.
 
-### 10.1 Phase 9: read the live screening questions from Quick Apply
+### 10.1 Phase 9: help with the live Quick Apply questions
 
-**Why.** `answer_screening` (7c) only sees questions written into the ad text
-(Q10): `analyze_job` lifts them into `state.job.screening_questions`, a list of
-strings. On Seek the real questions ("Which of the following statements best
-describes your right to work in Australia?", "How many years' experience do you
-have as a ...?", usually with fixed options) sit inside Seek's Quick Apply flow,
-not in the ad. So today the tool answers nothing for most real applications:
-neither real.db nor the eval set has an ad with screening questions in its text.
+*Rescoped 2026-10-04 (user), revised the same day from 5 real questionnaires (22 questions)
+collected in `docs/quick-apply-samples.md`. That file is the evidence for everything below:
+markup, id families, question kinds. Read it first.*
 
-**Prerequisite: the parked apply-flow detection** (CLAUDE.md, parked
-fast-follow 1; `docs/extension-revamp-plan.md` §5.2). Nobody has seen Seek's
-Quick Apply URL or DOM from this project. It needs a live session in which the
-user opens a real job, clicks Apply / Quick Apply and steps through to the
-questions screen, while the DOM and URLs are inspected. Selectors go into
-`extension/selectors.js` in its existing pattern. **Do not guess selectors,
-URLs or question markup.** Things to find out in that session:
-- the URL pattern(s) of the apply flow, and whether it stays on a host the
-  manifest already matches (`au.seek.com/*`, `www.seek.com.au/*`). If it moves
-  to another host, that is a new `host_permissions` entry and needs the user's
-  OK;
-- whether the questions are on their own step, and how each question's text,
-  type (single choice / multi choice / free text / yes-no) and options are
-  marked up;
-- how to tie the page back to a `job_listings` row (a job id in the URL, or
-  only on the detail page that led there);
-- whether the page has personal data that must not be captured (the user's
-  name, email, CV file name, previous answers Seek pre-fills).
+**Why.** `answer_screening` (7c) only sees questions written into the ad text (Q10). On Seek
+the real questions sit in the Quick Apply flow (`/job/{id}/apply/role-requirements`, step
+"Answer employer questions"). Most are not the app's to answer: 17 of the 22 sampled were
+personal or logistics questions. The rest relate directly to the ad (languages, years in a
+role, a skill "in a role"), and for those the app already has what it needs: the requirements
+checklist cached on the job (`analyze_job`) and the per-requirement evidence (`match_profile`).
 
-**Policy fit.** The content script only reads the DOM of a page the user opened
-and clicked through themselves. No extra navigation, no clicking through steps
-on the user's behalf, no second hop, no calls to Seek's own APIs from the
-extension or the backend, and nothing is submitted or filled in. It sits inside
-the 1-hop rule (CLAUDE.md, Seek access policy) as a pure read.
+**Goal.**
+1. Help with every **`assisted`** question; show **`user`** questions as "yours to answer"
+   and never send them to the LLM.
+2. Keep a **question bank**: every question the extension reads is stored, so a question seen
+   before is recognised next time (by id or text) with its kind and answering strategy already
+   known. Only genuinely new questions cost a model call, and once, not per job.
 
-**Rough flow.**
-1. *Capture.* On a recognised apply-flow page the content script reads each
-   question: text, type, options (in order), and whether it is required. It
-   sends them with the job id to the backend. Read-only; re-sent if the page
-   changes (Seek may render steps without a full page load).
-2. *Endpoint.* A new endpoint (e.g. `POST /jobs/{id}/screening-questions`) or
-   an extension of `/ingest`. Validates and de-duplicates; no LLM call on
-   capture.
-3. *Storage.* On the job (like `requirements_checklist`) or on the run (like
-   `state.side_outputs`); see the open questions. Schema doc first
-   (`docs/database-schema.md`), as always.
-4. *Answering.* `answer_screening` takes the captured questions in place of,
-   or alongside, the ad-text ones. Its rules stay: grounded in the profile with
-   pointers checked in code, "answer this yourself" when the profile doesn't
-   cover it, never invent.
-5. *Display.* The answers appear in the sidebar's screening section (already
-   built, with Copy) and in the Quick-Apply overlay with Copy, ideally on the
-   apply page itself, next to the questions.
+#### The two kinds
 
-**Open design questions (not decided).**
-- **Questions that arrive after the letter run has finished.** The user usually
-  reaches Quick Apply after the letter exists, so this is the normal case, not
-  the edge case. Options: a standalone `answer_screening` call outside a letter
-  run; reopen the finished run and add one side output; or wait for the user to
-  press Regenerate (re-runs the whole letter, ~20c, for a ~1c answer). Each has
-  a different answer to "does the agent decide, or does code just call it?".
-- **Multiple-choice questions.** Must the answer be exactly one of the
-  captured options, checked in code? What happens when no option is honestly
-  supported (pick none and say "answer this yourself", or pick the closest and
-  flag it)? How are "select all that apply" questions handled? Free-text
-  questions keep today's behaviour.
-- **Per job versus per run.** The questions belong to the job (the same for
-  any run), so caching them on the job looks natural, but Seek may change them
-  and the user might apply twice. The answers depend on the profile at the
-  time, so they look per run. Which wins when the ad text and the apply page
-  both have questions: merge, or apply-page only?
-- Smaller: whether capture happens for jobs with no match/letter yet; whether
-  to keep the raw question markup for debugging (and how to keep personal data
-  out of it).
+| Kind | Seen in the samples | What the app does |
+|---|---|---|
+| `user` | work rights (all 5 jobs, Seek's 11-option list or the employer's own wording), salary (4 jobs: bands, single figures or free text), notice period, work arrangement (in office, hours, WFH), how you heard, Indigenous identity, motivation, child-safety legal declarations | Listed as "yours to answer". No AI help; never sent to the LLM |
+| `assisted` | years' experience as a role (dropdown, 2 jobs), "worked in a role which requires C#" (yes/no), "which programming languages are you experienced in" (checkboxes), years with a specific skill (free text, employer-written) | The two views below |
 
-**Verification plan.**
-1. *No cost first.* Playwright with the unpacked extension against a scratch
-   test DB on port 8001 (`run_api.py test`, never real.db), with the apply page
-   served from a saved, scrubbed HTML fixture through request interception (no
-   request reaches Seek) and the LLM stubbed. Check: capture → endpoint →
-   storage, the stored question types and options, the answers rendered with
-   Copy in the sidebar and the overlay, and that no navigation or click is
-   made by the extension.
-2. *One live check the user drives:* the user opens a real Quick Apply flow
-   with the loaded extension pointed at the **test** backend; confirm the
-   questions are captured and answered (one mid-tier `answer_screening` call,
-   about 1c, with the user's OK). Record it in the Decision log.
+#### The two views of an assisted question
+
+1. **What the employer wants** (the best-candidate answer), from the requirements checklist:
+   which options the ad asks for, how much (`importance`), the ad's own words as a quote; for
+   years, any figure the ad states.
+2. **What you have**, from the profile evidence: which options your experience backs, and for
+   years the figure your experience supports.
+
+Per option: **Wanted · you have it** (tick it) / **Wanted · not in your profile** (a gap: ask,
+below) / **You have it** (optional, honest either way) / no label.
+
+**Wanted but missing → ask the user**, through Phase 7b's gap memory (`app/gaps.py`
+`skill_key`, `find_decision`): a remembered "no" shows "you said you don't have this" and isn't
+asked again; otherwise the Yes + text / No card; Yes → proposed rows → confirm (Q11),
+`origin='ask_user'`, labels recompute; No → remembered. Record a gap sighting either way (§5.9).
+
+**Honesty rule (code-enforced).** "Wanted" is information, never advice to claim something.
+"You have it" needs an evidence pointer. Specific beats general: "worked in a **role** requiring
+C#" needs work experience, not a course or a bare skill listing (the letter's `listing_only`
+rule); "React Native with Expo" is not React.js. Years are never rounded up. The app never
+ticks, types or submits anything on Seek's page.
+
+#### Answering strategies (one per assisted question)
+
+| Strategy | Example | Answer comes from |
+|---|---|---|
+| `years_role_bracket` | "How many years' experience do you have as a full stack developer?" (8 fixed brackets: No experience / Less than 1 year / 1, 2, 3, 4, 5 years / More than 5 years) | code: years from the dates of experiences matching the role, merged for overlaps, mapped to a bracket rounding **down** |
+| `years_skill_text` | "How many years of experience … React Native with Expo …?" (free text) | code computes the years for that skill; a short honest sentence (template or mid-tier draft); none → gap |
+| `skill_in_role_yes_no` | "Have you worked in a role which requires C# development experience?" | code: work-experience evidence for the skill → Yes; otherwise gap |
+| `skill_multi_select` | "Which of the following programming languages are you experienced in?" | code: each option → checklist (wanted) and profile (have), via `normalise_skill` |
+| `free_text_describe` | "Describe your experience with SQL" (not seen yet) | `answer_screening` (mid) draft from the same evidence, with Copy |
+| `user` | everything in the `user` row above | nothing |
+
+New strategies get added as the bank shows new question shapes.
+
+#### Sorting a question, cheapest first
+
+1. **Question bank hit.** Seen before (same Seek library id, or same normalised text, type
+   and options) → reuse its kind, strategy and parameters. No model call.
+2. **Seek library id table** in code: `AU_Q_6` work rights, `AU_Q_8` salary, `AU_Q_13`
+   notice → `user`; `AU_Q_136` languages → `skill_multi_select`; `AU_Q_218` C# in a role →
+   `skill_in_role_yes_no`. Confirmed stable across jobs for `AU_Q_6` and `AU_Q_13`.
+3. **`user` keyword filter** on the text, for any wording (S5 asks work rights and salary in
+   its own words): work rights / visa / citizen, salary / pay, notice / start date, office /
+   hours / WFH, how did you hear, Aboriginal / Torres Strait / gender / disability, criminal /
+   findings / compliance / declarations, motivated. Runs before any model call.
+4. **Text templates** for Seek's generated per-role questions (their ids are a 32-hex hash per
+   role, so ids don't repeat): "How many years' experience do you have as (a/an) <role>?",
+   "Have you worked in a role which requires <skill> experience?".
+5. **Small model, once per new question**, for what's left (employer-written technical
+   questions). It returns kind, strategy and parameters (the skill or role asked about); code
+   checks they are words from the question. The result goes into the bank.
+
+#### The question bank (new)
+
+Every captured question is upserted into the bank; questions are not personal data, so the
+bank is shared across users when the app goes multi-user. Never stored: what was selected or
+typed (Seek pre-fills answers), the user's name or anything under `[data-adora-mask]`.
+
+- **Identity:** the Seek library id when there is one (`AU_Q_<n>`, version kept separately),
+  otherwise a fingerprint of normalised text + type + option texts. Generated per-role ids
+  (`AU_Q_<32 hex>`) and employer ids (`indirect_...`) are per job, so they're recorded on the
+  job link, not used as identity.
+- **Stored per question:** text, type, options, kind, strategy, parameters, how it was
+  classified (`library_id` / `keyword` / `template` / `model` / `user`), `status`
+  (`new` → `confirmed` when the user agrees or corrects it), times seen, first/last seen.
+- **Per job:** which bank questions the job's form had, in order, with Seek's field name and
+  option values (option values repeat across questions, so they're scoped by question).
+- **Review:** the sidebar (or the profile editor) lists `new` questions so the user can confirm
+  or correct kind and strategy; a correction is remembered for every later job.
+- **Export:** a script writes the bank to Markdown in the shape of
+  `docs/quick-apply-samples.md`, so the samples doc and the 9c eval set stay current without
+  copy-pasting HTML.
+- Schema: two new tables (e.g. `screening_questions`, `job_screening_questions`), portable as
+  usual. Update `docs/database-schema.md` **first**.
+
+#### Capture (content script; settled by the samples)
+
+Group the `<form>`'s fields by `name="questionnaire.<qid>"`. Radio: `fieldset[role=radiogroup]`
++ `<legend>`; dropdown: `select` + `label[for]`; free text: `textarea` + `label[for]`;
+checkboxes: the first `<strong>` in the container holding the inputs, option ids on the inputs.
+Skip empty-value placeholder options; trim labels; never read `checked`, `selected` or typed
+values. Detect the step with `nav[aria-label="Progress bar"]` + `aria-current="step"`; job id
+from the URL. Class names are generated: never select on them.
+
+**Policy fit.** A pure read of the DOM of a page the user opened and clicked through. No
+navigation, no clicks, no second hop, no calls to Seek's APIs, nothing filled in or submitted
+(CLAUDE.md, Seek access policy). Applications that leave Seek for an employer's site are out of
+scope.
+
+#### Flow
+
+1. *Capture* on the questions step → 2. `POST /jobs/{id}/screening-questions` (validate, upsert
+into the bank, link to the job; no LLM) → 3. *Sort* (bank → id table → keywords → templates →
+model for new ones) → 4. *Assist* (strategies above; gaps → ask) → 5. *Show* in the
+Quick-Apply overlay on the apply page and on the job's card in the sidebar: each question with
+its kind, the two views per option, gap questions, Copy on drafts.
+
+**Decided leanings (revisit if 9a/9b says otherwise).** Runs **outside the letter run** (the
+user reaches Quick Apply after the letter exists). Questions live in the bank and are linked
+**per job**; labels and drafts are **derived** and recomputed when the profile changes. The
+ad-text `answer_screening` path in the letter run stays as is.
+
+**Open questions (decide while building).**
+- Gap questions outside a run: `app/llm/letter/answers.py` takes a `run_id`; a run-less path
+  is needed. Does a "Yes" here also reopen the letter?
+- No honest option on a multiple-choice question: "none fits, answer yourself", or point at
+  the lowest option and flag it?
+- Jobs with no `match_profile` result (below the letter bar): spend ≈ $0.02 to analyse on
+  demand, or free name matching on `job_skills` only?
+- Motivation questions: `user` by default; an opt-in "draft from my cover letter" later?
+- Is `AU_Q_218` (C# in a role) one id per skill or one shared id? A second sample will tell.
+
+#### Steps (each committed, with the user's go-ahead between, as in Phase 7)
+
+- **9a: capture + bank (no LLM).** Selectors, capture, endpoint, the two tables, sorting
+  layers 1–4 (no model), the overlay listing each question with its kind, the review list and
+  the export script. **DONE 2026-10-04** (Decision log): migration
+  `b4d8e2f6a913`; `app/screening/` (`identity.py`, `sort.py`, `bank.py`); `app/api/screening.py`
+  (`POST`/`GET /jobs/{id}/screening-questions`, `GET /screening-questions?status=new`,
+  `PATCH /screening-questions/{id}`); capture + overlay in `content_script.js`; review list in
+  the profile editor; `scripts/export_question_bank.py`; `tests/e2e/quick_apply_e2e.py`.
+- **9b: assist.** Layer 5 (small model, once per new question), the strategies, years from
+  dates, wanted/have labels, the gap → ask path, display.
+- **9c: drafts + evals.** `free_text_describe` / `years_skill_text` drafts through
+  `answer_screening`; an eval set built from the bank (kind accuracy, where a `user` question
+  reaching the model is a failure; strategy accuracy; no "you have it" without evidence).
+
+#### Verification
+
+1. *No cost first:* Playwright with the unpacked extension against a scratch test DB on port
+   8001 (`run_api.py test`, never real.db). The apply page is served from scrubbed fixtures
+   built from the five samples through request interception (no request reaches Seek); the LLM
+   is stubbed. Check capture, bank upserts (a repeat question is recognised, not duplicated),
+   sorting, that `user` questions never reach the stub, labels on a known profile/ad pair, the
+   gap loop, and that the extension makes no navigation or click.
+2. *Eval (9c, small spend with the user's OK).*
+3. *One live check the user drives* against the **test** backend. Record it in the Decision log.
 
 ### 10.2 Batch API for the extract/match backlog: checked 2026-10-04, not worth it
 
@@ -1091,3 +1169,6 @@ practice the guard would only matter if mid-tier work were ever batched.
 | 2026-10-04 | Eval spend on 2026-10-04: **$6.76** (workflow-v3 $3.35 incl. $0.14 re-analysis; agent-v2-side $3.41; the live gap run $0.20, on a scratch copy of real.db). The three Opus panel agents used no Gemini | Running total |
 | 2026-10-04 | **Phase 9 rescoped to one item: read the live screening questions from Seek's Quick Apply page** (§10.1). Blocked on the parked apply-flow detection, a live session the user drives; selectors are not guessed. Open questions named, not decided: questions arriving after the run has finished, multiple-choice answers, per-job vs per-run storage. The other old Phase 9 items moved out so nothing is lost: `research_company` → `future_work/research-company.md`; "hiring manager" framing/addressing → `future_work/letter-framing-and-addressing.md`; learn-from-edits style notes → `future_work/learn-from-edits.md` (own files, not folded into the voice toggle: each has its own trigger and data source); the "Polish" button is already built (Regenerate, Phase 8 design choice 6) | Wording work is put off (2026-10-04 decision); the screening item is the only one with a concrete user-facing gap |
 | 2026-10-04 | **Vertex batch inference checked: possible, not worth it; not built** (§10.2, sources there). All three of our models are supported, the Pro *preview* included; 50% off; works on the `global` endpoint; JSONL in Cloud Storage or BigQuery; most jobs finish within 24 h of starting, plus up to 72 h queueing; 200k requests / 1 GB per job; no predefined quota. The trial credit covers Vertex and Cloud Storage (inferred: only AI Studio and partner MaaS are excluded). The Developer API Batch API is irrelevant (needs an API key; the trial credit can't pay for it). Saving at our volume: extract + match ≈ $0.0022/job (eval.db `llm_usage`), so ≈ $0.0011/job, ≈ $4 over the trial at the §9 envelope. Letters can't be batched (multi-step, latency). **Unverified:** whether the org's policies allow the bucket; whether `responseSchema` / `thinkingConfig` carry over in batch requests. Revisit for multi-user volume or a bulk re-score after a profile change | The saving is trivial next to the 24 h lag on scores and the new moving parts (bucket, poller, result mapping) |
+| 2026-10-04 | **Phase 9 scope readjusted (user): help with the Quick Apply questions, not just answer them.** Each question is `user` (personal, legal, demographic or logistics: work rights, identity, salary, how you heard; motivation by default; no AI help, never sent to the LLM) or `assisted` (relates to the ad: languages, frameworks, years of experience). Assisted questions show what the employer wants (requirements checklist) beside what the user has (profile evidence); wanted-but-missing options go through the `ask_user` gap memory (ask once, remember the no). Leaning: runs outside the letter run, questions stored per job, labels derived. Split into 9a capture / 9b assist / 9c drafts + evals. Waits on the live session for the DOM | Most Seek questions aren't the app's to answer; the useful help is showing which options the ad wants and which the profile honestly backs |
+| 2026-10-04 | **Phase 9 revised from 5 real Quick Apply questionnaires (22 questions; `docs/quick-apply-samples.md`).** 17 of 22 were `user` (work rights on all 5 jobs). Sorting runs cheapest first: question bank → Seek library id table (`AU_Q_<n>`, stable across jobs) → `user` keyword filter (employers also ask work rights and salary in their own words) → templates for Seek's generated per-role questions (32-hex ids, new per role) → small model once per genuinely new question. Assisted questions get a strategy (`years_role_bracket`, `years_skill_text`, `skill_in_role_yes_no`, `skill_multi_select`, `free_text_describe`). **User decision: absorb every new question into a question bank** (two new tables; schema doc first) so the app learns how to answer it next time; never store selected or typed answers. The live-session prerequisite is met for the questions step (markup settled from the samples) | The bank turns a per-job model call into a one-off per question, and builds the 9c eval set as a side effect |
+| 2026-10-04 | **Phase 9a built: capture + question bank, no LLM.** Two tables (`screening_questions`: global bank, identity `lib:AU_Q_<n>` or `fp:<32 hex>` over normalised text + type + sorted option labels, kind/strategy/parameters/classified_by, status new→confirmed, `times_seen` = distinct jobs; `job_screening_questions`: per job, form order, Seek's per-form id, field name, option values; only added/updated, never removed by a capture), migration `b4d8e2f6a913`, schema doc first. Sorting layers 2–4 in `app/screening/sort.py` (library table `AU_Q_6/8/13` user, `AU_Q_136` multi-select, `AU_Q_218` skill-in-role; `user` keyword topics work_rights / identity / legal / salary / notice / work_arrangement / source / motivation, deliberately specific so "office manager" or "Microsoft Office" don't trip them; templates "years' experience as <role>" with options and "worked in a role which requires <skill> experience"). A bank row is only re-sorted while `unknown`; a user correction (`classified_by='user'`) is never overwritten. **All 22 sampled questions sort as the samples doc records**: 21 sorted (17 user, 4 assisted), S5's React Native years question left `unknown` for 9b's model. Content script: an apply page (`/job/{id}/apply/...`) no longer runs the detail-page branch (before, a Quick Apply visit could have marked the job **expired**, since it has no description); a debounced MutationObserver re-reads the step on single-page changes and only posts when what it read changed; a job never captured gets a stub row from the header `<h1>`. Overlay bottom-left lists each question as "Yours to answer (topic)" / "We'll help — coming in 9b" / "New — not sorted yet". Review list in the profile editor (Confirm, or correct kind/strategy). `scripts/export_question_bank.py` writes the bank in the samples doc's shape. `run_api.py test --db <file>` for scratch DBs. **Verified:** 1261 tests (135 new); Playwright with the unpacked extension against a scratch DB on `run_api.py test` (port 8001, `LLM_PROVIDER=stub`), pages built from the scrubbed samples via request interception: 56/56 checks (kinds in the overlay, 18 bank rows for 22 questions, repeat visit adds nothing, SPA step changes, no click/input/change/submit event, no navigation, no pre-filled answer or masked text stored, no LLM row, no request left the machine). **Finding:** Chromium 148 blocked the content script's fetch to localhost (Local Network Access) until the harness disabled that check; the user's own Chrome may show a one-time "access devices on your local network" prompt on Seek. **Not verified (needs the live check the user drives):** the real Seek markup through the extension, the step-change behaviour on Seek's real SPA, the header `<h1>`, and the review list's use in practice | The bank is the 9b/9c groundwork; sorting needs no model for 21/22 samples |

@@ -30,10 +30,30 @@ const SELECTORS = {
   DETAIL_COMPANY:   '[data-automation="advertiser-name"]',
   DETAIL_LOCATION:  '[data-automation="job-detail-location"]',
   DETAIL_WORK_TYPE: '[data-automation="job-detail-work-type"]',
+
+  // Quick Apply "Answer employer questions" step (/job/{id}/apply/role-requirements).
+  // Settled from 5 outerHTML samples the user copied from their own browser
+  // (docs/quick-apply-samples.md), NOT yet seen by the extension on a live page.
+  // Read-only: the extension never clicks, fills or submits anything here.
+  APPLY_PROGRESS_NAV:   'nav[aria-label="Progress bar"]',
+  APPLY_CURRENT_STEP:   '[aria-current="step"]',
+  APPLY_JOB_HEADER:     '[data-automation="job-header"]',
+  // Every answer field is name="questionnaire.<questionId>"; group by name.
+  QUESTION_FIELDS:      '[name^="questionnaire."]',
+  QUESTION_NAME_PREFIX: 'questionnaire.',
+  // Seek's own session-replay mask (the user's name in the header): never read.
+  PERSONAL_DATA_MASK:   '[data-adora-mask]',
 };
 
 // Extract the Seek numeric job id from a /job/{id} href or path.
 function extractJobId(href) {
   const match = href && href.match(/\/job\/(\d+)/);
+  return match ? match[1] : null;
+}
+
+// The job id of a Quick Apply page (/job/{id}/apply/...), else null. The id is in
+// the URL only; the questions markup doesn't carry it.
+function extractApplyJobId(path) {
+  const match = path && path.match(/^\/job\/(\d+)\/apply(?:\/|$)/);
   return match ? match[1] : null;
 }

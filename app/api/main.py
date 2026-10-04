@@ -40,6 +40,7 @@ from sqlalchemy.orm import Session, selectinload
 from app import retention, search_suggest
 from app.api.letters import router as letters_router
 from app.api.profile_ui import router as profile_ui_router
+from app.api.screening import router as screening_router
 from app.db import SessionLocal, app_env
 from app.llm import search_refine
 from app.llm import usage as llm_usage
@@ -340,6 +341,7 @@ app.add_middleware(
 
 app.include_router(profile_ui_router)
 app.include_router(letters_router)
+app.include_router(screening_router)
 
 _static_dir = Path(__file__).parent.parent / "static"
 app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")

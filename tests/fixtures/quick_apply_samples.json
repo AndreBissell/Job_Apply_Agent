@@ -1,0 +1,1034 @@
+{
+ "_note": "The 22 questions of docs/quick-apply-samples.md (S1-S5), scrubbed: question/option ids are made up in each id family's real shape (S5 option values repeat across questions, as on the real form); S2-S5 job ids, titles and employers are made up; S2's languages list is the 10 known options (the paste was cut off); S2's salary list is illustrative. 'expected' is the kind recorded in the samples doc; kind 'unknown' = needs the model (Phase 9b).",
+ "samples": [
+  {
+   "id": "S1",
+   "job_id": "94904230",
+   "title": "IT Trainee",
+   "company": "ATSICHS Brisbane",
+   "questions": [
+    {
+     "seek_question_id": "indirect_3f6c2a10-8b1e-4c55-9d2a-0a1b2c3d4e5f_0",
+     "text": "Are you legally entitled to work in Australia?",
+     "input_type": "single",
+     "options": [
+      {
+       "value": "generated_indirect_3f6c2a10-8b1e-4c55-9d2a-0a1b2c3d4e5f_0",
+       "label": "Yes"
+      },
+      {
+       "value": "generated_indirect_3f6c2a10-8b1e-4c55-9d2a-0a1b2c3d4e5f_1",
+       "label": "No"
+      }
+     ],
+     "expected": {
+      "kind": "user",
+      "strategy": "user",
+      "classified_by": "keyword",
+      "parameters": {
+       "topic": "work_rights"
+      }
+     },
+     "field_name": "questionnaire.indirect_3f6c2a10-8b1e-4c55-9d2a-0a1b2c3d4e5f_0"
+    },
+    {
+     "seek_question_id": "indirect_3f6c2a10-8b1e-4c55-9d2a-0a1b2c3d4e5f_1",
+     "text": "Do you identify as Aboriginal or Torres Strait Islander?",
+     "input_type": "single",
+     "options": [
+      {
+       "value": "generated_indirect_3f6c2a10-8b1e-4c55-9d2a-0a1b2c3d4e5f_0",
+       "label": "Yes, Aboriginal"
+      },
+      {
+       "value": "generated_indirect_3f6c2a10-8b1e-4c55-9d2a-0a1b2c3d4e5f_1",
+       "label": "Yes, Torres Strait Islander"
+      },
+      {
+       "value": "generated_indirect_3f6c2a10-8b1e-4c55-9d2a-0a1b2c3d4e5f_2",
+       "label": "Both Aboriginal and Torres Strait Islander"
+      },
+      {
+       "value": "generated_indirect_3f6c2a10-8b1e-4c55-9d2a-0a1b2c3d4e5f_3",
+       "label": "Neither Aboriginal and Torres Strait Islander"
+      },
+      {
+       "value": "generated_indirect_3f6c2a10-8b1e-4c55-9d2a-0a1b2c3d4e5f_4",
+       "label": "Prefer Not To Say"
+      }
+     ],
+     "expected": {
+      "kind": "user",
+      "strategy": "user",
+      "classified_by": "keyword",
+      "parameters": {
+       "topic": "identity"
+      }
+     },
+     "field_name": "questionnaire.indirect_3f6c2a10-8b1e-4c55-9d2a-0a1b2c3d4e5f_1"
+    },
+    {
+     "seek_question_id": "indirect_3f6c2a10-8b1e-4c55-9d2a-0a1b2c3d4e5f_2",
+     "text": "What motivated you to apply for this position?",
+     "input_type": "text",
+     "options": [],
+     "expected": {
+      "kind": "user",
+      "strategy": "user",
+      "classified_by": "keyword",
+      "parameters": {
+       "topic": "motivation"
+      }
+     },
+     "field_name": "questionnaire.indirect_3f6c2a10-8b1e-4c55-9d2a-0a1b2c3d4e5f_2"
+    },
+    {
+     "seek_question_id": "indirect_3f6c2a10-8b1e-4c55-9d2a-0a1b2c3d4e5f_3",
+     "text": "Please provide your salary expectations:",
+     "input_type": "dropdown",
+     "options": [
+      {
+       "value": "generated_indirect_3f6c2a10-8b1e-4c55-9d2a-0a1b2c3d4e5f_0",
+       "label": "$40,000 - $60,000"
+      },
+      {
+       "value": "generated_indirect_3f6c2a10-8b1e-4c55-9d2a-0a1b2c3d4e5f_1",
+       "label": "$60,000 - $80,000"
+      },
+      {
+       "value": "generated_indirect_3f6c2a10-8b1e-4c55-9d2a-0a1b2c3d4e5f_2",
+       "label": "$80,000 - $100,000"
+      },
+      {
+       "value": "generated_indirect_3f6c2a10-8b1e-4c55-9d2a-0a1b2c3d4e5f_3",
+       "label": "$100,000 - $120,000"
+      },
+      {
+       "value": "generated_indirect_3f6c2a10-8b1e-4c55-9d2a-0a1b2c3d4e5f_4",
+       "label": "$120,000 - $140,000"
+      },
+      {
+       "value": "generated_indirect_3f6c2a10-8b1e-4c55-9d2a-0a1b2c3d4e5f_5",
+       "label": "$140,000 - $160,000"
+      },
+      {
+       "value": "generated_indirect_3f6c2a10-8b1e-4c55-9d2a-0a1b2c3d4e5f_6",
+       "label": "$160,000 - $180,000"
+      },
+      {
+       "value": "generated_indirect_3f6c2a10-8b1e-4c55-9d2a-0a1b2c3d4e5f_7",
+       "label": "$180,000 - $200,000"
+      }
+     ],
+     "expected": {
+      "kind": "user",
+      "strategy": "user",
+      "classified_by": "keyword",
+      "parameters": {
+       "topic": "salary"
+      }
+     },
+     "field_name": "questionnaire.indirect_3f6c2a10-8b1e-4c55-9d2a-0a1b2c3d4e5f_3"
+    },
+    {
+     "seek_question_id": "indirect_3f6c2a10-8b1e-4c55-9d2a-0a1b2c3d4e5f_4",
+     "text": "How did you hear about this job?",
+     "input_type": "dropdown",
+     "options": [
+      {
+       "value": "generated_indirect_3f6c2a10-8b1e-4c55-9d2a-0a1b2c3d4e5f_0",
+       "label": "Seek advertisement"
+      },
+      {
+       "value": "generated_indirect_3f6c2a10-8b1e-4c55-9d2a-0a1b2c3d4e5f_1",
+       "label": "Linkedin advertisement"
+      },
+      {
+       "value": "generated_indirect_3f6c2a10-8b1e-4c55-9d2a-0a1b2c3d4e5f_2",
+       "label": "LinkedIn post from a connection"
+      },
+      {
+       "value": "generated_indirect_3f6c2a10-8b1e-4c55-9d2a-0a1b2c3d4e5f_3",
+       "label": "ATSICHS Brisbane website"
+      },
+      {
+       "value": "generated_indirect_3f6c2a10-8b1e-4c55-9d2a-0a1b2c3d4e5f_4",
+       "label": "Facebook"
+      },
+      {
+       "value": "generated_indirect_3f6c2a10-8b1e-4c55-9d2a-0a1b2c3d4e5f_5",
+       "label": "Community event"
+      },
+      {
+       "value": "generated_indirect_3f6c2a10-8b1e-4c55-9d2a-0a1b2c3d4e5f_6",
+       "label": "Careers event"
+      },
+      {
+       "value": "generated_indirect_3f6c2a10-8b1e-4c55-9d2a-0a1b2c3d4e5f_7",
+       "label": "Job seeker agency"
+      },
+      {
+       "value": "generated_indirect_3f6c2a10-8b1e-4c55-9d2a-0a1b2c3d4e5f_8",
+       "label": "ATSICHS Brisbane Email Notification"
+      }
+     ],
+     "expected": {
+      "kind": "user",
+      "strategy": "user",
+      "classified_by": "keyword",
+      "parameters": {
+       "topic": "source"
+      }
+     },
+     "field_name": "questionnaire.indirect_3f6c2a10-8b1e-4c55-9d2a-0a1b2c3d4e5f_4"
+    },
+    {
+     "seek_question_id": "indirect_3f6c2a10-8b1e-4c55-9d2a-0a1b2c3d4e5f_5",
+     "text": "Have there been any findings against you in relation to allegations of inappropriate behaviour with respect to children/young people in your past or current employment?",
+     "input_type": "single",
+     "options": [
+      {
+       "value": "generated_indirect_3f6c2a10-8b1e-4c55-9d2a-0a1b2c3d4e5f_0",
+       "label": "Yes"
+      },
+      {
+       "value": "generated_indirect_3f6c2a10-8b1e-4c55-9d2a-0a1b2c3d4e5f_1",
+       "label": "No"
+      }
+     ],
+     "expected": {
+      "kind": "user",
+      "strategy": "user",
+      "classified_by": "keyword",
+      "parameters": {
+       "topic": "legal"
+      }
+     },
+     "field_name": "questionnaire.indirect_3f6c2a10-8b1e-4c55-9d2a-0a1b2c3d4e5f_5"
+    },
+    {
+     "seek_question_id": "indirect_3f6c2a10-8b1e-4c55-9d2a-0a1b2c3d4e5f_6",
+     "text": "Are you aware of any compliance action under the National Law or any other law in relation to you that pertains to inappropriate behaviour with respect to children?",
+     "input_type": "single",
+     "options": [
+      {
+       "value": "generated_indirect_3f6c2a10-8b1e-4c55-9d2a-0a1b2c3d4e5f_0",
+       "label": "Yes"
+      },
+      {
+       "value": "generated_indirect_3f6c2a10-8b1e-4c55-9d2a-0a1b2c3d4e5f_1",
+       "label": "No"
+      }
+     ],
+     "expected": {
+      "kind": "user",
+      "strategy": "user",
+      "classified_by": "keyword",
+      "parameters": {
+       "topic": "legal"
+      }
+     },
+     "field_name": "questionnaire.indirect_3f6c2a10-8b1e-4c55-9d2a-0a1b2c3d4e5f_6"
+    }
+   ]
+  },
+  {
+   "id": "S2",
+   "job_id": "94900002",
+   "title": "Full Stack Developer",
+   "company": "Barrington Group Australia Pty Ltd",
+   "questions": [
+    {
+     "seek_question_id": "AU_Q_6_V_10",
+     "text": "Which of the following statements best describes your right to work in Australia?",
+     "input_type": "dropdown",
+     "options": [
+      {
+       "value": "AU_Q_6_V_10_A_1000",
+       "label": "I'm an Australian citizen"
+      },
+      {
+       "value": "AU_Q_6_V_10_A_1001",
+       "label": "I'm a permanent resident and/or NZ citizen"
+      },
+      {
+       "value": "AU_Q_6_V_10_A_1002",
+       "label": "I have a family/partner visa with no restrictions"
+      },
+      {
+       "value": "AU_Q_6_V_10_A_1003",
+       "label": "I have a graduate temporary work visa"
+      },
+      {
+       "value": "AU_Q_6_V_10_A_1004",
+       "label": "I have a holiday temporary work visa"
+      },
+      {
+       "value": "AU_Q_6_V_10_A_1005",
+       "label": "I have a temporary visa with restrictions on work location (e.g. skilled regional visa 491)"
+      },
+      {
+       "value": "AU_Q_6_V_10_A_1006",
+       "label": "I have a temporary protection or safe haven enterprise work visa"
+      },
+      {
+       "value": "AU_Q_6_V_10_A_1007",
+       "label": "I have a temporary visa with no restrictions (e.g. doctoral student)"
+      },
+      {
+       "value": "AU_Q_6_V_10_A_1008",
+       "label": "I have a temporary visa with restrictions on work hours (e.g. student visa, retirement visa)"
+      },
+      {
+       "value": "AU_Q_6_V_10_A_1009",
+       "label": "I have a temporary visa with restrictions on industry (e.g. temporary activity visa 408)"
+      },
+      {
+       "value": "AU_Q_6_V_10_A_1010",
+       "label": "I require sponsorship to work for a new employer (e.g. 482, 457)"
+      }
+     ],
+     "expected": {
+      "kind": "user",
+      "strategy": "user",
+      "classified_by": "library_id",
+      "parameters": {
+       "topic": "work_rights"
+      }
+     },
+     "field_name": "questionnaire.AU_Q_6_V_10"
+    },
+    {
+     "seek_question_id": "AU_Q_6804_V_4",
+     "text": "How many years' experience do you have as a full stack developer?",
+     "input_type": "dropdown",
+     "options": [
+      {
+       "value": "AU_Q_6804_V_4_A_2000",
+       "label": "No experience"
+      },
+      {
+       "value": "AU_Q_6804_V_4_A_2001",
+       "label": "Less than 1 year"
+      },
+      {
+       "value": "AU_Q_6804_V_4_A_2002",
+       "label": "1 year"
+      },
+      {
+       "value": "AU_Q_6804_V_4_A_2003",
+       "label": "2 years"
+      },
+      {
+       "value": "AU_Q_6804_V_4_A_2004",
+       "label": "3 years"
+      },
+      {
+       "value": "AU_Q_6804_V_4_A_2005",
+       "label": "4 years"
+      },
+      {
+       "value": "AU_Q_6804_V_4_A_2006",
+       "label": "5 years"
+      },
+      {
+       "value": "AU_Q_6804_V_4_A_2007",
+       "label": "More than 5 years"
+      }
+     ],
+     "expected": {
+      "kind": "assisted",
+      "strategy": "years_role_bracket",
+      "classified_by": "template",
+      "parameters": {
+       "role": "full stack developer"
+      }
+     },
+     "field_name": "questionnaire.AU_Q_6804_V_4"
+    },
+    {
+     "seek_question_id": "AU_Q_218_V_2",
+     "text": "Have you worked in a role which requires C# development experience?",
+     "input_type": "single",
+     "options": [
+      {
+       "value": "AU_Q_218_V_2_A_3000",
+       "label": "Yes"
+      },
+      {
+       "value": "AU_Q_218_V_2_A_3001",
+       "label": "No"
+      }
+     ],
+     "expected": {
+      "kind": "assisted",
+      "strategy": "skill_in_role_yes_no",
+      "classified_by": "library_id",
+      "parameters": {
+       "skill": "C#",
+       "phrase": "C# development"
+      }
+     },
+     "field_name": "questionnaire.AU_Q_218_V_2"
+    },
+    {
+     "seek_question_id": "AU_Q_8_V_2",
+     "text": "What's your expected annual base salary?",
+     "input_type": "dropdown",
+     "options": [
+      {
+       "value": "AU_Q_8_V_2_A_4000",
+       "label": "$30k"
+      },
+      {
+       "value": "AU_Q_8_V_2_A_4001",
+       "label": "$35k"
+      },
+      {
+       "value": "AU_Q_8_V_2_A_4002",
+       "label": "$40k"
+      },
+      {
+       "value": "AU_Q_8_V_2_A_4003",
+       "label": "$45k"
+      },
+      {
+       "value": "AU_Q_8_V_2_A_4004",
+       "label": "$50k"
+      },
+      {
+       "value": "AU_Q_8_V_2_A_4005",
+       "label": "$55k"
+      },
+      {
+       "value": "AU_Q_8_V_2_A_4006",
+       "label": "$60k"
+      },
+      {
+       "value": "AU_Q_8_V_2_A_4007",
+       "label": "$65k"
+      },
+      {
+       "value": "AU_Q_8_V_2_A_4008",
+       "label": "$70k"
+      },
+      {
+       "value": "AU_Q_8_V_2_A_4009",
+       "label": "$75k"
+      },
+      {
+       "value": "AU_Q_8_V_2_A_4010",
+       "label": "$80k"
+      },
+      {
+       "value": "AU_Q_8_V_2_A_4011",
+       "label": "$85k"
+      },
+      {
+       "value": "AU_Q_8_V_2_A_4012",
+       "label": "$90k"
+      },
+      {
+       "value": "AU_Q_8_V_2_A_4013",
+       "label": "$95k"
+      },
+      {
+       "value": "AU_Q_8_V_2_A_4014",
+       "label": "$100k"
+      },
+      {
+       "value": "AU_Q_8_V_2_A_4015",
+       "label": "$110k"
+      },
+      {
+       "value": "AU_Q_8_V_2_A_4016",
+       "label": "$120k"
+      },
+      {
+       "value": "AU_Q_8_V_2_A_4017",
+       "label": "$130k"
+      },
+      {
+       "value": "AU_Q_8_V_2_A_4018",
+       "label": "$140k"
+      },
+      {
+       "value": "AU_Q_8_V_2_A_4019",
+       "label": "$150k"
+      },
+      {
+       "value": "AU_Q_8_V_2_A_4020",
+       "label": "$170k"
+      },
+      {
+       "value": "AU_Q_8_V_2_A_4021",
+       "label": "$200k"
+      },
+      {
+       "value": "AU_Q_8_V_2_A_4022",
+       "label": "$250k"
+      },
+      {
+       "value": "AU_Q_8_V_2_A_4023",
+       "label": "$300k"
+      },
+      {
+       "value": "AU_Q_8_V_2_A_4024",
+       "label": "$350k"
+      },
+      {
+       "value": "AU_Q_8_V_2_A_4025",
+       "label": "$350k+"
+      }
+     ],
+     "expected": {
+      "kind": "user",
+      "strategy": "user",
+      "classified_by": "library_id",
+      "parameters": {
+       "topic": "salary"
+      }
+     },
+     "field_name": "questionnaire.AU_Q_8_V_2"
+    },
+    {
+     "seek_question_id": "AU_Q_13_V_2",
+     "text": "How much notice are you required to give your current employer?",
+     "input_type": "dropdown",
+     "options": [
+      {
+       "value": "AU_Q_13_V_2_A_5000",
+       "label": "None, I'm ready to go now"
+      },
+      {
+       "value": "AU_Q_13_V_2_A_5001",
+       "label": "1 week"
+      },
+      {
+       "value": "AU_Q_13_V_2_A_5002",
+       "label": "2 weeks"
+      },
+      {
+       "value": "AU_Q_13_V_2_A_5003",
+       "label": "3 weeks"
+      },
+      {
+       "value": "AU_Q_13_V_2_A_5004",
+       "label": "4 weeks"
+      },
+      {
+       "value": "AU_Q_13_V_2_A_5005",
+       "label": "5 weeks"
+      },
+      {
+       "value": "AU_Q_13_V_2_A_5006",
+       "label": "6 or more weeks"
+      }
+     ],
+     "expected": {
+      "kind": "user",
+      "strategy": "user",
+      "classified_by": "library_id",
+      "parameters": {
+       "topic": "notice"
+      }
+     },
+     "field_name": "questionnaire.AU_Q_13_V_2"
+    },
+    {
+     "seek_question_id": "AU_Q_136_V_3",
+     "text": "Which of the following programming languages are you experienced in?",
+     "input_type": "multi",
+     "options": [
+      {
+       "value": "AU_Q_136_V_3_A_27295",
+       "label": "JavaScript"
+      },
+      {
+       "value": "AU_Q_136_V_3_A_27296",
+       "label": "HTML"
+      },
+      {
+       "value": "AU_Q_136_V_3_A_27297",
+       "label": "CSS"
+      },
+      {
+       "value": "AU_Q_136_V_3_A_27298",
+       "label": "Java"
+      },
+      {
+       "value": "AU_Q_136_V_3_A_27299",
+       "label": "C"
+      },
+      {
+       "value": "AU_Q_136_V_3_A_27300",
+       "label": "C#"
+      },
+      {
+       "value": "AU_Q_136_V_3_A_27301",
+       "label": "Python"
+      },
+      {
+       "value": "AU_Q_136_V_3_A_27302",
+       "label": "C++"
+      },
+      {
+       "value": "AU_Q_136_V_3_A_27303",
+       "label": ".NET"
+      },
+      {
+       "value": "AU_Q_136_V_3_A_27304",
+       "label": "Objective-C"
+      }
+     ],
+     "expected": {
+      "kind": "assisted",
+      "strategy": "skill_multi_select",
+      "classified_by": "library_id",
+      "parameters": {
+       "options_are": "skills"
+      }
+     },
+     "field_name": "questionnaire.AU_Q_136_V_3"
+    }
+   ]
+  },
+  {
+   "id": "S3",
+   "job_id": "94900003",
+   "title": "Software Developer",
+   "company": "Example Employer A",
+   "questions": [
+    {
+     "seek_question_id": "AU_Q_6_V_10",
+     "text": "Which of the following statements best describes your right to work in Australia?",
+     "input_type": "dropdown",
+     "options": [
+      {
+       "value": "AU_Q_6_V_10_A_1000",
+       "label": "I'm an Australian citizen"
+      },
+      {
+       "value": "AU_Q_6_V_10_A_1001",
+       "label": "I'm a permanent resident and/or NZ citizen"
+      },
+      {
+       "value": "AU_Q_6_V_10_A_1002",
+       "label": "I have a family/partner visa with no restrictions"
+      },
+      {
+       "value": "AU_Q_6_V_10_A_1003",
+       "label": "I have a graduate temporary work visa"
+      },
+      {
+       "value": "AU_Q_6_V_10_A_1004",
+       "label": "I have a holiday temporary work visa"
+      },
+      {
+       "value": "AU_Q_6_V_10_A_1005",
+       "label": "I have a temporary visa with restrictions on work location (e.g. skilled regional visa 491)"
+      },
+      {
+       "value": "AU_Q_6_V_10_A_1006",
+       "label": "I have a temporary protection or safe haven enterprise work visa"
+      },
+      {
+       "value": "AU_Q_6_V_10_A_1007",
+       "label": "I have a temporary visa with no restrictions (e.g. doctoral student)"
+      },
+      {
+       "value": "AU_Q_6_V_10_A_1008",
+       "label": "I have a temporary visa with restrictions on work hours (e.g. student visa, retirement visa)"
+      },
+      {
+       "value": "AU_Q_6_V_10_A_1009",
+       "label": "I have a temporary visa with restrictions on industry (e.g. temporary activity visa 408)"
+      },
+      {
+       "value": "AU_Q_6_V_10_A_1010",
+       "label": "I require sponsorship to work for a new employer (e.g. 482, 457)"
+      }
+     ],
+     "expected": {
+      "kind": "user",
+      "strategy": "user",
+      "classified_by": "library_id",
+      "parameters": {
+       "topic": "work_rights"
+      }
+     },
+     "field_name": "questionnaire.AU_Q_6_V_10"
+    },
+    {
+     "seek_question_id": "AU_Q_13_V_2",
+     "text": "How much notice are you required to give your current employer?",
+     "input_type": "dropdown",
+     "options": [
+      {
+       "value": "AU_Q_13_V_2_A_5000",
+       "label": "None, I'm ready to go now"
+      },
+      {
+       "value": "AU_Q_13_V_2_A_5001",
+       "label": "1 week"
+      },
+      {
+       "value": "AU_Q_13_V_2_A_5002",
+       "label": "2 weeks"
+      },
+      {
+       "value": "AU_Q_13_V_2_A_5003",
+       "label": "3 weeks"
+      },
+      {
+       "value": "AU_Q_13_V_2_A_5004",
+       "label": "4 weeks"
+      },
+      {
+       "value": "AU_Q_13_V_2_A_5005",
+       "label": "5 weeks"
+      },
+      {
+       "value": "AU_Q_13_V_2_A_5006",
+       "label": "6 or more weeks"
+      }
+     ],
+     "expected": {
+      "kind": "user",
+      "strategy": "user",
+      "classified_by": "library_id",
+      "parameters": {
+       "topic": "notice"
+      }
+     },
+     "field_name": "questionnaire.AU_Q_13_V_2"
+    }
+   ]
+  },
+  {
+   "id": "S4",
+   "job_id": "94900004",
+   "title": "Front End React Developer",
+   "company": "Example Employer B",
+   "questions": [
+    {
+     "seek_question_id": "AU_Q_6_V_10",
+     "text": "Which of the following statements best describes your right to work in Australia?",
+     "input_type": "dropdown",
+     "options": [
+      {
+       "value": "AU_Q_6_V_10_A_1000",
+       "label": "I'm an Australian citizen"
+      },
+      {
+       "value": "AU_Q_6_V_10_A_1001",
+       "label": "I'm a permanent resident and/or NZ citizen"
+      },
+      {
+       "value": "AU_Q_6_V_10_A_1002",
+       "label": "I have a family/partner visa with no restrictions"
+      },
+      {
+       "value": "AU_Q_6_V_10_A_1003",
+       "label": "I have a graduate temporary work visa"
+      },
+      {
+       "value": "AU_Q_6_V_10_A_1004",
+       "label": "I have a holiday temporary work visa"
+      },
+      {
+       "value": "AU_Q_6_V_10_A_1005",
+       "label": "I have a temporary visa with restrictions on work location (e.g. skilled regional visa 491)"
+      },
+      {
+       "value": "AU_Q_6_V_10_A_1006",
+       "label": "I have a temporary protection or safe haven enterprise work visa"
+      },
+      {
+       "value": "AU_Q_6_V_10_A_1007",
+       "label": "I have a temporary visa with no restrictions (e.g. doctoral student)"
+      },
+      {
+       "value": "AU_Q_6_V_10_A_1008",
+       "label": "I have a temporary visa with restrictions on work hours (e.g. student visa, retirement visa)"
+      },
+      {
+       "value": "AU_Q_6_V_10_A_1009",
+       "label": "I have a temporary visa with restrictions on industry (e.g. temporary activity visa 408)"
+      },
+      {
+       "value": "AU_Q_6_V_10_A_1010",
+       "label": "I require sponsorship to work for a new employer (e.g. 482, 457)"
+      }
+     ],
+     "expected": {
+      "kind": "user",
+      "strategy": "user",
+      "classified_by": "library_id",
+      "parameters": {
+       "topic": "work_rights"
+      }
+     },
+     "field_name": "questionnaire.AU_Q_6_V_10"
+    },
+    {
+     "seek_question_id": "AU_Q_8_V_2",
+     "text": "What's your expected annual base salary?",
+     "input_type": "dropdown",
+     "options": [
+      {
+       "value": "AU_Q_8_V_2_A_4000",
+       "label": "$30k"
+      },
+      {
+       "value": "AU_Q_8_V_2_A_4001",
+       "label": "$35k"
+      },
+      {
+       "value": "AU_Q_8_V_2_A_4002",
+       "label": "$40k"
+      },
+      {
+       "value": "AU_Q_8_V_2_A_4003",
+       "label": "$45k"
+      },
+      {
+       "value": "AU_Q_8_V_2_A_4004",
+       "label": "$50k"
+      },
+      {
+       "value": "AU_Q_8_V_2_A_4005",
+       "label": "$55k"
+      },
+      {
+       "value": "AU_Q_8_V_2_A_4006",
+       "label": "$60k"
+      },
+      {
+       "value": "AU_Q_8_V_2_A_4007",
+       "label": "$65k"
+      },
+      {
+       "value": "AU_Q_8_V_2_A_4008",
+       "label": "$70k"
+      },
+      {
+       "value": "AU_Q_8_V_2_A_4009",
+       "label": "$75k"
+      },
+      {
+       "value": "AU_Q_8_V_2_A_4010",
+       "label": "$80k"
+      },
+      {
+       "value": "AU_Q_8_V_2_A_4011",
+       "label": "$85k"
+      },
+      {
+       "value": "AU_Q_8_V_2_A_4012",
+       "label": "$90k"
+      },
+      {
+       "value": "AU_Q_8_V_2_A_4013",
+       "label": "$95k"
+      },
+      {
+       "value": "AU_Q_8_V_2_A_4014",
+       "label": "$100k"
+      },
+      {
+       "value": "AU_Q_8_V_2_A_4015",
+       "label": "$110k"
+      },
+      {
+       "value": "AU_Q_8_V_2_A_4016",
+       "label": "$120k"
+      },
+      {
+       "value": "AU_Q_8_V_2_A_4017",
+       "label": "$130k"
+      },
+      {
+       "value": "AU_Q_8_V_2_A_4018",
+       "label": "$140k"
+      },
+      {
+       "value": "AU_Q_8_V_2_A_4019",
+       "label": "$150k"
+      },
+      {
+       "value": "AU_Q_8_V_2_A_4020",
+       "label": "$170k"
+      },
+      {
+       "value": "AU_Q_8_V_2_A_4021",
+       "label": "$200k"
+      },
+      {
+       "value": "AU_Q_8_V_2_A_4022",
+       "label": "$250k"
+      },
+      {
+       "value": "AU_Q_8_V_2_A_4023",
+       "label": "$300k"
+      },
+      {
+       "value": "AU_Q_8_V_2_A_4024",
+       "label": "$350k"
+      },
+      {
+       "value": "AU_Q_8_V_2_A_4025",
+       "label": "$350k+"
+      }
+     ],
+     "expected": {
+      "kind": "user",
+      "strategy": "user",
+      "classified_by": "library_id",
+      "parameters": {
+       "topic": "salary"
+      }
+     },
+     "field_name": "questionnaire.AU_Q_8_V_2"
+    },
+    {
+     "seek_question_id": "AU_Q_D29EC90383D57C663E2D2A43F205280B_V_2",
+     "text": "How many years' experience do you have as a Front End React Developer?",
+     "input_type": "dropdown",
+     "placeholder": true,
+     "options": [
+      {
+       "value": "AU_Q_D29EC90383D57C663E2D2A43F205280B_V_2_A_D29EC90383D57C663E2D2A43F205280B_1",
+       "label": "No experience"
+      },
+      {
+       "value": "AU_Q_D29EC90383D57C663E2D2A43F205280B_V_2_A_D29EC90383D57C663E2D2A43F205280B_2",
+       "label": "Less than 1 year"
+      },
+      {
+       "value": "AU_Q_D29EC90383D57C663E2D2A43F205280B_V_2_A_D29EC90383D57C663E2D2A43F205280B_3",
+       "label": "1 year"
+      },
+      {
+       "value": "AU_Q_D29EC90383D57C663E2D2A43F205280B_V_2_A_D29EC90383D57C663E2D2A43F205280B_4",
+       "label": "2 years"
+      },
+      {
+       "value": "AU_Q_D29EC90383D57C663E2D2A43F205280B_V_2_A_D29EC90383D57C663E2D2A43F205280B_5",
+       "label": "3 years"
+      },
+      {
+       "value": "AU_Q_D29EC90383D57C663E2D2A43F205280B_V_2_A_D29EC90383D57C663E2D2A43F205280B_6",
+       "label": "4 years"
+      },
+      {
+       "value": "AU_Q_D29EC90383D57C663E2D2A43F205280B_V_2_A_D29EC90383D57C663E2D2A43F205280B_7",
+       "label": "5 years"
+      },
+      {
+       "value": "AU_Q_D29EC90383D57C663E2D2A43F205280B_V_2_A_D29EC90383D57C663E2D2A43F205280B_8",
+       "label": "More than 5 years"
+      }
+     ],
+     "expected": {
+      "kind": "assisted",
+      "strategy": "years_role_bracket",
+      "classified_by": "template",
+      "parameters": {
+       "role": "Front End React Developer"
+      }
+     },
+     "field_name": "questionnaire.AU_Q_D29EC90383D57C663E2D2A43F205280B_V_2"
+    }
+   ]
+  },
+  {
+   "id": "S5",
+   "job_id": "94900005",
+   "title": "React Native Developer",
+   "company": "Example Employer C",
+   "questions": [
+    {
+     "seek_question_id": "indirect_7d4e9b22-1c3a-4f60-8e11-5a6b7c8d9e0f_a1",
+     "text": "Which of the following best describes your Australian working rights?",
+     "input_type": "single",
+     "options": [
+      {
+       "value": "generated_indirect_7d4e9b22-1c3a-4f60-8e11-5a6b7c8d9e0f_0",
+       "label": "Australian Citizen/ Permanent Resident/ New Zealand Citizen "
+      },
+      {
+       "value": "generated_indirect_7d4e9b22-1c3a-4f60-8e11-5a6b7c8d9e0f_1",
+       "label": "I am on a VISA that allows for full-time work (excluding WHV 417) "
+      },
+      {
+       "value": "generated_indirect_7d4e9b22-1c3a-4f60-8e11-5a6b7c8d9e0f_2",
+       "label": "I do not have any current Australian Working rights "
+      }
+     ],
+     "expected": {
+      "kind": "user",
+      "strategy": "user",
+      "classified_by": "keyword",
+      "parameters": {
+       "topic": "work_rights"
+      }
+     },
+     "field_name": "questionnaire.indirect_7d4e9b22-1c3a-4f60-8e11-5a6b7c8d9e0f_a1"
+    },
+    {
+     "seek_question_id": "indirect_7d4e9b22-1c3a-4f60-8e11-5a6b7c8d9e0f_b2",
+     "text": "Are you comfortable with this being in an in-office role? (8:30am to 5pm, Monday to Friday) with WFH flexibility?",
+     "input_type": "single",
+     "options": [
+      {
+       "value": "generated_indirect_7d4e9b22-1c3a-4f60-8e11-5a6b7c8d9e0f_0",
+       "label": "Yes "
+      },
+      {
+       "value": "generated_indirect_7d4e9b22-1c3a-4f60-8e11-5a6b7c8d9e0f_1",
+       "label": "No "
+      }
+     ],
+     "expected": {
+      "kind": "user",
+      "strategy": "user",
+      "classified_by": "keyword",
+      "parameters": {
+       "topic": "work_arrangement"
+      }
+     },
+     "field_name": "questionnaire.indirect_7d4e9b22-1c3a-4f60-8e11-5a6b7c8d9e0f_b2"
+    },
+    {
+     "seek_question_id": "indirect_7d4e9b22-1c3a-4f60-8e11-5a6b7c8d9e0f_c3",
+     "text": "What are your salary expectations for this role?",
+     "input_type": "text",
+     "options": [],
+     "expected": {
+      "kind": "user",
+      "strategy": "user",
+      "classified_by": "keyword",
+      "parameters": {
+       "topic": "salary"
+      }
+     },
+     "field_name": "questionnaire.indirect_7d4e9b22-1c3a-4f60-8e11-5a6b7c8d9e0f_c3"
+    },
+    {
+     "seek_question_id": "indirect_7d4e9b22-1c3a-4f60-8e11-5a6b7c8d9e0f_d4",
+     "text": "How many years of experience you have with building application on React Native with Expo, targeting web, iOS and Android ?",
+     "input_type": "text",
+     "options": [],
+     "expected": {
+      "kind": "unknown",
+      "strategy": null,
+      "classified_by": null,
+      "parameters": null
+     },
+     "field_name": "questionnaire.indirect_7d4e9b22-1c3a-4f60-8e11-5a6b7c8d9e0f_d4"
+    }
+   ]
+  }
+ ]
+}

@@ -400,9 +400,22 @@ suggest_learning were still not exercised on a model. The real profile's summary
 visa/work status is empty. Deferred tasks live in future_work/ (one file per task, indexed in its
 README): voice toggle, check_claims leaks, Gemini prompt caching, company research, letter
 framing/addressing, learn-from-edits.
-Phase 9 (rescoped 2026-10-04, plan §10.1) is ONE item: read the live screening questions from
-Seek's Quick Apply page so `answer_screening` can answer them. Blocked on parked fast-follow 1
-below (a live apply-flow session the user drives; don't guess selectors). The "Polish" button is
+Phase 9 (rescoped 2026-10-04, plan §10.1; evidence in docs/quick-apply-samples.md, 5 real
+questionnaires) is ONE item: help with the live Quick Apply questions. Each question is `user`
+(work rights, salary, notice, identity, how you heard, motivation: no AI help, never sent to
+the LLM) or `assisted` (relates to the ad): an answering strategy shows what the employer wants
+(checklist) beside what the profile backs (evidence); wanted-but-missing skills go through the
+gap memory. Every captured question goes into a QUESTION BANK (new tables) so repeats need no
+model call. 9a capture + bank / 9b assist / 9c drafts + evals.
+9a is DONE (2026-10-04, no LLM; plan Decision log): migration `b4d8e2f6a913` (`screening_questions`
+global bank + `job_screening_questions`), `app/screening/` (identity / sort layers 2-4 / bank),
+`app/api/screening.py`, capture + overlay in content_script.js (apply pages no longer run the
+detail-page branch, which could mark the job expired), review list in the profile editor,
+`scripts/export_question_bank.py`, `tests/e2e/quick_apply_e2e.py` (56/56, scrubbed fixtures,
+scratch DB via `run_api.py test --db`). Run `alembic upgrade head` (run_api does it) before use.
+NOT verified on a live Seek page; Chrome may ask once for local-network access on Seek. The questions-step markup is
+settled from the samples; anything else still needs a live check the user drives (parked
+fast-follow 1 below; don't guess selectors). The "Polish" button is
 already Regenerate (Phase 8). Vertex batch inference was checked (plan §10.2): possible on the
 trial and our models, but ~$0.001/job saved and scores a day late, so NOT built.
 Next: whatever the user names; Phase 9 when the user can do the live session. Known follow-ups (plan
