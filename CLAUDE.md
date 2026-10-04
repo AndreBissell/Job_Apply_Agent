@@ -355,7 +355,7 @@ verbatim profile copying 36% -> 18%. Panel opus-v4 (57/60 consistent): musts 15 
 12 vs 11, detail 13 vs 13, would_send 0 vs 0. The writer swapped the old habits for new
 formulas ("prepares me to", "exactly the kind of"). Kept. USER DECISION 2026-10-04: don't
 iterate on letter wording now; polish later. The agent was NOT re-run on v3.
-Phase 8 is DONE except its side-output sections (2026-10-04; details in the plan's Decision
+Phase 8 is DONE (2026-10-04; details in the plan's Decision
 log): `app/llm/letter/production.py` (`next_work`: answered runs resume first, then the
 best-scored match without a letter; `run_work`; `generate_for` = /regenerate; `land_letter`;
 `recover_orphaned_runs`) and `view.py` (`latest_runs`, `letter_info`). The idle loop's
@@ -373,9 +373,23 @@ editors. 846 tests. Verified by driving the real sidebar page against a scratch 
 (35 checks), then LIVE ($0.14): the loaded extension against a scratch test DB running the real idle
 loop; ask_user fired on a real ad, Yes/confirm and No worked, the loop resumed the answered run and
 the letter landed, all over live SSE (plan Decision log 2026-10-04). CAUTION: `scripts/run_api.py` runs uvicorn with reload=True, so a running
-real server picks up code edits; with real.db's `auto_cover_letter_min_score` at 99 it starts no
-letters, but lowering it starts the pipeline (~20¢ each) for matches at the bar.
-Next: Phase 7c (side outputs + their sidebar sections), only on the user's go-ahead. Known follow-ups (plan
+real server picks up code edits; with real.db's `auto_cover_letter_min_score` at 94 it starts the
+pipeline (~20-25¢ each) for matches at the bar, so keep the code importable at all times.
+Phase 7c is DONE (2026-10-04; details in the plan's Decision log): side-output tools
+`answer_screening` (mid; screening questions in the ad text only, Q10; code checks pointers/quotes/
+links, no judge), `suggest_learning` (small; only gaps the USER confirmed, ordered by the to-work-on
+rank) and `suggest_resume_tweaks` (mid; reads the FINAL draft, `guardrails.letter_final`; default
+`user_cvs` row else the profile; code drops unbacked items). Rules in `app/llm/letter/side_outputs.py`:
+each behind a toggle (`screening_answers_enabled` / `learning_suggestions_enabled` /
+`resume_advice_enabled`, default True; off = not offered, all off = the Phase 8 run), once per run,
+failures shown never fatal, NOT charged to `max_tool_calls` (`budget.side_calls`; the USD cap still
+applies), the agent's finish refused while one is due, the workflow runs them in a fixed order after
+the letter. Stored in `letter_runs.state.side_outputs` (no DDL); sidebar shows collapsed sections
+(Copy on screening answers) + 3 Personalise checkboxes. Quick-Apply overlay skipped. `view.not_claimed`
+no longer lists skill-less gaps nobody asked about. 1008 tests; sidebar checked with no LLM (27 checks).
+Eval: `letter_lab.py run --engine agent --side-outputs all` (run `agent-v2-side`); the eval set has
+no screening questions, confirmed gaps or CVs, so only résumé notes fire there.
+Next: whatever the user names. Known follow-ups (plan
 Decision log 2026-10-04): check_claims passes "I have included a link to a video"
 (invented attachment), "daily" frequency claims and "apply my skills in X" on a listing;
 style_lint's gap-led pattern misses "While my X rather than Y"; Gemini implicit caching

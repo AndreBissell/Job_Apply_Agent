@@ -25,6 +25,13 @@ DEFAULT_AUTO_LETTER_MIN_SCORE = 75
 DEFAULT_LETTER_LOOP_MIN_SCORE = 85
 LETTER_ENGINES = ("agent", "workflow")  # which pipeline; the agent is the default (2026-10-03)
 DEFAULT_LETTER_ENGINE = "agent"
+# Side-output tool -> the preference that switches it on (app/llm/letter/side_outputs.py
+# reads it from here, so this module needs no LLM imports).
+SIDE_OUTPUT_TOGGLES = {
+    "answer_screening": "screening_answers_enabled",
+    "suggest_learning": "learning_suggestions_enabled",
+    "suggest_resume_tweaks": "resume_advice_enabled",
+}
 
 DEFAULTS: dict = {
     "auto_cover_letter_min_score": DEFAULT_AUTO_LETTER_MIN_SCORE,
@@ -36,6 +43,13 @@ DEFAULTS: dict = {
     # letter_settings), so lowering this below the auto-letter score changes nothing.
     "letter_loop_min_score": DEFAULT_LETTER_LOOP_MIN_SCORE,
     "letter_engine": DEFAULT_LETTER_ENGINE,
+    # The pipeline's side outputs (plan §5.6, §6), each one extra model call per full run
+    # when it has something to work on: résumé notes (mid), learning suggestions for gaps
+    # you confirmed (small), answers to screening questions in the ad (mid). Off = no call.
+    # The one-shot writer never makes them.
+    "resume_advice_enabled": True,
+    "learning_suggestions_enabled": True,
+    "screening_answers_enabled": True,
     # Layer 4 of the search-suggestion pipeline. OFF by default and opt-in from
     # the sidebar: every other layer is pure Python and free, and this is the
     # one that spends an LLM call, so it should never switch itself on. See
@@ -113,10 +127,13 @@ def letter_settings(db: Session, profile_id: int) -> dict:
         loop_min = DEFAULT_LETTER_LOOP_MIN_SCORE
     enabled = prefs["letter_loop_enabled"]
     engine = prefs["letter_engine"]
+    # tool -> its toggle; a non-bool stored value reads as the default (on)
+    side = [tool for tool, key in SIDE_OUTPUT_TOGGLES.items() if prefs.get(key) is not False]
     return {
         "auto_min_score": auto_min,
         "enabled": enabled if isinstance(enabled, bool) else True,
         "loop_min_score": loop_min,
         "pipeline_min_score": max(auto_min, loop_min),
         "engine": engine if engine in LETTER_ENGINES else DEFAULT_LETTER_ENGINE,
+        "side_outputs": tuple(side),  # the side-output tools a new pipeline run may call
     }

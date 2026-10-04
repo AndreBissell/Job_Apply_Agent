@@ -170,6 +170,9 @@ class UserDecision(BaseModel):
     answer: str | None = None
     saved_as: list[str] = Field(default_factory=list)  # pointers to the new profile rows
     remembered: bool = False  # True when a stored gap_decisions "no" answered it
+    # True when no user decided it: the evals' leave_out_gaps policy leaves every pending
+    # gap out without asking. Not a confirmed gap, so suggest_learning ignores it.
+    assumed: bool = False
 
 
 class Requirement(BaseModel):
@@ -259,7 +262,19 @@ class JobInfo(BaseModel):
     company_facts: list[str] = Field(default_factory=list)
 
 
+# The side-output tools (plan §5.6): extras beside the letter, each behind its own
+# preference toggle. They never change the letter, run at most once per run, and are not
+# charged to the letter's tool-call cap (``Budget.side_calls`` counts them instead).
+SIDE_OUTPUT_TOOLS = ("answer_screening", "suggest_learning", "suggest_resume_tweaks")
+
+
 class SideOutputs(BaseModel):
+    # Which side-output tools this run may call, fixed when the run opens (from the
+    # toggles), so a resumed run keeps the settings it started with. Empty = none: the
+    # letter-only behaviour from before Phase 7c.
+    enabled: list[str] = Field(default_factory=list)
+    ran: list[str] = Field(default_factory=list)  # tools that have run, ok or not (once each)
+    errors: dict[str, str] = Field(default_factory=dict)  # tool -> why it failed
     screening_answers: list[dict] = Field(default_factory=list)
     learning_suggestions: list[dict] = Field(default_factory=list)
     resume_notes: dict | None = None
@@ -268,16 +283,22 @@ class SideOutputs(BaseModel):
 class Budget(BaseModel):
     drafts_used: int = 0
     max_drafts: int = 3
-    tool_calls: int = 0
+    tool_calls: int = 0  # the letter's tools: what max_tool_calls caps
     max_tool_calls: int = 15
-    cost_usd: float = 0.0
+    # Side-output tool calls, counted apart: each runs at most once, so they are bounded
+    # without the cap, and charging them to it would let them crowd out a revision.
+    side_calls: int = 0
+    cost_usd: float = 0.0  # every call of the run, side outputs and orchestrator included
     max_cost_usd: float = 0.50
+
+    def over_cost(self) -> bool:
+        return self.cost_usd >= self.max_cost_usd
 
     def exceeded(self) -> str | None:
         """Why the run must stop, or None."""
         if self.tool_calls >= self.max_tool_calls:
             return f"tool-call limit reached ({self.tool_calls}/{self.max_tool_calls})"
-        if self.cost_usd >= self.max_cost_usd:
+        if self.over_cost():
             return f"run budget reached (${self.cost_usd:.2f}/${self.max_cost_usd:.2f})"
         return None
 

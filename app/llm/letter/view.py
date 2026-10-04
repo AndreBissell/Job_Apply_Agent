@@ -7,7 +7,8 @@ schema needs nothing extra:
                  on the user, or failed?
 ``letter_info``  everything about the letter on one card: what is still wrong with it
                  (open issues), what the letter doesn't claim and why, the ad's
-                 eligibility notes and application instructions.
+                 eligibility notes and application instructions, and the run's side
+                 outputs (screening answers, learning suggestions, résumé notes).
 
 The run's findings describe the draft it handed back (``final_draft_version``). Once the
 letter's ``generated_content`` is anything else (a later one-shot, a regenerate) they are
@@ -56,17 +57,43 @@ def latest_runs(db: Session, match_ids: list[int]) -> dict[int, dict]:
 def _why_not_claimed(r: Requirement) -> str:
     d = r.user_decision
     if d is not None and d.choice == "leave_out":
+        if d.assumed:
+            return "Left out without asking you"
         return "You said you don't have this (remembered from an earlier ad)" if d.remembered else "You said you don't have this"
     return "Nothing in your profile backs this"
 
 
 def not_claimed(state: LetterState) -> list[dict]:
     """Requirements the letter leaves out (a gap, or you said no), with the reason.
-    Eligibility items are not here: they are the card's notes, never letter content."""
+
+    Not here: eligibility items (the card's notes, never letter content), and gaps that
+    name no skill and that you weren't asked about: attitudes and interest ("attention to
+    detail", "interest in <company>") and general duties. "Nothing in your profile backs
+    this" was misleading for those: there is no profile row to add, and the letter
+    doesn't leave out a qualification by skipping them. A skill-less must-have the
+    user was asked about keeps its line, with the user's answer as the reason."""
     return [
         {"id": r.id, "text": r.text, "importance": r.importance, "reason": _why_not_claimed(r)}
         for r in guardrails.do_not_claim(state)
+        if r.skill.strip() or r.user_decision is not None
     ]
+
+
+def side_output_view(state: LetterState) -> dict | None:
+    """The run's side outputs for the sidebar, or None when none were switched on.
+    ``errors`` names a side output that failed (its section says so instead of
+    vanishing); ``skipped`` the enabled ones that never ran (nothing to work on, or the
+    run stopped first)."""
+    so = state.side_outputs
+    if not so.enabled:
+        return None
+    return {
+        "screening_answers": so.screening_answers,
+        "learning_suggestions": so.learning_suggestions,
+        "resume_notes": so.resume_notes,
+        "errors": dict(so.errors),
+        "skipped": [t for t in so.enabled if t not in so.ran],
+    }
 
 
 def _last_error(db: Session, run_id: int) -> str | None:
@@ -120,6 +147,7 @@ def letter_info(db: Session, job_id: int, profile_id: int) -> dict | None:
             "not_claimed": not_claimed(state),
             "eligibility_notes": state.eligibility_notes(),
             "application_instructions": state.job.application_instructions,
+            "side_outputs": side_output_view(state),
         }
         break
 

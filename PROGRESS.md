@@ -5,6 +5,23 @@ one block per milestone.
 
 ---
 
+## 2026-10-04 — Cover-letter Phase 7c: side outputs — DONE ✅
+
+**Built**
+- Tools `answer_screening` (mid), `suggest_learning` (small), `suggest_resume_tweaks` (mid); rules in `app/llm/letter/side_outputs.py` (toggle, once per run, readiness, due-before-finish, fixed-order `run_due`).
+- Agent: side tools offered only when enabled, finish refused while one is due, failures non-fatal, code fallback at the letter's tool cap. Workflow: same tools after the letter. Side calls not charged to the 15-call cap.
+- Prefs `screening_answers_enabled` / `learning_suggestions_enabled` / `resume_advice_enabled` (True); sidebar sections + Personalise checkboxes; `view.not_claimed` attitude fix; `letter_lab.py --side-outputs all` + a loop-report section.
+- Schema doc first: no DDL (data in `letter_runs.state`).
+
+**Verified**
+- `python -m pytest -q`: 1008 passed (162 new). `node --check` on sidebar.js.
+- Sidebar driven in Chromium against a scratch test DB, no LLM, port 8000 blocked: 27/27 checks.
+- Eval `agent-v2-side`: see the plan's Decision log.
+
+**Not verified**: Chrome's real side panel; screening answers and learning suggestions on a real model (the eval set has neither questions nor confirmed gaps).
+
+---
+
 ## 2026-10-04 — Cover-letter Phase 8: the pipeline runs in the app — DONE ✅ (side-output sections wait for 7c)
 
 **Built**

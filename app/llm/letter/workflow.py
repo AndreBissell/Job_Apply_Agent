@@ -10,7 +10,13 @@ alone:
       -> check_claims, check_requirements, style_lint
       -> while a check failed (at most MAX_REVISIONS times):
              revise_letter (always the LATEST draft) -> the three checks again
+      -> [answer_screening, suggest_learning, suggest_resume_tweaks: each enabled one
+          that has something to work on, once the letter is final]
       -> finish
+
+The side outputs (Phase 7c) are the agent's own tools in a fixed order, after the letter
+and never instead of it: same cost per tool, so the two engines still compare on the
+order of steps alone. A failed one is recorded and skipped, never fatal.
 
 A run never crashes on a limit. When it stops short of a draft that passes every
 check (the revision limit, the per-run budget, the account's USD guard, a tool
@@ -25,18 +31,21 @@ from typing import Any, Callable
 from sqlalchemy.orm import Session
 
 from app.llm.client import BudgetExceededError, DailyQuotaError
-from app.llm.letter import guardrails
+from app.llm.letter import guardrails, side_outputs
 from app.llm.letter.gap_policy import ask_user_tool
 from app.llm.letter.outcome import GapPolicy, LetterResult, Stop, conclude, leave_out_gaps, open_run, reopen_run
 from app.llm.letter.runner import ToolContext, execute_tool, finish_run
 from app.llm.letter.state import LetterState
 from app.llm.letter.tools.analyze_job import analyze_job
+from app.llm.letter.tools.answer_screening import answer_screening
 from app.llm.letter.tools.check_claims import check_claims
 from app.llm.letter.tools.check_requirements import check_requirements
 from app.llm.letter.tools.generate import generate_letter
 from app.llm.letter.tools.match_profile import match_profile
 from app.llm.letter.tools.revise import revise_letter
 from app.llm.letter.tools.style_lint import style_lint
+from app.llm.letter.tools.suggest_learning import suggest_learning
+from app.llm.letter.tools.suggest_resume_tweaks import suggest_resume_tweaks
 
 ENGINE = "workflow"
 # Revisions after draft 1. With Budget.max_drafts = 3 a full run is 14 tool calls:
@@ -48,6 +57,16 @@ CHECKS: tuple[tuple[str, Callable[..., dict[str, Any]]], ...] = (
     ("check_requirements", check_requirements),
     ("style_lint", style_lint),
 )
+
+
+def side_tools() -> dict[str, Callable[..., dict[str, Any]]]:
+    """Looked up when called, so tests can swap the module's functions."""
+    return {
+        "answer_screening": answer_screening,
+        "suggest_learning": suggest_learning,
+        "suggest_resume_tweaks": suggest_resume_tweaks,
+    }
+
 
 # The result shape is shared with the agent (outcome.py); the old name stays for callers.
 WorkflowResult = LetterResult
@@ -61,6 +80,7 @@ def run_workflow(
     gap_policy: GapPolicy = leave_out_gaps,
     max_revisions: int = MAX_REVISIONS,
     engine: str = ENGINE,
+    side_outputs_enabled: tuple[str, ...] = (),
 ) -> LetterResult:
     """Write one cover letter for a scored job, in a fixed order of tool calls.
 
@@ -69,7 +89,7 @@ def run_workflow(
     nothing to run on (no such job, or the job has no match for this profile);
     every other way a run can end is a ``LetterResult``.
     """
-    state, ctx = open_run(db, job_id, profile_id, engine)
+    state, ctx = open_run(db, job_id, profile_id, engine, side_outputs_enabled)
     return _drive(state, ctx, gap_policy, max_revisions)
 
 
@@ -100,6 +120,11 @@ def _drive(state: LetterState, ctx: ToolContext, gap_policy: GapPolicy, max_revi
         for name, fn in CHECKS:
             step(name, fn)
 
+    def run_side_outputs() -> None:
+        """Once the letter is final (clean, or out of drafts): every due side output."""
+        if guardrails.letter_final(state) is not None:
+            side_outputs.run_due(ctx, state, side_tools())
+
     status, reason, account = "done", None, None
     try:
         if not state.requirements:
@@ -119,15 +144,18 @@ def _drive(state: LetterState, ctx: ToolContext, gap_policy: GapPolicy, max_revi
         revisions = 0
         while guardrails.can_finish(state) is not None:
             if revisions >= max_revisions:
+                run_side_outputs()
                 failed = ", ".join(guardrails.failed_checks(state))
                 raise Stop("budget_stopped", f"revision limit reached ({revisions}/{max_revisions}); "
                                               f"still failing: {failed}")
             refusal = guardrails.can_revise(state)
             if refusal:
+                run_side_outputs()
                 raise Stop("budget_stopped", refusal)
             step("revise_letter", revise_letter)
             revisions += 1
             run_checks()
+        run_side_outputs()
     except Stop as stop:
         status, reason = stop.status, stop.reason
     except (BudgetExceededError, DailyQuotaError) as exc:

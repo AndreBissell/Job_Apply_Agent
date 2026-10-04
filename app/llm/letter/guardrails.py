@@ -74,6 +74,16 @@ def eligibility(state: LetterState) -> list[Requirement]:
     return state.requirements_by_role("not_for_letter")
 
 
+def confirmed_gaps(state: LetterState) -> list[Requirement]:
+    """Gaps the USER confirmed as real: a "No" to ask_user on this run, or a remembered
+    one from an earlier ad. A gap the evals' policy left out without asking is not one,
+    nor is an eligibility item. What suggest_learning works from (plan §5.6)."""
+    return [
+        r for r in state.requirements
+        if r.letter_role != "not_for_letter" and _left_out(r) and not r.user_decision.assumed
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Gates. Each returns None when the step may run, else the reason it may not.
 # ---------------------------------------------------------------------------
@@ -170,6 +180,18 @@ def can_finish(state: LetterState) -> str | None:
     failed = failed_checks(state)
     if failed:
         return f"{', '.join(failed)} failed on draft {draft.version}: revise_letter, or stop at the draft limit"
+    return None
+
+
+def letter_final(state: LetterState) -> Draft | None:
+    """The draft the run will hand back, once the letter's work is over: the latest when
+    every check passed on it, the best draft when the draft limit is reached with a check
+    still failing; None while the letter can still change. What suggest_resume_tweaks
+    reads, so its advice matches the letter the user gets."""
+    if can_finish(state) is None:
+        return state.latest_draft
+    if out_of_drafts(state):
+        return best_draft(state)
     return None
 
 

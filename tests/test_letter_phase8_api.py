@@ -216,6 +216,7 @@ class TestLetterSettings:
         assert letter_settings(db, 1) == {
             "auto_min_score": 75, "enabled": True, "loop_min_score": 85, "pipeline_min_score": 85,
             "engine": "agent",
+            "side_outputs": ("answer_screening", "suggest_learning", "suggest_resume_tweaks"),
         }
 
     def test_the_effective_pipeline_bar_is_the_higher_of_the_two(self, db):

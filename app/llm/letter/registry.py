@@ -18,21 +18,24 @@ the run's state, which the orchestrator never reads in full.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Iterable
 
 from app.llm.client import ToolSpec
-from app.llm.letter import guardrails
+from app.llm.letter import guardrails, side_outputs
 from app.llm.letter.outcome import GapPolicy
 from app.llm.letter.gap_policy import ask_user_tool
 from app.llm.letter.runner import ToolFn
-from app.llm.letter.state import LetterState
+from app.llm.letter.state import SIDE_OUTPUT_TOOLS, LetterState
 from app.llm.letter.tools.analyze_job import analyze_job
+from app.llm.letter.tools.answer_screening import answer_screening
 from app.llm.letter.tools.check_claims import check_claims
 from app.llm.letter.tools.check_requirements import check_requirements
 from app.llm.letter.tools.generate import generate_letter
 from app.llm.letter.tools.match_profile import match_profile
 from app.llm.letter.tools.revise import revise_letter
 from app.llm.letter.tools.style_lint import style_lint
+from app.llm.letter.tools.suggest_learning import suggest_learning
+from app.llm.letter.tools.suggest_resume_tweaks import suggest_resume_tweaks
 
 Gate = Callable[[LetterState], "str | None"]
 
@@ -153,6 +156,25 @@ _DESCRIPTIONS = {
         "passed, or for warnings alone. It will not add experience claims for skills the profile "
         "only lists. Then run all three checks on the new draft."
     ),
+    "answer_screening": (
+        "Side output: draft answers to the screening questions written in the job ad, grounded "
+        "in the profile (code checks every cited source). Use it once, when the state lists it as "
+        "due: after match_profile and any ask_user decisions, so the answers can use what the user "
+        "added. It does not touch the letter. Do not call it when the ad has no screening "
+        "questions, and never call it twice."
+    ),
+    "suggest_learning": (
+        "Side output: one concrete way (course, certification, small project) to close each gap "
+        "the USER confirmed (a 'no' to ask_user, now or remembered from an earlier ad), led by the "
+        "one most ads ask for. Use it once, when the state lists it as due. Do not call it for gaps "
+        "nobody asked the user about, and never call it twice."
+    ),
+    "suggest_resume_tweaks": (
+        "Side output: résumé tailoring notes (what to lead with, the ad's keywords to mirror, what "
+        "to cut, how to handle gaps) from the requirements, the evidence and the FINAL letter. Use "
+        "it once, after every check passed on the latest draft (or the draft limit is reached), "
+        "before finish. Do not call it while the letter can still change, and never call it twice."
+    ),
     FINISH: (
         "End the run. Accepted when check_claims, check_requirements and style_lint have all "
         "passed on the latest draft; the letter goes to the user. Also accepted when the draft "
@@ -162,8 +184,30 @@ _DESCRIPTIONS = {
 }
 
 
-def build_registry(gap_policy: GapPolicy) -> dict[str, RegisteredTool]:
-    """Every tool the agent may call, in the order a run usually uses them."""
+_SIDE_FNS = {
+    "answer_screening": lambda: answer_screening,
+    "suggest_learning": lambda: suggest_learning,
+    "suggest_resume_tweaks": lambda: suggest_resume_tweaks,
+}
+
+
+def side_output_fns() -> dict[str, ToolFn]:
+    """The side-output tool functions, looked up when called (tests swap them)."""
+    return {name: get() for name, get in _SIDE_FNS.items()}
+
+
+def build_registry(gap_policy: GapPolicy, side_outputs_enabled: Iterable[str] = ()) -> dict[str, RegisteredTool]:
+    """Every tool the agent may call, in the order a run usually uses them.
+
+    The side-output tools are offered only when enabled for the run (the user's toggles):
+    with none enabled the agent sees exactly the letter-only tool set of Phase 8.
+    """
+    wanted = set(side_outputs_enabled)
+    sides: list[tuple[str, ToolFn | None, Gate]] = [
+        (name, fn, side_outputs.gate(name))
+        for name, fn in side_output_fns().items()
+        if name in wanted and name in SIDE_OUTPUT_TOOLS
+    ]
     entries: list[tuple[str, ToolFn | None, Gate]] = [
         ("analyze_job", analyze_job, _gate_analyze),
         ("match_profile", match_profile, _gate_match),
@@ -173,6 +217,7 @@ def build_registry(gap_policy: GapPolicy) -> dict[str, RegisteredTool]:
         ("check_requirements", check_requirements, _check_gate("check_requirements")),
         ("style_lint", style_lint, _check_gate("style_lint")),
         ("revise_letter", revise_letter, guardrails.can_revise),
+        *sides,
         (FINISH, None, _gate_finish),
     ]
     return {

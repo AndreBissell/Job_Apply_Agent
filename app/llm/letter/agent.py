@@ -16,7 +16,10 @@ Code enforces, the model chooses:
   draft limit is reached with every check run (the best draft goes back, flagged);
 - the budget is checked before every turn, and orchestrator calls count towards the
   run's USD budget (they log ``llm_usage`` with the run id). Refusals and text
-  replies have their own cap, so a confused model can't loop for free.
+  replies have their own cap, so a confused model can't loop for free;
+- side outputs (Phase 7c, ``side_outputs.py``) are offered only when enabled; finish is
+  refused while one is due; a failed one is reported back, never fatal to the letter;
+  and if the letter's tool cap ends the run first, code runs the due ones itself.
 
 When it stops short it returns exactly what the workflow would: ``outcome.conclude``.
 """
@@ -29,11 +32,11 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.llm.client import BudgetExceededError, DailyQuotaError, LLMError, complete_tools
-from app.llm.letter import guardrails
+from app.llm.letter import guardrails, side_outputs
 from sqlalchemy import select
 
 from app.llm.letter.outcome import GapPolicy, LetterResult, Stop, conclude, leave_out_gaps, open_run, reopen_run
-from app.llm.letter.registry import FINISH, build_registry
+from app.llm.letter.registry import FINISH, build_registry, side_output_fns
 from app.llm.letter.runner import REFUSED, ToolContext, execute_tool, finish_run, persist, record_step
 from app.llm.letter.state import LetterState
 from app.models import LetterRunStep
@@ -71,12 +74,27 @@ its open issues flagged.
 - A refused call comes back with the reason, and nothing ran. Read the reason and \
 choose a different tool; never repeat a refused call unchanged."""
 
+# Added to the system prompt only when a side output is enabled, so a letter-only run
+# sees the same prompt as before Phase 7c.
+SIDE_OUTPUTS_PROMPT = """\
+Side outputs: the state's SIDE OUTPUTS section lists the extra tools switched on for \
+this run (answer_screening, suggest_learning, suggest_resume_tweaks) and whether each is \
+due. Call each one once, when it shows as due; they never change the letter and don't \
+use its tool-call budget. answer_screening and suggest_learning can run any time after \
+the gaps are settled; suggest_resume_tweaks only once the letter is final. One marked \
+"not needed" has nothing to work on: skip it. finish is refused while one is due."""
+
+
+def system_prompt(state: LetterState) -> str:
+    return SYSTEM_PROMPT + ("\n\n" + SIDE_OUTPUTS_PROMPT if side_outputs.enabled(state) else "")
+
 
 def turn_prompt(state: LetterState, steps: list[str], last: str) -> str:
     """The whole of what the orchestrator sees on one turn."""
     return "\n".join([
         "STATE",
         state.summary_for_orchestrator(),
+        *side_outputs.status_lines(state),
         "",
         f"STEPS SO FAR: {', '.join(steps) if steps else 'none'}",
         f"LAST RESULT: {last}",
@@ -99,13 +117,15 @@ def run_agent(
     engine: str = ENGINE,
     tier: str = ORCHESTRATOR_TIER,
     max_refusals: int = MAX_REFUSALS,
+    side_outputs_enabled: tuple[str, ...] = (),
 ) -> LetterResult:
     """Write one cover letter for a scored job, with a model choosing each step.
 
     Same contract as ``workflow.run_workflow``: raises ``ValueError`` only when there
     is no job/match to run on; every other ending is a ``LetterResult``.
+    ``side_outputs_enabled`` names the side-output tools offered (none by default).
     """
-    state, ctx = open_run(db, job_id, profile_id, engine)
+    state, ctx = open_run(db, job_id, profile_id, engine, side_outputs_enabled)
     return _drive(state, ctx, gap_policy, tier, max_refusals, [], "none yet: this is the first turn")
 
 
@@ -160,7 +180,7 @@ def _drive(
     steps: list[str],
     last: str,
 ) -> LetterResult:
-    tools = build_registry(gap_policy)
+    tools = build_registry(gap_policy, side_outputs.enabled(state))
     specs = [t.spec for t in tools.values()]
     refusals = 0
 
@@ -180,13 +200,16 @@ def _drive(
             limit = state.budget_exceeded()
             if limit:
                 if guardrails.can_finish(state) is None:
+                    # The letter's tool cap ended the run with a clean letter: side outputs
+                    # aren't charged to it, so code runs the due ones (not past the USD cap).
+                    side_outputs.run_due(ctx, state, side_output_fns())
                     record_step(ctx, state, FINISH, summary={"by": "code", "reason": limit})
                     break
                 raise Stop("budget_stopped", limit)
 
             try:
                 step = complete_tools(
-                    SYSTEM_PROMPT,
+                    system_prompt(state),
                     [{"role": "user", "content": turn_prompt(state, steps, last)}],
                     specs,
                     tier=tier,
@@ -209,6 +232,11 @@ def _drive(
 
             if name == FINISH:
                 why = guardrails.can_finish(state)
+                if why is None or guardrails.out_of_drafts(state):
+                    pending = side_outputs.finish_blocked(state)
+                    if pending:
+                        last = refuse(name, args, pending)
+                        continue
                 if why is None:
                     record_step(ctx, state, FINISH, args, summary={"accepted": True})
                     steps.append(FINISH)
@@ -228,6 +256,10 @@ def _drive(
 
             result = execute_tool(ctx, state, name, tool.fn)
             steps.append(name)
+            if not result.ok and name in side_outputs.enabled(state):
+                # An extra failed: the user loses that section, never the letter.
+                last = f"{name} FAILED and will not be retried ({result.error}); carry on"
+                continue
             if not result.ok:
                 raise Stop("failed", f"{name} failed: {result.error}")
             last = f"{name} -> {_brief(result.summary)}"

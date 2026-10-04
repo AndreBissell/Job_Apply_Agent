@@ -534,7 +534,108 @@ function renderLetterNotes(container, info, cl, data) {
     }
     wrap.appendChild(details);
   }
+  if (run?.side_outputs) renderSideOutputs(wrap, run.side_outputs);
   if (wrap.childNodes.length) container.appendChild(wrap);
+}
+
+// ---------------------------------------------------------------------------
+// Side outputs (plan §5.6): screening answers, learning suggestions, résumé notes.
+// Each is a collapsed section beside the letter; a failed one says so.
+// ---------------------------------------------------------------------------
+function sideSection(title) {
+  const d = mk('details', 'letter-notes side-output');
+  d.appendChild(mk('summary', null, title));
+  return d;
+}
+
+function copyButton(getText) {
+  const btn = mk('button', 'btn btn-sm', 'Copy');
+  btn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(getText());
+      btn.textContent = 'Copied ✓';
+    } catch {
+      btn.textContent = 'Copy failed';
+    }
+    setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+  });
+  return btn;
+}
+
+function renderSideOutputs(wrap, so) {
+  const failed = (tool) => so.errors?.[tool]
+    ? mk('div', 'letter-flag', `This section couldn't be made on this run (${truncate(so.errors[tool], 120)}).`)
+    : null;
+
+  const answers = so.screening_answers || [];
+  if (answers.length || so.errors?.answer_screening) {
+    const d = sideSection(`Screening answers (${answers.length})`);
+    const err = failed('answer_screening');
+    if (err) d.appendChild(err);
+    if (answers.length) d.appendChild(mk('div', 'pref-note', 'Drafts from your profile, for the questions in the ad. Read each one before you paste it.'));
+    for (const a of answers) {
+      const box = mk('div', 'screening-answer');
+      box.appendChild(mk('h5', null, a.question));
+      if (a.answer) {
+        const text = mk('div', 'answer-text', a.answer);
+        box.appendChild(text);
+        box.appendChild(copyButton(() => a.answer));
+      } else {
+        box.appendChild(mk('div', 'warn', 'Your profile doesn’t answer this: answer it yourself.'));
+      }
+      if (a.covered === 'partly') box.appendChild(mk('div', 'warn', 'Only partly covered by your profile.'));
+      if (a.note) box.appendChild(mk('div', 'why', a.note));
+      for (const issue of a.issues || []) box.appendChild(mk('div', 'note-row warn', `Check: ${issue}`));
+      d.appendChild(box);
+    }
+    wrap.appendChild(d);
+  }
+
+  const learning = so.learning_suggestions || [];
+  if (learning.length || so.errors?.suggest_learning) {
+    const d = sideSection(`Ways to close your gaps (${learning.length})`);
+    const err = failed('suggest_learning');
+    if (err) d.appendChild(err);
+    for (const s of learning) {
+      const row = mk('div', 'note-row');
+      row.appendChild(mk('strong', null, s.skill));
+      row.appendChild(document.createTextNode(`: ${s.suggestion}`));
+      const meta = [s.kind, s.effort, s.recent_ads ? `asked for in ${s.recent_ads} recent ad${s.recent_ads === 1 ? '' : 's'}` : null]
+        .filter(Boolean).join(' · ');
+      if (meta) row.appendChild(mk('span', 'why', ` (${meta})`));
+      d.appendChild(row);
+    }
+    wrap.appendChild(d);
+  }
+
+  const notes = so.resume_notes;
+  if (notes || so.errors?.suggest_resume_tweaks) {
+    const d = sideSection('Résumé notes for this ad');
+    const err = failed('suggest_resume_tweaks');
+    if (err) d.appendChild(err);
+    if (notes) {
+      d.appendChild(mk('div', 'pref-note', notes.based_on === 'cv'
+        ? 'Advice on your stored CV. Nothing is changed for you.'
+        : 'No CV is stored, so this is advice on your profile entries. Nothing is changed for you.'));
+      const groups = [
+        ['Lead with', (notes.lead_with || []).map(i => [i.point, i.why])],
+        ['Use the ad’s words (where true)', (notes.keywords_to_mirror || []).map(i => [i.keyword, null])],
+        ['Consider cutting', (notes.consider_cutting || []).map(i => [i.item, i.why])],
+        ['Gaps: how to handle them honestly', (notes.gaps_to_address || []).map(i => [i.requirement, i.advice])],
+      ];
+      for (const [heading, rows] of groups) {
+        if (!rows.length) continue;
+        d.appendChild(mk('h5', null, heading));
+        for (const [text, why] of rows) {
+          const row = mk('div', 'note-row', text);
+          if (why) row.appendChild(mk('span', 'why', ` — ${why}`));
+          d.appendChild(row);
+        }
+      }
+    }
+    wrap.appendChild(d);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1258,6 +1359,12 @@ const letterLoopInput = document.getElementById('letter-loop-min');
 const letterLoopSaveBtn = document.getElementById('letter-loop-save');
 const letterEngineSelect = document.getElementById('letter-engine');
 const letterLoopNote = document.getElementById('letter-loop-note');
+// The pipeline's side outputs (plan §6): preference key -> its checkbox. All default on.
+const sideOutputToggles = {
+  screening_answers_enabled: document.getElementById('side-screening'),
+  learning_suggestions_enabled: document.getElementById('side-learning'),
+  resume_advice_enabled: document.getElementById('side-resume'),
+};
 
 // The full cover-letter pipeline (docs/cover-letter-loop-plan.md §6). Stored server-side
 // (profiles.preferences) because the idle loop is what acts on them. Pre-load defaults only.
@@ -1319,6 +1426,7 @@ async function loadPreferences() {
     letterLoopInput.value = letterLoopMin;
     if (prefs.letter_engine === 'agent' || prefs.letter_engine === 'workflow') letterEngine = prefs.letter_engine;
     letterEngineSelect.value = letterEngine;
+    for (const [key, box] of Object.entries(sideOutputToggles)) box.checked = prefs[key] !== false;
     updateLetterLoopNote();
   } catch { /* backend down — keep defaults; loadJobs shows its own error */ }
 }
@@ -1359,6 +1467,15 @@ letterLoopCheckbox.addEventListener('change', async () => {
   }
   letterLoopCheckbox.disabled = false;
 });
+
+for (const [key, box] of Object.entries(sideOutputToggles)) {
+  box.addEventListener('change', async () => {
+    const enabled = box.checked;
+    box.disabled = true;
+    if (!(await savePref({ [key]: enabled }))) box.checked = !enabled; // revert — it didn't stick
+    box.disabled = false;
+  });
+}
 
 letterEngineSelect.addEventListener('change', async () => {
   const engine = letterEngineSelect.value;

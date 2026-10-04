@@ -26,7 +26,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.llm.client import BudgetExceededError, DailyQuotaError
-from app.llm.letter.state import LetterState, ProfileIndex
+from app.llm.letter.state import SIDE_OUTPUT_TOOLS, LetterState, ProfileIndex
 from app.models import Experience, LetterRun, LetterRunStep, LlmUsage, Profile
 
 logger = logging.getLogger(__name__)
@@ -94,7 +94,7 @@ def persist(ctx: ToolContext, state: LetterState) -> None:
     ``llm_usage``, so calls made outside a tool (the agent's orchestrator) count too."""
     state.budget.cost_usd = _run_cost(ctx.db, ctx.run.id)
     ctx.run.state = state.model_dump_json()
-    ctx.run.tool_calls = state.budget.tool_calls
+    ctx.run.tool_calls = state.budget.tool_calls + state.budget.side_calls
     ctx.run.cost_usd = state.budget.cost_usd
     ctx.db.commit()
 
@@ -106,9 +106,18 @@ def execute_tool(
     fn: Callable[..., dict[str, Any]],
     **args: Any,
 ) -> ToolResult:
-    """Run ``fn`` as step N of this run, log it, persist the state."""
+    """Run ``fn`` as step N of this run, log it, persist the state.
+
+    A side-output tool (``SIDE_OUTPUT_TOOLS``) counts in ``budget.side_calls``, not
+    against the letter's tool-call cap, and is marked as run (with its error, if any) so
+    it never runs twice. Its failure is data like any other tool's.
+    """
     seq = _next_seq(ctx)
-    state.budget.tool_calls += 1
+    side = name in SIDE_OUTPUT_TOOLS
+    if side:
+        state.budget.side_calls += 1
+    else:
+        state.budget.tool_calls += 1
 
     start = time.monotonic()
     summary: dict[str, Any] | None = None
@@ -124,6 +133,11 @@ def execute_tool(
 
     if error is not None:
         ctx.db.rollback()  # a tool that died mid-write must not leave a half-applied session
+    if side:
+        if name not in state.side_outputs.ran:
+            state.side_outputs.ran.append(name)
+        if error is not None:
+            state.side_outputs.errors[name] = error
     _log_step(ctx, seq, name, args, summary, error, start)
     persist(ctx, state)
     if stop is not None:

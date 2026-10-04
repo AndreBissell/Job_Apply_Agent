@@ -11,14 +11,14 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Callable, Iterable
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.llm.letter import guardrails
 from app.llm.letter.runner import ToolContext, context_for, finish_run, start_run
-from app.llm.letter.state import Draft, JobInfo, LetterState, UserDecision
+from app.llm.letter.state import SIDE_OUTPUT_TOOLS, Draft, JobInfo, LetterState, SideOutputs, UserDecision
 from app.models import JobListing, LetterRun, Match
 
 logger = logging.getLogger(__name__)
@@ -32,7 +32,9 @@ GapPolicy = Callable[[LetterState, ToolContext], None]
 def leave_out_gaps(state: LetterState, ctx: ToolContext) -> None:
     """Treat every undecided must-have gap as ``leave_out`` (no ask_user yet)."""
     for r in state.pending_gaps():
-        r.user_decision = UserDecision(choice="leave_out", answer="unanswered gap left out (no ask_user yet)")
+        r.user_decision = UserDecision(
+            choice="leave_out", answer="unanswered gap left out (no ask_user yet)", assumed=True,
+        )
 
 
 @dataclass
@@ -61,9 +63,13 @@ class Stop(Exception):
         self.status, self.reason = status, reason
 
 
-def open_run(db: Session, job_id: int, profile_id: int, engine: str) -> tuple[LetterState, ToolContext]:
+def open_run(
+    db: Session, job_id: int, profile_id: int, engine: str, side_outputs: Iterable[str] = (),
+) -> tuple[LetterState, ToolContext]:
     """Create the ``letter_runs`` row and an empty state for one scored job.
 
+    ``side_outputs`` names the side-output tools this run may call (the user's toggles);
+    unknown names are ignored, and none means a letter-only run.
     Raises ``ValueError`` when there is nothing to run on: no such job, or the job
     has no match for this profile.
     """
@@ -73,7 +79,11 @@ def open_run(db: Session, job_id: int, profile_id: int, engine: str) -> tuple[Le
     match = db.scalar(select(Match).where(Match.job_id == job_id, Match.user_id == profile_id))
     if match is None:
         raise ValueError(f"job {job_id} has no match for profile {profile_id}: score it first")
-    state = LetterState(profile_id=profile_id, job=JobInfo(job_id=job.id, title=job.title, company=job.company))
+    wanted = set(side_outputs)
+    state = LetterState(
+        profile_id=profile_id, job=JobInfo(job_id=job.id, title=job.title, company=job.company),
+        side_outputs=SideOutputs(enabled=[t for t in SIDE_OUTPUT_TOOLS if t in wanted]),
+    )
     return state, start_run(db, match.id, engine, state)
 
 

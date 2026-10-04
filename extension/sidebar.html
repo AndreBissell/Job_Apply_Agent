@@ -154,6 +154,11 @@
     .letter-notes summary { cursor: pointer; font-weight: 600; color: #6b7280; }
     .letter-notes h5 { margin: 6px 0 2px; font-size: 11px; color: #6b7280; }
     .letter-notes .why { color: #9ca3af; }
+    .side-output .warn { color: #92400e; }
+    .side-output .pref-note { margin: 4px 0; }
+    .screening-answer { margin-top: 6px; padding-top: 4px; border-top: 1px solid #e5e7eb; }
+    .screening-answer h5 { color: #374151; }
+    .screening-answer .answer-text { white-space: pre-wrap; margin: 2px 0 4px; color: #111827; }
 
     /* Profile: origin tag (plan Q12) and the to-work-on list */
     .origin-badge {
@@ -567,6 +572,30 @@
           </select>
         </div>
         <p class="pref-note" id="letter-loop-note"></p>
+        <div class="pref-row">
+          <label class="pref-check" for="side-screening">
+            <input id="side-screening" type="checkbox" checked>
+            <span>Draft answers to screening questions in the ad</span>
+          </label>
+        </div>
+        <div class="pref-row">
+          <label class="pref-check" for="side-learning">
+            <input id="side-learning" type="checkbox" checked>
+            <span>Suggest ways to close gaps you said no to</span>
+          </label>
+        </div>
+        <div class="pref-row">
+          <label class="pref-check" for="side-resume">
+            <input id="side-resume" type="checkbox" checked>
+            <span>Résumé tailoring notes</span>
+          </label>
+        </div>
+        <p class="pref-note">
+          Extras beside a fact-checked letter (not the quick one-pass letters). Each adds
+          one model call to a full run when it has something to work on: résumé notes
+          about 2¢, screening answers about 2¢ (only when the ad asks questions), gap
+          suggestions under 1¢ (only for gaps you said no to).
+        </p>
         <div class="pref-row">
           <span>Job pages opened per Scan Page</span>
           <input id="scan-pages" type="number" min="1" max="25" value="10">

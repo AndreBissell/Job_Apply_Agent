@@ -23,6 +23,7 @@ mechanical items, you grade the judgement items in a CSV.
     python scripts/letter_lab.py run --engine workflow   # Phase 6: the fixed loop (revise <=2, best draft) -> drafts.md + states/
     python scripts/letter_lab.py loop-report <run> [--against tools-v1]   # per-draft checks + revision regressions
     python scripts/letter_lab.py run --engine agent      # Phase 7a: the agent over the same tools; loop-report adds path + overhead
+    python scripts/letter_lab.py run --engine agent --side-outputs all   # Phase 7c: + screening/learning/résumé side outputs
 
 Privacy: evals/jobs/, evals/eval.db, evals/set.json and evals/runs/ hold ad text,
 your profile and letters written as you — all gitignored. Only the summary in
@@ -393,6 +394,26 @@ def _engine_tools(job_id: int):
         return {"text": state.latest_draft.text, "state": state.model_dump(mode="json"), "letter_run_id": ctx.run.id}
 
 
+# Side-output tools the workflow/agent engines offer (``run --side-outputs``). Empty by
+# default, so earlier eval runs stay comparable: a letter-only run, as before Phase 7c.
+SIDE_OUTPUTS: tuple[str, ...] = ()
+
+
+def _side_summary(state) -> dict:
+    """What the side outputs produced, for run.json (counts, not the text)."""
+    so = state.side_outputs
+    notes = so.resume_notes or {}
+    return {
+        "enabled": list(so.enabled), "ran": list(so.ran), "errors": dict(so.errors),
+        "screening_answers": len(so.screening_answers),
+        "screening_verified": sum(1 for a in so.screening_answers if a.get("verified")),
+        "learning_suggestions": len(so.learning_suggestions),
+        "resume_items": {k: len(notes.get(k) or []) for k in
+                         ("lead_with", "keywords_to_mirror", "consider_cutting", "gaps_to_address")},
+        "resume_dropped": notes.get("dropped"),
+    }
+
+
 def _engine_workflow(job_id: int):
     """Phase 6: the fixed workflow (app/llm/letter/workflow.py), exactly as production
     would call it. Revises the latest draft up to twice; when it stops short of a
@@ -403,7 +424,7 @@ def _engine_workflow(job_id: int):
     from app.llm.letter.workflow import run_workflow
 
     with SessionLocal() as db:
-        result = run_workflow(db, job_id, PROFILE_ID)
+        result = run_workflow(db, job_id, PROFILE_ID, side_outputs_enabled=SIDE_OUTPUTS)
     if result.account_limit:
         raise BudgetExceededError(result.account_limit)
     if result.draft is None:
@@ -412,7 +433,7 @@ def _engine_workflow(job_id: int):
         "text": result.draft.text, "state": result.state.model_dump(mode="json"),
         "letter_run_id": result.run_id, "final_version": result.draft.version,
         "status": result.status, "clean": result.clean, "open_issues": result.open_issues,
-        "stop_reason": result.stop_reason,
+        "stop_reason": result.stop_reason, "side_outputs": _side_summary(result.state),
     }
 
 
@@ -430,7 +451,7 @@ def _engine_agent(job_id: int):
     from app.models import LetterRunStep, LlmUsage
 
     with SessionLocal() as db:
-        result = run_agent(db, job_id, PROFILE_ID)
+        result = run_agent(db, job_id, PROFILE_ID, side_outputs_enabled=SIDE_OUTPUTS)
         steps = []
         for st in db.scalars(select(LetterRunStep).where(LetterRunStep.run_id == result.run_id)
                              .order_by(LetterRunStep.seq)):
@@ -454,7 +475,7 @@ def _engine_agent(job_id: int):
         "text": result.draft.text, "state": result.state.model_dump(mode="json"),
         "letter_run_id": result.run_id, "final_version": result.draft.version,
         "status": result.status, "clean": result.clean, "open_issues": result.open_issues,
-        "stop_reason": result.stop_reason, "steps": steps,
+        "stop_reason": result.stop_reason, "steps": steps, "side_outputs": _side_summary(result.state),
         "orchestrator": {"calls": calls, "cost_usd": float(cost), "input_tokens": int(tin),
                          "output_tokens": int(tout)},
     }
@@ -503,6 +524,13 @@ def cmd_run(args) -> int:
     from app.llm.letter.rubric import AUTO_ITEMS, HUMAN_ITEMS, auto_checks
     from app.models import JobListing, Match
 
+    global SIDE_OUTPUTS
+    from app.llm.letter.state import SIDE_OUTPUT_TOOLS
+
+    SIDE_OUTPUTS = SIDE_OUTPUT_TOOLS if args.side_outputs == "all" else ()
+    if SIDE_OUTPUTS and args.engine not in ("workflow", "agent"):
+        print("--side-outputs needs --engine workflow or agent")
+        return 1
     run_id = args.label or f"{datetime.datetime.now():%Y%m%d-%H%M}-{args.engine}"
     run_dir = RUNS_DIR / run_id
     (run_dir / "letters").mkdir(parents=True, exist_ok=True)
@@ -511,6 +539,7 @@ def cmd_run(args) -> int:
 
     meta = {
         "run_id": run_id, "engine": args.engine, "strong_model": client.model_for("strong"),
+        "side_outputs": list(SIDE_OUTPUTS),
         "created_at": datetime.datetime.now().isoformat(timespec="seconds"), "results": [],
     }
     meta_path = run_dir / "run.json"
@@ -570,8 +599,8 @@ def cmd_run(args) -> int:
                 "drafts": len(drafts),
                 "final_version": final_version,
                 "tool_checks": {n: c["passed"] for n, c in final["checks"].items()},
-                **{k: out[k] for k in ("status", "clean", "open_issues", "stop_reason", "steps", "orchestrator")
-                   if k in out},
+                **{k: out[k] for k in ("status", "clean", "open_issues", "stop_reason", "steps", "orchestrator",
+                                       "side_outputs") if k in out},
             }
         text = text or ""
         (run_dir / "letters" / f"{key}.txt").write_text(text, encoding="utf-8")
@@ -1002,7 +1031,8 @@ def _agent_section(rows: list[dict]) -> list[str]:
     table = ["| Job | Steps ((refused) in brackets) | vs workflow | Refused | Orch. calls | Orch. cost | "
              "Share of cost |", "|---|---|---|---|---|---|---|"]
     for r in agent:
-        executed = [s["tool"] for s in r["steps"] if "refused" not in s and s["tool"] != "finish"]
+        executed = [s["tool"] for s in r["steps"]
+                    if "refused" not in s and s["tool"] != "finish" and s["tool"] not in _SIDE_TOOLS]
         expected = _workflow_path(len(r["per_draft"]), asked="ask_user" in executed)
         if executed == expected:
             verdict, same = "same", same + 1
@@ -1040,6 +1070,66 @@ def _agent_section(rows: list[dict]) -> list[str]:
     ]
     if refusal_lines:
         lines += ["", "Refusals (the reason the orchestrator was given):", "", *refusal_lines]
+    return lines
+
+
+_SIDE_TOOLS = ("answer_screening", "suggest_learning", "suggest_resume_tweaks")
+
+
+def _side_section(rows: list[dict]) -> list[str]:
+    """Phase 7c: where in the run each side output was called, what it produced, and the
+    refusals around them (a side tool refused, or finish refused while one was due)."""
+    side = [r for r in rows if r.get("side_outputs", {}).get("enabled")]
+    if not side:
+        return []
+    table = ["| Job | Side outputs run (step n of m; d = drafts before it) | Produced | Side refusals | "
+             "Finish refused for a side output |", "|---|---|---|---|---|"]
+    totals = {t: 0 for t in _SIDE_TOOLS}
+    side_refusals = finish_refusals = before_final = 0
+    refusal_lines: list[str] = []
+    for r in side:
+        so = r["side_outputs"]
+        steps = r.get("steps")
+        where: list[str] = []
+        sr: list[dict] = []
+        fr: list[dict] = []
+        if steps:
+            executed = [s for s in steps if "refused" not in s and s["tool"] != "finish"]
+            for n, s in enumerate(executed, start=1):
+                if s["tool"] in _SIDE_TOOLS:
+                    drafts = sum(1 for x in executed[:n] if x["tool"] in ("generate_letter", "revise_letter"))
+                    where.append(f"{s['tool']} {n}/{len(executed)} (d={drafts})")
+                    if drafts < len(r["per_draft"]):
+                        before_final += 1
+            refused = [s for s in steps if "refused" in s]
+            sr = [s for s in refused if s["tool"] in _SIDE_TOOLS]
+            fr = [s for s in refused if s["tool"] == "finish" and "side output" in s["refused"]]
+            side_refusals += len(sr)
+            finish_refusals += len(fr)
+            refusal_lines += [f"- {r['title'][:40]}: `{s['tool']}`: {s['refused']}" for s in sr + fr]
+        else:
+            where = list(so["ran"])
+        for t in so["ran"]:
+            totals[t] += 1
+        produced = (f"{so['screening_answers']} answers ({so['screening_verified']} verified), "
+                    f"{so['learning_suggestions']} learning, résumé {so['resume_items']}"
+                    + (f", {so['resume_dropped']} dropped" if so.get("resume_dropped") else "")
+                    + (f", **errors {list(so['errors'])}**" if so["errors"] else ""))
+        table.append(f"| {r['title'][:32].replace('|', '/')} | {'<br>'.join(where) or '-'} | {produced} | "
+                     f"{len(sr)} | {len(fr)} |")
+    n = len(side)
+    lines = [
+        "", "## Side outputs (Phase 7c)", "",
+        "Which side-output tools ran, where in the run (step n of m tool calls; d = drafts written before it), "
+        "what they produced, and the refusals around them.", "", *table, "",
+        "| Measure | Value |", "|---|---|",
+        *[f"| {t} ran | {totals[t]}/{n} |" for t in _SIDE_TOOLS],
+        f"| Side tool calls refused by a gate | {side_refusals} |",
+        f"| finish refused while a side output was due | {finish_refusals} |",
+        f"| Side outputs run before the final draft existed | {before_final} |",
+    ]
+    if refusal_lines:
+        lines += ["", "Side-output refusals:", "", *refusal_lines]
     return lines
 
 
@@ -1092,6 +1182,7 @@ def cmd_loop_report(args) -> int:
             ]
     if any("steps" in r for r in rows):
         lines += _agent_section(rows)
+    lines += _side_section(rows)
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     out = RESULTS_DIR / f"{args.run_id}-loop.md"
     out.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -1616,6 +1707,8 @@ def main() -> int:
 
     p = sub.add_parser("run", help="write one letter per set job")
     p.add_argument("--engine", choices=sorted(ENGINES), default="oneshot")
+    p.add_argument("--side-outputs", choices=["none", "all"], default="none",
+                   help="workflow/agent: also offer the Phase 7c side-output tools (default none)")
     p.add_argument("--label", help="run id (default: timestamp-engine)")
     p.add_argument("--only", nargs="+", metavar="KEY", help="just these set keys (e.g. seek-94419843), for a smoke test")
     p.add_argument("--resume", action="store_true",

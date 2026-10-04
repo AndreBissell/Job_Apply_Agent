@@ -399,6 +399,10 @@ class PreferencesUpdate(BaseModel):
     letter_loop_enabled: bool | None = None
     letter_loop_min_score: int | None = Field(default=None, ge=0, le=100)
     letter_engine: Literal["agent", "workflow"] | None = None
+    # The pipeline's side outputs (plan §6): each off = that model call is never made.
+    resume_advice_enabled: bool | None = None
+    learning_suggestions_enabled: bool | None = None
+    screening_answers_enabled: bool | None = None
     llm_search_suggestions: bool | None = None
     # Job pages opened per Scan Page. The upper bound is the Seek access policy's
     # standing cap (CLAUDE.md) — raise it deliberately, don't remove it.

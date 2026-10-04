@@ -53,10 +53,12 @@ def add_match(db, job_id=5, score=90) -> int:
     return job_id
 
 
-def _req(rid, text, *, role="headline", importance="essential", status="supported", decision=None):
+def _req(rid, text, *, role="headline", importance="essential", status="supported", decision=None, skill=None):
+    # The requirement's text doubles as its skill name unless given: these fixtures name
+    # skills ("Power BI"), and view.not_claimed lists skill-less gaps only when asked about.
     return Requirement(id=rid, text=text, importance=importance, letter_role=role, status=status,
                        evidence=["experience:1"] if status == "supported" else [], user_decision=decision,
-                       theme=f"t-{rid}")
+                       theme=f"t-{rid}", skill=text if skill is None else skill)
 
 
 def _state(job_id=5, requirements=(), questions=(), instructions=()) -> LetterState:

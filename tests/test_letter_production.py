@@ -159,8 +159,9 @@ class FakeEngines:
         monkeypatch.setattr(production, "run_letter", self._run)
         monkeypatch.setattr(production, "resume_letter", self._resume)
 
-    def _run(self, db, job_id, profile_id, *, engine):
+    def _run(self, db, job_id, profile_id, *, engine, side_outputs=()):
         self.run_calls.append({"job_id": job_id, "profile_id": profile_id, "engine": engine})
+        self.side_outputs = side_outputs
         for run_id in self.watch:
             db.expire_all()
             self.seen_statuses[run_id] = db.get(LetterRun, run_id).status

@@ -16,8 +16,7 @@ five minutes, read Parts 1 and 5.
 > resumes runs once you have answered their questions. The sidebar shows the question card, the
 > letter with its open issues and what it leaves out, and the "To work on" list. Parts of this
 > document written before Phase 8 (e.g. "Not built yet" in 3.3) describe the earlier state. Phase 7c
-> (screening answers, learning suggestions, résumé notes) is not built. The evals still run through
-> `scripts/letter_lab.py`.
+> (2026-10-04) added the side outputs: see 3.10. The evals still run through `scripts/letter_lab.py`.
 
 ---
 
@@ -447,7 +446,24 @@ It measures `changed_pct` (how much of the text changed) but **does not enforce 
 
 Not a function: the agent loop decides it. It's accepted when `can_finish` passes (all three checks ran
 and passed on the **latest** draft), **or** when the draft limit is reached with every check run (then the
-best draft goes back flagged). Otherwise it's refused with the reason.
+best draft goes back flagged). Otherwise it's refused with the reason. Since Phase 7c it is also refused
+while an enabled side output is **due** (3.10).
+
+## 3.10 The side outputs (Phase 7c): `answer_screening`, `suggest_learning`, `suggest_resume_tweaks`
+
+| | `answer_screening` | `suggest_learning` | `suggest_resume_tweaks` |
+|---|---|---|---|
+| **Job** | Draft answers to the screening questions written in the ad | One concrete way (course, cert, project) to close each gap you said no to | Résumé notes: lead with, keywords to mirror, consider cutting, gaps |
+| **Model** | mid (~2¢) | small (<1¢) | mid (~2¢) |
+| **Due when** | the ad has questions, and the gaps are settled | you confirmed a gap (a "No", now or remembered) | the letter is final (clean, or out of drafts) |
+| **Checked by code** | every cited pointer resolves, each claim's quote is in the answer, no invented links (check_claims stage 1, no judge) | links stripped; only confirmed gaps; order = the to-work-on list | pointers resolve, keywords are in the ad, cuts are in the CV/profile, gaps are real |
+| **Toggle** | `screening_answers_enabled` | `learning_suggestions_enabled` | `resume_advice_enabled` |
+
+Rules (`app/llm/letter/side_outputs.py`): off means the tool isn't offered at all (all three off = exactly
+the Phase 8 run); each runs once; a failure is shown on the card, never fatal to the letter; they aren't
+charged to the letter's 15-call cap (each runs once, so they're bounded anyway); `finish` is refused while
+one is due. The workflow runs the due ones in a fixed order after the letter. The sidebar shows each as a
+collapsed section under the letter, with Copy buttons on the screening answers.
 
 ---
 
@@ -466,7 +482,7 @@ LetterState
 │                 evidence[], status, note, user_decision
 ├─ drafts[]       version, text, claims[], checks{ claims | requirements | style }
 ├─ user_questions[]
-├─ side_outputs   (reserved: screening answers, learning suggestions, résumé notes)
+├─ side_outputs   enabled[], ran[], errors{}, screening_answers[], learning_suggestions[], resume_notes
 └─ budget         drafts 0/3 · tool calls 0/15 · $0.00/$0.50
 ```
 
@@ -670,7 +686,7 @@ one good answer**. Candidates:
 
 - Sidebar question card, idle-loop trigger and resume of `answered` runs (Phase 8).
 - Surfacing `eligibility_notes` and `open_issues` in the sidebar.
-- Side outputs (Phase 7c): only if you ask.
+- Side outputs (Phase 7c): built 2026-10-04.
 
 ### 5.3 A suggested order, if it were me
 
