@@ -26,7 +26,7 @@ that failed check_claims comes back flagged, never as clean (plan §5.7).
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from sqlalchemy.orm import Session
 
@@ -48,8 +48,10 @@ from app.llm.letter.tools.suggest_learning import suggest_learning
 from app.llm.letter.tools.suggest_resume_tweaks import suggest_resume_tweaks
 
 ENGINE = "workflow"
-# Revisions after draft 1. With Budget.max_drafts = 3 a full run is 14 tool calls:
-# analyze + match + generate + 3 checks + 2 x (revise + 3 checks), inside max_tool_calls 15.
+# Revisions after draft 1 at the default Budget.max_drafts = 3: a full run is then 14 tool
+# calls (analyze + match + generate + 3 checks + 2 x (revise + 3 checks)), inside
+# max_tool_calls 15. The run's actual limit is max_drafts - 1 (the user's preference), unless a
+# caller passes max_revisions.
 MAX_REVISIONS = 2
 
 CHECKS: tuple[tuple[str, Callable[..., dict[str, Any]]], ...] = (
@@ -78,9 +80,10 @@ def run_workflow(
     profile_id: int,
     *,
     gap_policy: GapPolicy = leave_out_gaps,
-    max_revisions: int = MAX_REVISIONS,
+    max_revisions: int | None = None,
     engine: str = ENGINE,
     side_outputs_enabled: tuple[str, ...] = (),
+    limits: Mapping[str, float] | None = None,
 ) -> LetterResult:
     """Write one cover letter for a scored job, in a fixed order of tool calls.
 
@@ -89,7 +92,7 @@ def run_workflow(
     nothing to run on (no such job, or the job has no match for this profile);
     every other way a run can end is a ``LetterResult``.
     """
-    state, ctx = open_run(db, job_id, profile_id, engine, side_outputs_enabled)
+    state, ctx = open_run(db, job_id, profile_id, engine, side_outputs_enabled, limits)
     return _drive(state, ctx, gap_policy, max_revisions)
 
 
@@ -98,7 +101,7 @@ def resume_workflow(
     run_id: int,
     *,
     gap_policy: GapPolicy = leave_out_gaps,
-    max_revisions: int = MAX_REVISIONS,
+    max_revisions: int | None = None,
 ) -> LetterResult:
     """Continue a run the user has answered every ask_user question for. It skips what
     is already done: analysis, and the matching of every requirement the user did not
@@ -107,7 +110,11 @@ def resume_workflow(
     return _drive(state, ctx, gap_policy, max_revisions)
 
 
-def _drive(state: LetterState, ctx: ToolContext, gap_policy: GapPolicy, max_revisions: int) -> LetterResult:
+def _drive(
+    state: LetterState, ctx: ToolContext, gap_policy: GapPolicy, max_revisions: int | None,
+) -> LetterResult:
+    if max_revisions is None:  # one limit: the drafts the run may write (draft 1 + revisions)
+        max_revisions = max(state.budget.max_drafts - 1, 0)
     def step(name: str, fn: Callable[..., dict[str, Any]]) -> None:
         limit = state.budget_exceeded()
         if limit:

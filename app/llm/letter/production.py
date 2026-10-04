@@ -282,7 +282,7 @@ def _run_pipeline(db: Session, job_id: int, profile_id: int, emit: Emit | None, 
             result = resume_letter(db, run_id)
         else:
             result = run_letter(db, job_id, profile_id, engine=settings["engine"],
-                                side_outputs=settings["side_outputs"])
+                                side_outputs=settings["side_outputs"], limits=settings["limits"])
     except Exception as exc:  # noqa: BLE001 — the engines record the run as failed, then re-raise
         logger.exception("letter run failed for job %s", job_id)
         db.rollback()

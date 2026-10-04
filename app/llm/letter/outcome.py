@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Callable, Iterable
+from typing import Callable, Iterable, Mapping
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -63,13 +63,20 @@ class Stop(Exception):
         self.status, self.reason = status, reason
 
 
+LIMIT_FIELDS = ("max_drafts", "max_tool_calls", "max_cost_usd")
+
+
 def open_run(
     db: Session, job_id: int, profile_id: int, engine: str, side_outputs: Iterable[str] = (),
+    limits: Mapping[str, float] | None = None,
 ) -> tuple[LetterState, ToolContext]:
     """Create the ``letter_runs`` row and an empty state for one scored job.
 
     ``side_outputs`` names the side-output tools this run may call (the user's toggles);
-    unknown names are ignored, and none means a letter-only run.
+    unknown names are ignored, and none means a letter-only run. ``limits`` sets the run's
+    ``Budget`` (``max_drafts``, ``max_tool_calls``, ``max_cost_usd``: the user's preferences,
+    ``preferences.letter_settings()["limits"]``); a missing key keeps the default, and the
+    values live in the persisted state, so a resumed run keeps the limits it opened with.
     Raises ``ValueError`` when there is nothing to run on: no such job, or the job
     has no match for this profile.
     """
@@ -84,6 +91,9 @@ def open_run(
         profile_id=profile_id, job=JobInfo(job_id=job.id, title=job.title, company=job.company),
         side_outputs=SideOutputs(enabled=[t for t in SIDE_OUTPUT_TOOLS if t in wanted]),
     )
+    for key in LIMIT_FIELDS:
+        if limits and limits.get(key) is not None:
+            setattr(state.budget, key, limits[key])
     return state, start_run(db, match.id, engine, state)
 
 

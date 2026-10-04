@@ -5,6 +5,14 @@ one block per milestone.
 
 ---
 
+## 2026-10-04 — Loose ends after the 7/8 audit — DONE ✅
+
+- The three per-run limits (`letter_max_drafts`, `letter_max_tool_calls`, `llm_run_budget_usd`) are wired from preferences into every new run, with bounds, validation on read and sidebar inputs (14/14 browser checks). `python -m pytest -q`: 1126 passed (118 new, Sonnet-written to a spec, reviewed).
+- Live gap + screening run ($0.20, scratch copy of real.db): screening questions found and answered honestly; ask_user / suggest_learning not triggered (the must-have matched as partial). Real profile issues found: summary is "s", visa/work status empty.
+- future_work/: `check-claims-leaks.md`, `gemini-prompt-caching.md` added; voice note updated.
+
+---
+
 ## 2026-10-04 — Cover-letter Phase 7c: side outputs — DONE ✅
 
 **Built**

@@ -26,6 +26,11 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from app.models import Profile
+from app.preferences import (
+    DEFAULT_LETTER_MAX_DRAFTS,
+    DEFAULT_LETTER_MAX_TOOL_CALLS,
+    DEFAULT_LLM_RUN_BUDGET_USD,
+)
 
 # ---------------------------------------------------------------------------
 # Evidence pointers
@@ -281,15 +286,17 @@ class SideOutputs(BaseModel):
 
 
 class Budget(BaseModel):
+    # The three limits open at the user's preferences (``open_run(limits=...)``); these
+    # defaults are the same constants, for states built without them (the evals, old runs).
     drafts_used: int = 0
-    max_drafts: int = 3
+    max_drafts: int = DEFAULT_LETTER_MAX_DRAFTS
     tool_calls: int = 0  # the letter's tools: what max_tool_calls caps
-    max_tool_calls: int = 15
+    max_tool_calls: int = DEFAULT_LETTER_MAX_TOOL_CALLS
     # Side-output tool calls, counted apart: each runs at most once, so they are bounded
     # without the cap, and charging them to it would let them crowd out a revision.
     side_calls: int = 0
     cost_usd: float = 0.0  # every call of the run, side outputs and orchestrator included
-    max_cost_usd: float = 0.50
+    max_cost_usd: float = DEFAULT_LLM_RUN_BUDGET_USD
 
     def over_cost(self) -> bool:
         return self.cost_usd >= self.max_cost_usd

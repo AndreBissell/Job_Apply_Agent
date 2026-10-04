@@ -25,3 +25,5 @@ not now", plus why it was put off and what doing it would involve.
 | Task | Put off | Waiting on |
 |---|---|---|
 | [Voice toggle + comparison](voice-toggle-and-comparison.md): make the writing-sample personalisation switchable, then test whether it makes letters sound more like you without making them worse | 2026-10-03 | The cover-letter agent being finished (Phase 6+) |
+| [check_claims leaks](check-claims-leaks.md): the fact-checker passes invented attachments ("I have included a link to a video"), "daily" frequency claims and "apply my skills in X" for a listed-only skill | 2026-10-04 | The user's go-ahead to tune letters again |
+| [Gemini prompt caching](gemini-prompt-caching.md): `cached_tokens` is always 0, so the implicit prefix cache the prompts were ordered for never saves anything | 2026-10-04 | Nothing; do before the trial ends (~2026-12-30) |

@@ -386,10 +386,19 @@ failures shown never fatal, NOT charged to `max_tool_calls` (`budget.side_calls`
 applies), the agent's finish refused while one is due, the workflow runs them in a fixed order after
 the letter. Stored in `letter_runs.state.side_outputs` (no DDL); sidebar shows collapsed sections
 (Copy on screening answers) + 3 Personalise checkboxes. Quick-Apply overlay skipped. `view.not_claimed`
-no longer lists skill-less gaps nobody asked about. 1008 tests; sidebar checked with no LLM (27 checks).
+no longer lists skill-less gaps nobody asked about. 1008 tests at 7c (1126 after the limits wiring); sidebar checked with no LLM (27 checks).
 Eval `agent-v2-side` ($3.41): $0.227/letter, 229 s, 15/15 clean, same path as the workflow 15/15,
 0 refusals; résumé notes ran 15/15 as the last tool on the final draft ($0.012/letter). The eval set
 has no screening questions, confirmed gaps or CVs, so the other two never fired: untested on a model.
+Per-run limits WIRED (2026-10-04): `letter_max_drafts` (1-5, 3), `letter_max_tool_calls` (6-40, 15),
+`llm_run_budget_usd` (0.05-5, $0.50) -> `letter_settings()["limits"]` -> `open_run` copies them into
+`state.budget` (a resumed run keeps its own); workflow revisions = max_drafts - 1; sidebar inputs in
+Personalise. Live gap run ($0.20, scratch copy of real.db, Tabcorp ad + 3 appended screening
+questions): screening found and answered honestly (all three "answer this yourself"), résumé notes
+fine, but match_profile rated React Native/Flutter *partial* (React.js), so ask_user and
+suggest_learning were still not exercised on a model. The real profile's summary is "s" and its
+visa/work status is empty. Deferred tasks live in future_work/ (one file per task, indexed in its
+README): voice toggle, check_claims leaks, Gemini prompt caching.
 Next: whatever the user names. Known follow-ups (plan
 Decision log 2026-10-04): check_claims passes "I have included a link to a video"
 (invented attachment), "daily" frequency claims and "apply my skills in X" on a listing;

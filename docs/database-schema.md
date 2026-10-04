@@ -95,6 +95,13 @@ Cover-letter pipeline keys (validated on read by `preferences.letter_settings`):
 `letter_engine` (`agent` | `workflow`), and the side-output toggles
 `resume_advice_enabled`, `learning_suggestions_enabled`,
 `screening_answers_enabled` (bool, all True; a non-bool reads as True).
+Per-run limits (validated on read against `preferences.LIMIT_BOUNDS`; a bad or
+out-of-range value reads as the default): `letter_max_drafts` (int 1-5, default 3),
+`letter_max_tool_calls` (int 6-40, default 15; side outputs don't count),
+`llm_run_budget_usd` (0.05-5.0, default 0.50). A new run copies them into
+`letter_runs.state.budget`, so changing them never affects a run already open or
+paused. The daily / total caps `llm_daily_budget_usd` ($5) and `llm_total_budget_usd`
+($200) are read by the budget guard in `app/llm/client.py`.
 Retention keys (validated on read in `app/retention.py`; bad values fall back
 to the default): `retention_window_days` (122), `retention_floor_matches`
 (150), `screenshot_ttl_days` (30), `stale_profile_weight` (0.35), plus

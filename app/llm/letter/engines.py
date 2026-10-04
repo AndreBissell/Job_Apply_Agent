@@ -13,6 +13,8 @@ app calls them automatically.
 
 from __future__ import annotations
 
+from typing import Mapping
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -33,14 +35,17 @@ def run_letter(
     engine: str = DEFAULT_ENGINE,
     gap_policy: GapPolicy = ask_user_gaps,
     side_outputs: tuple[str, ...] = (),
+    limits: Mapping[str, float] | None = None,
 ) -> LetterResult:
-    """``side_outputs`` names the side-output tools the run may call (the user's toggles,
-    ``preferences.letter_settings``); a resumed run keeps the ones it started with."""
+    """``side_outputs`` names the side-output tools the run may call and ``limits`` its max
+    drafts / tool calls / USD (the user's preferences, ``preferences.letter_settings``); a
+    resumed run keeps the ones it started with."""
     if engine == agent.ENGINE:
-        return agent.run_agent(db, job_id, profile_id, gap_policy=gap_policy, side_outputs_enabled=side_outputs)
+        return agent.run_agent(db, job_id, profile_id, gap_policy=gap_policy,
+                               side_outputs_enabled=side_outputs, limits=limits)
     if engine == workflow.ENGINE:
         return workflow.run_workflow(db, job_id, profile_id, gap_policy=gap_policy,
-                                     side_outputs_enabled=side_outputs)
+                                     side_outputs_enabled=side_outputs, limits=limits)
     raise ValueError(f"unknown letter engine {engine!r}; expected one of {ENGINES}")
 
 

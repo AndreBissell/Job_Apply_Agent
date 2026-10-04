@@ -60,7 +60,7 @@ from app.models import (
     Skill,
     UserCv,
 )
-from app.preferences import get_preferences, set_preferences
+from app.preferences import LIMIT_BOUNDS, get_preferences, set_preferences
 from app.screenshots import downscale_png, unlink_screenshot
 
 logger = logging.getLogger(__name__)
@@ -403,6 +403,14 @@ class PreferencesUpdate(BaseModel):
     resume_advice_enabled: bool | None = None
     learning_suggestions_enabled: bool | None = None
     screening_answers_enabled: bool | None = None
+    # Per-run limits of the pipeline (plan 7); bounds in preferences.LIMIT_BOUNDS. A run
+    # that reaches one stops with its best draft and the open issues flagged.
+    letter_max_drafts: int | None = Field(default=None, ge=LIMIT_BOUNDS["letter_max_drafts"][0],
+                                          le=LIMIT_BOUNDS["letter_max_drafts"][1])
+    letter_max_tool_calls: int | None = Field(default=None, ge=LIMIT_BOUNDS["letter_max_tool_calls"][0],
+                                              le=LIMIT_BOUNDS["letter_max_tool_calls"][1])
+    llm_run_budget_usd: float | None = Field(default=None, ge=LIMIT_BOUNDS["llm_run_budget_usd"][0],
+                                             le=LIMIT_BOUNDS["llm_run_budget_usd"][1])
     llm_search_suggestions: bool | None = None
     # Job pages opened per Scan Page. The upper bound is the Seek access policy's
     # standing cap (CLAUDE.md) — raise it deliberately, don't remove it.

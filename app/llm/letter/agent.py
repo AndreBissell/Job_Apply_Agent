@@ -27,7 +27,7 @@ When it stops short it returns exactly what the workflow would: ``outcome.conclu
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Mapping
 
 from sqlalchemy.orm import Session
 
@@ -118,14 +118,16 @@ def run_agent(
     tier: str = ORCHESTRATOR_TIER,
     max_refusals: int = MAX_REFUSALS,
     side_outputs_enabled: tuple[str, ...] = (),
+    limits: Mapping[str, float] | None = None,
 ) -> LetterResult:
     """Write one cover letter for a scored job, with a model choosing each step.
 
     Same contract as ``workflow.run_workflow``: raises ``ValueError`` only when there
     is no job/match to run on; every other ending is a ``LetterResult``.
-    ``side_outputs_enabled`` names the side-output tools offered (none by default).
+    ``side_outputs_enabled`` names the side-output tools offered (none by default); ``limits`` the
+    run's max drafts / tool calls / USD (see ``outcome.open_run``).
     """
-    state, ctx = open_run(db, job_id, profile_id, engine, side_outputs_enabled)
+    state, ctx = open_run(db, job_id, profile_id, engine, side_outputs_enabled, limits)
     return _drive(state, ctx, gap_policy, tier, max_refusals, [], "none yet: this is the first turn")
 
 

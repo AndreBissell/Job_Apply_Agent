@@ -25,6 +25,20 @@ DEFAULT_AUTO_LETTER_MIN_SCORE = 75
 DEFAULT_LETTER_LOOP_MIN_SCORE = 85
 LETTER_ENGINES = ("agent", "workflow")  # which pipeline; the agent is the default (2026-10-03)
 DEFAULT_LETTER_ENGINE = "agent"
+
+# Per-run limits of the cover-letter pipeline (plan 5.5/5.7/7), each stopped in code:
+# at a limit a run hands back the best draft so far with its open issues, never a crash.
+# A full run with N drafts is 4N+2 letter tool calls (analyze, match, generate, 3 checks,
+# then revise + 3 checks per extra draft); the side outputs are not counted (they have their
+# own once-each bound). The bounds keep a typo from making every run stop at once.
+DEFAULT_LETTER_MAX_DRAFTS = 3
+DEFAULT_LETTER_MAX_TOOL_CALLS = 15
+DEFAULT_LLM_RUN_BUDGET_USD = 0.50
+LIMIT_BOUNDS = {
+    "letter_max_drafts": (1, 5),
+    "letter_max_tool_calls": (6, 40),
+    "llm_run_budget_usd": (0.05, 5.0),
+}
 # Side-output tool -> the preference that switches it on (app/llm/letter/side_outputs.py
 # reads it from here, so this module needs no LLM imports).
 SIDE_OUTPUT_TOGGLES = {
@@ -75,10 +89,14 @@ DEFAULTS: dict = {
     # LLM spend caps (USD), enforced in app/llm/client.py before any mid/strong
     # call; `small` calls are never blocked. Placeholders until llm_usage shows
     # real costs (docs/cover-letter-loop-plan.md Q8). llm_run_budget_usd is the
-    # per-letter-run cap, used by the cover-letter agent (not built yet).
+    # per-letter-run cap: every call of one pipeline run (side outputs and the agent's
+    # orchestrator included) counts towards it.
     "llm_daily_budget_usd": 5.0,
     "llm_total_budget_usd": 200.0,
-    "llm_run_budget_usd": 0.5,
+    "llm_run_budget_usd": DEFAULT_LLM_RUN_BUDGET_USD,
+    # Max drafts (draft 1 + revisions) and max tool calls of one pipeline run. See LIMIT_BOUNDS.
+    "letter_max_drafts": DEFAULT_LETTER_MAX_DRAFTS,
+    "letter_max_tool_calls": DEFAULT_LETTER_MAX_TOOL_CALLS,
 }
 
 
@@ -114,6 +132,18 @@ def get_auto_letter_min_score(db: Session, profile_id: int) -> int:
     return value if isinstance(value, int) and 0 <= value <= 100 else DEFAULT_AUTO_LETTER_MIN_SCORE
 
 
+def _bounded(value, key: str, default, kind: type):
+    """A stored limit if it is a real number of the right kind inside LIMIT_BOUNDS, else
+    the default (a bad value must not stop every run, or lift its cap)."""
+    lo, hi = LIMIT_BOUNDS[key]
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return default
+    if kind is int and not (isinstance(value, int) or float(value).is_integer()):
+        return default
+    value = kind(value)
+    return value if lo <= value <= hi else default
+
+
 def letter_settings(db: Session, profile_id: int) -> dict:
     """The cover-letter pipeline's settings, each validated: a bad stored value falls
     back to its default instead of breaking the idle loop (the same stance as
@@ -129,6 +159,12 @@ def letter_settings(db: Session, profile_id: int) -> dict:
     engine = prefs["letter_engine"]
     # tool -> its toggle; a non-bool stored value reads as the default (on)
     side = [tool for tool, key in SIDE_OUTPUT_TOGGLES.items() if prefs.get(key) is not False]
+    limits = {
+        "max_drafts": _bounded(prefs["letter_max_drafts"], "letter_max_drafts", DEFAULT_LETTER_MAX_DRAFTS, int),
+        "max_tool_calls": _bounded(
+            prefs["letter_max_tool_calls"], "letter_max_tool_calls", DEFAULT_LETTER_MAX_TOOL_CALLS, int),
+        "max_cost_usd": _bounded(prefs["llm_run_budget_usd"], "llm_run_budget_usd", DEFAULT_LLM_RUN_BUDGET_USD, float),
+    }
     return {
         "auto_min_score": auto_min,
         "enabled": enabled if isinstance(enabled, bool) else True,
@@ -136,4 +172,5 @@ def letter_settings(db: Session, profile_id: int) -> dict:
         "pipeline_min_score": max(auto_min, loop_min),
         "engine": engine if engine in LETTER_ENGINES else DEFAULT_LETTER_ENGINE,
         "side_outputs": tuple(side),  # the side-output tools a new pipeline run may call
+        "limits": limits,  # the Budget fields a new pipeline run opens with
     }

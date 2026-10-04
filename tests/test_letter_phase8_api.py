@@ -217,6 +217,7 @@ class TestLetterSettings:
             "auto_min_score": 75, "enabled": True, "loop_min_score": 85, "pipeline_min_score": 85,
             "engine": "agent",
             "side_outputs": ("answer_screening", "suggest_learning", "suggest_resume_tweaks"),
+            "limits": {"max_drafts": 3, "max_tool_calls": 15, "max_cost_usd": 0.5},
         }
 
     def test_the_effective_pipeline_bar_is_the_higher_of_the_two(self, db):

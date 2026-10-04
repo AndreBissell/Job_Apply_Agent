@@ -45,6 +45,9 @@ the finished agent is a better use of the grading effort.
   (`tools-v1`), and "What I took from" from 3 letters to 0, but "the most relevant ...
   I can point to" still appears in 4 of 9. The copy check below would catch it; it
   could be a `style_lint` warning (the lint tool can read `ctx.profile.writing_sample`).
+- Status 2026-10-04 (writer v3, Phases 7-8): still open. The writer still copies one stock
+  line from the writing sample into some letters (plan Decision log 2026-10-04, follow-up
+  (4)). Nothing has been built for it yet: no copy check in `style_lint` and no voice switch.
 
 ## How (rough)
 

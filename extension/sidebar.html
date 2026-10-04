@@ -597,6 +597,28 @@
           suggestions under 1¢ (only for gaps you said no to).
         </p>
         <div class="pref-row">
+          <span>Max drafts per letter</span>
+          <input id="limit-drafts" type="number" min="1" max="5" step="1" value="3">
+          <button class="btn" id="limit-drafts-save">Save</button>
+        </div>
+        <div class="pref-row">
+          <span>Max tool calls per letter</span>
+          <input id="limit-tools" type="number" min="6" max="40" step="1" value="15">
+          <button class="btn" id="limit-tools-save">Save</button>
+        </div>
+        <div class="pref-row">
+          <span>Max spend per letter (US$)</span>
+          <input id="limit-usd" type="number" min="0.05" max="5" step="0.05" value="0.50">
+          <button class="btn" id="limit-usd-save">Save</button>
+        </div>
+        <p class="pref-note" id="limits-note">
+          Limits for one fact-checked letter. A letter that reaches one stops with its best
+          draft so far, and the sidebar lists what is still wrong with it. Each extra draft
+          needs 4 more tool calls (a full run with 3 drafts uses 14); the extras above don't
+          count towards the tool calls, but they do count towards the spend. Applies to
+          letters started after you save.
+        </p>
+        <div class="pref-row">
           <span>Job pages opened per Scan Page</span>
           <input id="scan-pages" type="number" min="1" max="25" value="10">
           <button class="btn" id="scan-pages-save">Save</button>

@@ -1359,6 +1359,51 @@ const letterLoopInput = document.getElementById('letter-loop-min');
 const letterLoopSaveBtn = document.getElementById('letter-loop-save');
 const letterEngineSelect = document.getElementById('letter-engine');
 const letterLoopNote = document.getElementById('letter-loop-note');
+// Per-letter limits of the pipeline (plan §7): preference key -> [input, save button, min, max,
+// whole numbers only?]. The bounds match the API's (preferences.LIMIT_BOUNDS).
+const letterLimits = {
+  letter_max_drafts: [document.getElementById('limit-drafts'), document.getElementById('limit-drafts-save'), 1, 5, true],
+  letter_max_tool_calls: [document.getElementById('limit-tools'), document.getElementById('limit-tools-save'), 6, 40, true],
+  llm_run_budget_usd: [document.getElementById('limit-usd'), document.getElementById('limit-usd-save'), 0.05, 5, false],
+};
+const limitValues = { letter_max_drafts: 3, letter_max_tool_calls: 15, llm_run_budget_usd: 0.5 };
+const limitsNote = document.getElementById('limits-note');
+
+function showLimit(key) {
+  const [input, , , , whole] = letterLimits[key];
+  input.value = whole ? String(limitValues[key]) : limitValues[key].toFixed(2);
+}
+
+// Warn when the tool-call cap can't fit the drafts allowed (4 per draft + 2).
+function updateLimitsNote() {
+  const needed = 4 * limitValues.letter_max_drafts + 2;
+  const warn = limitsNote.querySelector('.warn') || limitsNote.appendChild(mk('span', 'warn'));
+  warn.textContent = limitValues.letter_max_tool_calls < needed
+    ? ` Note: ${limitValues.letter_max_drafts} drafts need about ${needed} tool calls, so a run may stop before its last draft.`
+    : '';
+}
+
+for (const [key, [input, btn, min, max, whole]] of Object.entries(letterLimits)) {
+  btn.addEventListener('click', async () => {
+    const value = whole ? Number(input.value) : Math.round(Number(input.value) * 100) / 100;
+    if (!Number.isFinite(value) || value < min || value > max || (whole && !Number.isInteger(value))) {
+      showLimit(key); // out of range — snap back, don't save
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = '…';
+    if (await savePref({ [key]: value })) {
+      limitValues[key] = value;
+      showLimit(key);
+      updateLimitsNote();
+      btn.textContent = 'Saved ✓';
+    } else {
+      btn.textContent = 'Error';
+    }
+    setTimeout(() => { btn.textContent = 'Save'; btn.disabled = false; }, 1500);
+  });
+}
+
 // The pipeline's side outputs (plan §6): preference key -> its checkbox. All default on.
 const sideOutputToggles = {
   screening_answers_enabled: document.getElementById('side-screening'),
@@ -1427,6 +1472,12 @@ async function loadPreferences() {
     if (prefs.letter_engine === 'agent' || prefs.letter_engine === 'workflow') letterEngine = prefs.letter_engine;
     letterEngineSelect.value = letterEngine;
     for (const [key, box] of Object.entries(sideOutputToggles)) box.checked = prefs[key] !== false;
+    for (const [key, [, , min, max, whole]] of Object.entries(letterLimits)) {
+      const v = prefs[key];
+      if (typeof v === 'number' && v >= min && v <= max && (!whole || Number.isInteger(v))) limitValues[key] = v;
+      showLimit(key);
+    }
+    updateLimitsNote();
     updateLetterLoopNote();
   } catch { /* backend down — keep defaults; loadJobs shows its own error */ }
 }
