@@ -10,9 +10,14 @@ start to finish. Part 3 goes tool by tool. Part 4 covers the rules, the engine l
 pause/resume. Part 5 is the optimisation map. Part 6 is a file map and glossary. If you only have
 five minutes, read Parts 1 and 5.
 
-> **Status caveat.** Nothing in the app calls this pipeline automatically yet. Production letters
-> are still the one-shot `cover_letter.py` until Phase 8 (idle-loop trigger and sidebar) is built.
-> Everything here runs today through `scripts/letter_lab.py` and the API in `app/api/letters.py`.
+> **Status caveat (updated 2026-10-04, Phase 8).** The app now runs this pipeline. The idle loop
+> starts a run for each match at or above the pipeline bar (`letter_loop_min_score`, default 85;
+> matches between the auto-letter score and that bar still get the one-shot `cover_letter.py`), and
+> resumes runs once you have answered their questions. The sidebar shows the question card, the
+> letter with its open issues and what it leaves out, and the "To work on" list. Parts of this
+> document written before Phase 8 (e.g. "Not built yet" in 3.3) describe the earlier state. Phase 7c
+> (screening answers, learning suggestions, résumé notes) is not built. The evals still run through
+> `scripts/letter_lab.py`.
 
 ---
 
@@ -187,6 +192,23 @@ START  open_run: create a letter_runs row + an empty notebook (LetterState)
 10. finish   → accepted (all three passed on the LATEST draft)
      result: draft 2, clean = True
 ```
+
+**Why are all three checks rerun after every revision, even if only one failed?**
+
+There are two separate rules here, and they're easy to blur together:
+
+1. *Before* revising, all three checks must have run on the current draft (`can_revise`). The reviser then
+   fixes every failure in one pass. Otherwise a draft with a bad claim and an extra em dash could cost two
+   Pro revisions: one for whichever check failed first, and a second for the one found afterwards.
+2. *After* revising, all three run again on the new draft. A revision returns the **whole letter** with a
+   fresh claims list, not a patch, so any sentence can have changed. Fixing an em dash can reword a
+   sentence and quietly make a claim untrue, or push a must-cover item out. A pass on draft 1 proves
+   nothing about draft 2, so checks are stored *on the draft* and a new draft starts with none.
+
+Rerunning is cheap for two of the three: `style_lint` is free and `check_requirements` is about $0.001.
+The real cost is `check_claims` (about $0.017 and 24 s per call). That's where a "style-only fix doesn't
+need a claims recheck" shortcut would save money, and also where it would be unsafe unless the edit is
+known not to touch any factual sentence. See lever 5 in Part 5.
 
 What the numbers look like in practice (agent-v1, 15 ads): a letter averages **0.4 revisions**, so most
 letters are just steps 1, 2, 4, 5-7 and finish. (0.4 is an average, so the report doesn't say how many
@@ -600,9 +622,12 @@ tested with `letter_lab.py run` + `cost-report` + `loop-report` + the grading pa
    the profile instead of applying it to the employer's work, plus generic closes. That's what v3 targets.
 5. **Cheap deterministic fixes for style failures.** Many style failures (an extra em dash) are fixable
    with no model call. Today any failed check, including a one-dash overage, triggers a full Pro revision.
-   *Idea:* patch trivial style issues in code, or run `style_lint` first and only call the model for what
-   code can't fix. *Caveat:* the "all three checks run before revising" rule exists to avoid spending two
-   drafts on one fix, so a change here must keep that property.
+   *Idea:* patch trivial style issues in code (swap an extra em dash for a comma), or run `style_lint` first
+   and only call the model for what code can't fix. A code-only patch changes no facts, so it could skip the
+   `check_claims` rerun (about $0.017 and 24 s), which a model revision can never safely do.
+   *Caveats:* the "all three checks run before revising" rule exists to avoid spending two drafts on one fix,
+   so a change here must keep that property. And the patch must really be mechanical: an em dash swap is
+   safe, rewording a sentence is not, because that is exactly how a true claim becomes an overstated one.
 6. **Enforce `changed_pct`.** It's measured but never limited. A cap would catch "revision" calls that are
    really rewrites.
 

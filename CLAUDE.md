@@ -370,8 +370,9 @@ has `letter_run`; `GET /jobs/{id}/letter-info`. Sidebar: "Needs Your Answer" gro
 (Yes + text -> editable proposed rows -> confirm; No), open issues / "left out" / eligibility /
 application-instruction notes, Personalise controls, To work on + origin tags in both profile
 editors. 846 tests. Verified by driving the real sidebar page against a scratch DB with no LLM
-(35 checks); NOT verified in the loaded extension (SSE live, chrome.tabs) or with a real model run
-through the idle loop. CAUTION: `scripts/run_api.py` runs uvicorn with reload=True, so a running
+(35 checks), then LIVE ($0.14): the loaded extension against a scratch test DB running the real idle
+loop; ask_user fired on a real ad, Yes/confirm and No worked, the loop resumed the answered run and
+the letter landed, all over live SSE (plan Decision log 2026-10-04). CAUTION: `scripts/run_api.py` runs uvicorn with reload=True, so a running
 real server picks up code edits; with real.db's `auto_cover_letter_min_score` at 99 it starts no
 letters, but lowering it starts the pipeline (~20¢ each) for matches at the bar.
 Next: Phase 7c (side outputs + their sidebar sections), only on the user's go-ahead. Known follow-ups (plan

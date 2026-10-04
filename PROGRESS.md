@@ -18,7 +18,9 @@ one block per milestone.
 - The real sidebar page driven in Chromium (stubbed `chrome.*`) against a scratch copy of the test DB with the idle loop off and every LLM function raising: 35 checks (question card Yes/edit/confirm and No, run -> answered, flagged and edited letters, failed/writing cards, Personalise round-trip, To work on + clear, profile save keeps ask_user rows). No Gemini call; real.db and app.db untouched.
 - That run found and fixed a 7b bug: the editors lacked the `university_project` / `assignment` types, so a profile save retyped ask_user rows to `job`.
 
-**Not verified:** the loaded extension (live SSE, chrome.tabs), a real model run through the idle loop, ask_user on a real ad.
+- Live ($0.1375, approved): the loaded extension (real `chrome.*`, port 8000 blocked) against a scratch test DB with the real idle loop and one crafted ad. ask_user fired (first time on a real model analysis), a Yes was parsed and confirmed, a No remembered, the loop resumed the answered run, the letter passed all checks on draft 1 and landed; every card change arrived over live SSE.
+
+**Not verified:** Chrome's real side panel (the page ran as an extension tab), and the pipeline on a real Seek capture.
 
 **Next up:** Phase 7c (side outputs), on the user's go-ahead.
 
