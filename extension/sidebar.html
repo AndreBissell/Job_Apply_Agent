@@ -113,6 +113,60 @@
     }
     .cl-badge.ready { color: #059669; }
     .cl-badge.pending { color: #9ca3af; font-weight: 500; }
+    .cl-badge.question { color: #b45309; }
+    .cl-badge.writing { color: #2557a7; font-weight: 500; }
+    .cl-badge.failed { color: #b91c1c; }
+    .elig-note { font-size: 11px; color: #92400e; margin-top: 3px; }
+    li.section-header.question { color: #b45309; border-top: 2px solid #f59e0b; }
+    body.w-wide ul#job-list li.section-header.question { border-top: 2px solid #f59e0b; }
+
+    /* Cover-letter run UI: the question card, the letter's notes */
+    .qcard {
+      margin-top: 8px; padding: 8px 10px; border: 1px solid #fcd34d; background: #fffbeb;
+      border-radius: 8px; cursor: default;
+    }
+    .qcard h4 { margin: 0 0 6px; font-size: 12px; color: #78350f; }
+    .qcard .q { margin: 8px 0 0; padding-top: 8px; border-top: 1px solid #fde68a; }
+    .qcard .q:first-of-type { border-top: none; padding-top: 0; margin-top: 0; }
+    .qcard .q-prompt { font-size: 12px; color: #1c2330; margin-bottom: 4px; }
+    .qcard textarea { min-height: 64px; margin-top: 2px; }
+    .qcard .q-actions { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+    .qcard .q-done { font-size: 11px; color: #059669; }
+    .qcard .q-err { font-size: 11px; color: #b91c1c; margin-top: 4px; }
+    .qcard .proposal { background: #fff; border: 1px solid #e5e7eb; border-radius: 6px; padding: 6px 8px; margin-top: 4px; }
+    .qcard .proposal h5 { margin: 6px 0 2px; font-size: 11px; color: #6b7280; text-transform: uppercase; letter-spacing: .04em; }
+    .qcard .proposal label { display: block; font-size: 11px; color: #6b7280; margin-top: 4px; }
+    .qcard .proposal input, .qcard .proposal select, .qcard .proposal textarea {
+      width: 100%; padding: 4px 6px; border: 1px solid #d1d5db; border-radius: 5px;
+      font-size: 12px; font-family: inherit; color: #1c2330; background: #fff;
+    }
+    .qcard .proposal textarea { min-height: 48px; }
+    .qcard .proposal .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+    .letter-flag {
+      margin-top: 6px; padding: 6px 8px; border-radius: 6px; font-size: 11px; line-height: 1.45;
+      background: #fef2f2; border: 1px solid #fecaca; color: #7f1d1d; white-space: normal;
+    }
+    .note-row { position: relative; padding-left: 12px; margin-top: 2px; }
+    .note-row::before { content: '•'; position: absolute; left: 2px; }
+    .letter-flag.ok { background: #ecfdf5; border-color: #a7f3d0; color: #065f46; }
+    .letter-flag .warn { color: #92400e; }
+    .letter-notes { margin-top: 6px; font-size: 11px; color: #374151; white-space: normal; }
+    .letter-notes summary { cursor: pointer; font-weight: 600; color: #6b7280; }
+    .letter-notes h5 { margin: 6px 0 2px; font-size: 11px; color: #6b7280; }
+    .letter-notes .why { color: #9ca3af; }
+
+    /* Profile: origin tag (plan Q12) and the to-work-on list */
+    .origin-badge {
+      font-size: 10px; color: #6d28d9; background: #f5f3ff; border: 1px solid #ddd6fe;
+      border-radius: 10px; padding: 1px 7px; white-space: nowrap; flex: none;
+    }
+    .skill-chip .origin-dot { color: #6d28d9; font-size: 10px; margin-left: 2px; cursor: help; }
+    .towork-item { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px 10px; margin-bottom: 6px; }
+    .towork-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+    .towork-head strong { font-size: 13px; }
+    .towork-count { font-size: 11px; color: #b45309; font-weight: 600; white-space: nowrap; }
+    .towork-sub { font-size: 11px; color: #6b7280; margin-top: 2px; line-height: 1.45; }
+    .towork-empty { font-size: 12px; color: #6b7280; }
     .apply-btn {
       background: none; border: 1px solid #cbd5e1; border-radius: 5px;
       cursor: pointer; font-size: 11px; padding: 2px 7px; flex: none; color: #374151;
@@ -495,6 +549,25 @@
           <button class="btn" id="auto-letter-save">Save</button>
         </div>
         <div class="pref-row">
+          <label class="pref-check" for="letter-loop-enabled">
+            <input id="letter-loop-enabled" type="checkbox" checked>
+            <span>Check and revise letters for top matches</span>
+          </label>
+        </div>
+        <div class="pref-row">
+          <span>Full pipeline at or above score</span>
+          <input id="letter-loop-min" type="number" min="0" max="100" value="85">
+          <button class="btn" id="letter-loop-save">Save</button>
+        </div>
+        <div class="pref-row">
+          <span>Letter engine</span>
+          <select id="letter-engine">
+            <option value="agent">Agent (a model picks each step)</option>
+            <option value="workflow">Fixed workflow</option>
+          </select>
+        </div>
+        <p class="pref-note" id="letter-loop-note"></p>
+        <div class="pref-row">
           <span>Job pages opened per Scan Page</span>
           <input id="scan-pages" type="number" min="1" max="25" value="10">
           <button class="btn" id="scan-pages-save">Save</button>
@@ -610,6 +683,16 @@
         <button class="btn btn-sm" id="skill-ok-btn">Add</button>
         <button class="btn btn-sm" id="skill-cancel-btn">✕</button>
       </div>
+    </div>
+
+    <!-- To work on: skills you said you don't have (plan §5.9) -->
+    <div class="p-section" id="towork-section">
+      <div class="p-section-hdr">
+        <h2>To work on</h2>
+        <button class="btn btn-sm" id="towork-refresh">Refresh</button>
+      </div>
+      <p class="writing-hint">Skills you told a cover letter you don't have, ranked by how many recent ads ask for them. Clear one once you've learned it.</p>
+      <div id="towork-list"></div>
     </div>
     </div><!-- /#profile-main -->
 

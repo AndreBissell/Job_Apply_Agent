@@ -561,6 +561,16 @@ CREATE TABLE cover_letters (
 );
 ```
 
+**Where a cover-letter run's result lands (Phase 8).** Both the one-shot writer and a
+pipeline run (`letter_runs`) write `generated_content`, and only that. The user's
+`edited_content` is never written or cleared by generation: when a regenerate lands on
+a letter that has edits, the new text replaces `generated_content`, `status` stays
+`edited`, and the edits stay what the sidebar shows (it offers a button to load the
+generated draft into the editor, unsaved until the user saves). Without edits the row
+is updated and `status` is `draft`. A pipeline run lands its best draft even when it
+stopped short of a clean one; what is still wrong with it is read from the run's
+`state` (see `letter_runs`).
+
 ### letter_runs
 
 One row per execution of the cover-letter pipeline for a match: the persisted
@@ -576,7 +586,7 @@ CREATE TABLE letter_runs (
     id                  BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     match_id            BIGINT      NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
     engine              TEXT        NOT NULL,           -- 'workflow','agent' (evals also log 'tools','eval-analyze','eval-plant')
-    status              TEXT        NOT NULL DEFAULT 'running',  -- 'running','waiting_user','answered','done','budget_stopped','failed'
+    status              TEXT        NOT NULL DEFAULT 'running',  -- 'running','waiting_user','answered','done','budget_stopped','failed','cancelled'
     state               TEXT,                           -- JSON LetterState
     final_draft_version INTEGER,                        -- the draft handed back: the latest if clean, else the best (guardrails.best_draft)
     tool_calls          INTEGER     NOT NULL DEFAULT 0,
@@ -593,6 +603,26 @@ The answer endpoints touch only `waiting_user` runs. When every question is
 resolved (a "No", or a "Yes" whose parsed profile rows the user confirmed), the
 run moves to `answered`, and the worker resumes it from the persisted state.
 The worker touches only `answered` runs, so the two never write the same run.
+
+**Production use (Phase 8).** The idle loop (single worker) starts a run for a match
+that has no `cover_letters` row, and resumes `answered` runs first. No DDL changed;
+these are the rules the code follows over the existing columns:
+
+- `cancelled` (new status value, 2026-10-04) = the run was set aside and is not an
+  attempt that failed: a regenerate superseded a `waiting_user` / `answered` run, or
+  the account's USD guard / the provider's daily quota stopped it before it produced
+  any draft (so the match is retried once the pause ends rather than counted against
+  it). A `cancelled` run is never resumed.
+- A match is skipped by the idle loop while it has a `running`, `waiting_user` or
+  `answered` run, and after 2 `failed` (or `budget_stopped` with
+  `final_draft_version` NULL) runs, or 30 minutes after the latest one. A regenerate
+  (an explicit user click) ignores these. A `running` row found at start-up was
+  orphaned by a crash and is marked `failed`.
+- The run's returned draft lands in `cover_letters` (see that table): the best draft,
+  even when the run stopped short of a clean one. The sidebar derives the open issues,
+  the "not claimed" list and the eligibility notes from this run's `state`, so no
+  extra columns are needed. They describe `final_draft_version`, and are shown only
+  while that text is still the letter's `generated_content`.
 
 ---
 

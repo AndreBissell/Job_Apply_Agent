@@ -91,6 +91,17 @@
     .checkbox-row { display: flex; align-items: center; gap: 7px; }
     .checkbox-row input[type=checkbox] { width: auto; margin: 0; }
     .checkbox-row label { margin: 0; font-size: 13px; color: #374151; cursor: pointer; }
+    /* Rows the cover-letter flow added (plan Q12), and the to-work-on list (plan §5.9) */
+    .origin-tag {
+      display: inline-block; margin-bottom: 8px; font-size: 11px; color: #6d28d9;
+      background: #f5f3ff; border: 1px solid #ddd6fe; border-radius: 10px; padding: 1px 8px;
+    }
+    .pill .origin-dot { color: #6d28d9; font-size: 10px; cursor: help; }
+    .towork-hint { font-size: 12px; color: #6b7280; margin: 0 0 8px; }
+    .towork-item { display: flex; align-items: center; gap: 12px; justify-content: space-between; }
+    .towork-item .head { font-weight: 600; }
+    .towork-item .count { font-size: 12px; color: #b45309; font-weight: 600; margin-left: 8px; }
+    .towork-item .sub { font-size: 12px; color: #6b7280; margin-top: 2px; }
     .subsection-label {
       font-size: 11px; font-weight: 600; color: #6b7280;
       text-transform: uppercase; letter-spacing: 0.05em;
@@ -186,12 +197,23 @@
       </div>
     </div>
   </section>
+
+  <!-- To work on: skills you said you don't have to a cover-letter question -->
+  <section>
+    <div class="section-header">
+      <h2>To work on</h2>
+      <button class="add-btn" onclick="loadToWorkOn()">Refresh</button>
+    </div>
+    <p class="towork-hint">Skills you told a cover letter you don't have, ranked by how many recent ads ask for them. Clear one once you've learned it.</p>
+    <div id="towork-list"></div>
+  </section>
 </main>
 
 <script>
 const API = location.origin; // served by the backend itself, so this is whichever env (port) you opened
 let _uid = 0;
 let globalSkills = [];
+let skillOrigins = {}; // skill name -> origin label, for skills the cover-letter flow added
 
 // ---- Utility ----
 
@@ -205,6 +227,13 @@ function esc(s) {
 }
 
 function uid() { return ++_uid; }
+
+// Plan Q12: rows the cover-letter flow added carry a plain origin tag.
+function originTag(row) {
+  if (!row || !row.origin_label) return '';
+  const label = row.origin_label.charAt(0).toUpperCase() + row.origin_label.slice(1);
+  return `<div class="origin-tag">✦ ${esc(label)}</div>`;
+}
 
 // Month fields are plain text ("YYYY-MM"), not <input type="month">: the native
 // control makes you scroll or click through segments to change a year, where a
@@ -253,7 +282,10 @@ function renderGlobalSkills() {
     const pill = document.createElement('span');
     pill.className = 'pill';
     pill.dataset.skill = s;
-    pill.innerHTML = esc(s) + ' <button onclick="removeGlobalSkill(this.parentElement)">×</button>';
+    const origin = skillOrigins[s]
+      ? ` <span class="origin-dot" title="${esc(skillOrigins[s].charAt(0).toUpperCase() + skillOrigins[s].slice(1))}">✦</span>`
+      : '';
+    pill.innerHTML = esc(s) + origin + ' <button onclick="removeGlobalSkill(this.parentElement)">×</button>';
     c.appendChild(pill);
   });
 }
@@ -350,6 +382,7 @@ function addQual(q) {
       </div>
     </div>
   `;
+  card.insertAdjacentHTML('afterbegin', originTag(q));
   container.appendChild(card);
 }
 
@@ -365,7 +398,7 @@ function addExp(e) {
   const typeOptions = [
     ['job','Job'], ['internship','Internship'],
     ['university_project','University Project'], ['personal_project','Personal Project'],
-    ['volunteer','Volunteer']
+    ['assignment','Assignment'], ['volunteer','Volunteer']
   ].map(([v,l]) => `<option value="${v}" ${(e.experience_type||'job')===v?'selected':''}>${l}</option>`).join('');
 
   card.innerHTML = `
@@ -416,6 +449,7 @@ function addExp(e) {
       </div>
     </div>
   `;
+  card.insertAdjacentHTML('afterbegin', originTag(e));
   container.appendChild(card);
 
   if (e.skills && e.skills.length) {
@@ -447,9 +481,59 @@ async function load() {
     (data.experiences || []).forEach(e => addExp(e));
 
     globalSkills = data.skills || [];
+    skillOrigins = data.skill_origins || {};
     renderGlobalSkills();
   } catch (err) {
     showBanner('Failed to load profile: ' + err.message, 'err');
+  }
+}
+
+// ---- To work on ----
+
+async function loadToWorkOn() {
+  const list = document.getElementById('towork-list');
+  try {
+    const res = await fetch(API + '/gaps/to-work-on');
+    if (!res.ok) throw new Error(res.statusText);
+    const { window_days, items } = await res.json();
+    if (!items.length) {
+      list.innerHTML = '<div class="card">Nothing yet. When a cover letter asks whether you have a skill and you answer No, it lands here.</div>';
+      return;
+    }
+    list.innerHTML = '';
+    items.forEach(it => {
+      const card = document.createElement('div');
+      card.className = 'card towork-item';
+      const counts = [`${it.recent} ad${it.recent === 1 ? '' : 's'} in the last ${window_days} days`];
+      if (it.essential) counts.push(`${it.essential} essential`);
+      const sub = [];
+      if (it.recent_titles && it.recent_titles.length) sub.push('Recently: ' + it.recent_titles.join('; '));
+      if (it.total > it.recent) sub.push(`${it.total} ads in all`);
+      if (it.said_no_at) {
+        sub.push('You said no on ' + new Date(it.said_no_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' }));
+      }
+      card.innerHTML = `<div><span class="head">${esc(it.label)}</span><span class="count">${esc(counts.join(', '))}</span>`
+        + `<div class="sub">${esc(sub.join(' · '))}</div></div>`;
+      const btn = document.createElement('button');
+      btn.className = 'add-btn';
+      btn.textContent = "I've learned this — clear";
+      btn.title = 'Takes it off this list. A later cover letter that needs it will ask you again.';
+      btn.onclick = async () => {
+        btn.disabled = true;
+        try {
+          const r = await fetch(API + '/gaps/' + it.id + '/clear', { method: 'POST' });
+          if (!r.ok) throw new Error(r.statusText);
+          loadToWorkOn();
+        } catch (err) {
+          btn.disabled = false;
+          showBanner('Could not clear: ' + err.message, 'err');
+        }
+      };
+      card.appendChild(btn);
+      list.appendChild(card);
+    });
+  } catch (err) {
+    list.textContent = 'Could not load this list: ' + err.message;
   }
 }
 
@@ -517,6 +601,7 @@ async function saveAll() {
       throw new Error(err.detail || res.statusText);
     }
     showBanner('Profile saved successfully.', 'ok');
+    loadToWorkOn(); // saving a skill you said no to takes it off the list (auto-clear)
   } catch (err) {
     showBanner('Save failed: ' + err.message, 'err');
   } finally {
@@ -526,6 +611,7 @@ async function saveAll() {
 }
 
 load();
+loadToWorkOn();
 </script>
 </body>
 </html>

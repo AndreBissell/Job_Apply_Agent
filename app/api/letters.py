@@ -6,13 +6,14 @@ GET  /letter-runs/waiting                         runs paused for the user, with
 GET  /letter-runs/{run_id}                        one run's status and questions
 POST /letter-runs/{run_id}/answers                answer questions: No, or Yes + text
 POST /letter-runs/{run_id}/questions/{qid}/confirm   confirm (or reject) a Yes's parsed rows
+GET  /jobs/{job_id}/letter-info                   the letter's open issues, "not claimed" list, notes
 GET  /gaps/to-work-on                             the ranked to-work-on list
 POST /gaps/{gap_id}/clear                         take an item off the list (history kept)
 
 A Yes is parsed by a small-model call inside the request (a few seconds). Nothing
 reaches the profile until the confirm call (plan Q11). Resuming an ``answered`` run
-is the worker's job (engines.resume_letter); Phase 8 wires it into the idle loop.
-The sidebar card that calls these is Phase 8 too.
+is the worker's job (production.next_work, on the idle loop); these requests never
+run the pipeline themselves. The sidebar's question card calls them.
 """
 
 from __future__ import annotations
@@ -27,7 +28,7 @@ from sqlalchemy.orm import Session
 from app import gaps
 from app.api.profile_ui import get_db
 from app.llm.client import DailyQuotaError, LLMError
-from app.llm.letter import answers
+from app.llm.letter import answers, view
 from app.llm.letter.gap_policy import ANSWER_HINT
 from app.llm.letter.state import LetterState
 from app.models import JobListing, LetterRun, Match
@@ -132,6 +133,17 @@ def post_confirm(
         raise _http(exc) from exc
     db.refresh(run)
     return _run_view(db, run, state)
+
+
+@router.get("/jobs/{job_id}/letter-info")
+def letter_info(job_id: int, profile_id: int = 1, db: Session = Depends(get_db)) -> dict:
+    """What the sidebar shows beside a job's letter: the open issues of the run that
+    wrote it, what the letter leaves out and why, the ad's eligibility notes and
+    application instructions, a run waiting on the user, or why the last run failed."""
+    info = view.letter_info(db, job_id, profile_id)
+    if info is None:
+        raise HTTPException(status_code=404, detail="Match not found")
+    return info
 
 
 @router.get("/gaps/to-work-on")

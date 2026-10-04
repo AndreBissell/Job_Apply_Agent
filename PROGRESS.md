@@ -5,6 +5,23 @@ one block per milestone.
 
 ---
 
+## 2026-10-04 — Cover-letter Phase 8: the pipeline runs in the app — DONE ✅ (side-output sections wait for 7c)
+
+**Built**
+- `app/llm/letter/production.py` + `view.py`; the idle loop's `_letters_phase`; `/regenerate` on the single worker.
+- Prefs `letter_loop_enabled` / `letter_loop_min_score` / `letter_engine`; API `letter_run` on `/jobs`, `GET /jobs/{id}/letter-info`.
+- Sidebar: question card, final letter + open issues, "left out" list, eligibility/instruction notes, Personalise controls, To work on, origin tags; same To work on + tags in the standalone editor.
+- Schema doc first: no DDL; new `letter_runs.status` value `cancelled`.
+
+**Verified**
+- `python -m pytest -q`: 846 passed (147 new). `node --check` on sidebar.js.
+- The real sidebar page driven in Chromium (stubbed `chrome.*`) against a scratch copy of the test DB with the idle loop off and every LLM function raising: 35 checks (question card Yes/edit/confirm and No, run -> answered, flagged and edited letters, failed/writing cards, Personalise round-trip, To work on + clear, profile save keeps ask_user rows). No Gemini call; real.db and app.db untouched.
+- That run found and fixed a 7b bug: the editors lacked the `university_project` / `assignment` types, so a profile save retyped ask_user rows to `job`.
+
+**Not verified:** the loaded extension (live SSE, chrome.tabs), a real model run through the idle loop, ask_user on a real ad.
+
+**Next up:** Phase 7c (side outputs), on the user's go-ahead.
+
 ## 2026-10-04 — Cover-letter writer v3: apply the evidence, no stock close — DONE ✅
 
 **Goal:** stop letters failing would_send for reciting the profile and ending on a

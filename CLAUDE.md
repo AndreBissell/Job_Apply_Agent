@@ -345,7 +345,7 @@ cached checklists are rebuilt), API `app/api/letters.py` (/letter-runs/waiting, 
 confirm, /gaps/to-work-on, /gaps/{id}/clear), `scripts/gap_report.py` ->
 reports/to-work-on.md (gitignored). PUT /profile-ui/data carries `origin` over by natural
 key (the editors don't send it) and auto-clears matching "no"s. NOT built/verified: the
-sidebar question card and the idle loop resuming `answered` runs (both Phase 8).
+sidebar question card and the idle loop resuming `answered` runs (both Phase 8, below).
 Writer v3 is DONE (2026-10-04): `_WRITER_RULES` in generate.py now asks the writer to
 apply each piece of evidence to the employer's work from the ad (select, don't recite; the
 connecting sentence adds no new facts), bans stock bridges and stock closes, and asks for a
@@ -355,7 +355,26 @@ verbatim profile copying 36% -> 18%. Panel opus-v4 (57/60 consistent): musts 15 
 12 vs 11, detail 13 vs 13, would_send 0 vs 0. The writer swapped the old habits for new
 formulas ("prepares me to", "exactly the kind of"). Kept. USER DECISION 2026-10-04: don't
 iterate on letter wording now; polish later. The agent was NOT re-run on v3.
-Next: 7c (side outputs) or Phase 8, only on the user's go-ahead. Known follow-ups (plan
+Phase 8 is DONE except its side-output sections (2026-10-04; details in the plan's Decision
+log): `app/llm/letter/production.py` (`next_work`: answered runs resume first, then the
+best-scored match without a letter; `run_work`; `generate_for` = /regenerate; `land_letter`;
+`recover_orphaned_runs`) and `view.py` (`latest_runs`, `letter_info`). The idle loop's
+`_letters_phase` runs it on the single worker (budget guard / account limit pauses letters 10
+min as before; a `waiting_user` run is never work). Per §6: master switch `letter_loop_enabled`
+(off = one-shot for all), bar `letter_loop_min_score` 85 (scores from `auto_cover_letter_min_score`
+up to it get the one-shot; the effective bar is the HIGHER of the two), `letter_engine` agent|
+workflow. Retries: skipped while a run is live, after 2 failures, 30 min cooldown. New `letter_runs`
+status `cancelled` (no DDL). A run's best draft lands in `generated_content` (clean or flagged);
+`edited_content` is never written. SSE: `letter_run_started/_waiting/_done/_failed`. API: `/jobs`
+has `letter_run`; `GET /jobs/{id}/letter-info`. Sidebar: "Needs Your Answer" group + question card
+(Yes + text -> editable proposed rows -> confirm; No), open issues / "left out" / eligibility /
+application-instruction notes, Personalise controls, To work on + origin tags in both profile
+editors. 846 tests. Verified by driving the real sidebar page against a scratch DB with no LLM
+(35 checks); NOT verified in the loaded extension (SSE live, chrome.tabs) or with a real model run
+through the idle loop. CAUTION: `scripts/run_api.py` runs uvicorn with reload=True, so a running
+real server picks up code edits; with real.db's `auto_cover_letter_min_score` at 99 it starts no
+letters, but lowering it starts the pipeline (~20¢ each) for matches at the bar.
+Next: Phase 7c (side outputs + their sidebar sections), only on the user's go-ahead. Known follow-ups (plan
 Decision log 2026-10-04): check_claims passes "I have included a link to a video"
 (invented attachment), "daily" frequency claims and "apply my skills in X" on a listing;
 style_lint's gap-led pattern misses "While my X rather than Y"; Gemini implicit caching

@@ -569,7 +569,7 @@ class LetterRun(Base):
         BIG_INT_FK, ForeignKey("matches.id", ondelete="CASCADE"), nullable=False
     )
     engine: Mapped[str] = mapped_column(Text, nullable=False)  # 'workflow' | 'agent' (evals: 'tools', 'eval-analyze', 'eval-plant')
-    # running | waiting_user | answered | done | budget_stopped | failed
+    # running | waiting_user | answered | done | budget_stopped | failed | cancelled
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="running")
     state: Mapped[str | None] = mapped_column(Text)  # JSON LetterState
     final_draft_version: Mapped[int | None] = mapped_column(Integer)  # the draft handed back (best if not clean)
