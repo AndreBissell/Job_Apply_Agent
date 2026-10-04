@@ -387,8 +387,9 @@ applies), the agent's finish refused while one is due, the workflow runs them in
 the letter. Stored in `letter_runs.state.side_outputs` (no DDL); sidebar shows collapsed sections
 (Copy on screening answers) + 3 Personalise checkboxes. Quick-Apply overlay skipped. `view.not_claimed`
 no longer lists skill-less gaps nobody asked about. 1008 tests; sidebar checked with no LLM (27 checks).
-Eval: `letter_lab.py run --engine agent --side-outputs all` (run `agent-v2-side`); the eval set has
-no screening questions, confirmed gaps or CVs, so only résumé notes fire there.
+Eval `agent-v2-side` ($3.41): $0.227/letter, 229 s, 15/15 clean, same path as the workflow 15/15,
+0 refusals; résumé notes ran 15/15 as the last tool on the final draft ($0.012/letter). The eval set
+has no screening questions, confirmed gaps or CVs, so the other two never fired: untested on a model.
 Next: whatever the user names. Known follow-ups (plan
 Decision log 2026-10-04): check_claims passes "I have included a link to a video"
 (invented attachment), "daily" frequency claims and "apply my skills in X" on a listing;

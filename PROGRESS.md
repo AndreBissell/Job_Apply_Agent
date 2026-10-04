@@ -16,7 +16,7 @@ one block per milestone.
 **Verified**
 - `python -m pytest -q`: 1008 passed (162 new). `node --check` on sidebar.js.
 - Sidebar driven in Chromium against a scratch test DB, no LLM, port 8000 blocked: 27/27 checks.
-- Eval `agent-v2-side`: see the plan's Decision log.
+- Eval `agent-v2-side` ($3.41): $0.227/letter, 229 s, 15/15 clean, 0 refusals; résumé notes 15/15 on the final draft, $0.012/letter.
 
 **Not verified**: Chrome's real side panel; screening answers and learning suggestions on a real model (the eval set has neither questions nor confirmed gaps).
 
