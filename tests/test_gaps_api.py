@@ -317,7 +317,7 @@ class TestToWorkOn:
         b = gaps.save_no(db, 1, label="Kubernetes", key="kubernetes")
         for i in range(3):
             db.add(GapSighting(gap_id=b.id, job_id=100 + i, job_title=f"K job {i}", source="scan",
-                               importance="essential", seen_at=now_utc() - datetime.timedelta(days=i + 1)))
+                               importance="essential", seen_at=now_utc() - datetime.timedelta(days=i + 1, minutes=1)))
         db.add(GapSighting(gap_id=a.id, job_id=200, job_title="P job", source="scan", seen_at=now_utc()))
         db.commit()
         return a, b

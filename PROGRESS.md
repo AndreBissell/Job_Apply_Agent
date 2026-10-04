@@ -5,6 +5,30 @@ one block per milestone.
 
 ---
 
+## 2026-10-04 — Cover-letter writer v3: apply the evidence, no stock close — DONE ✅
+
+**Goal:** stop letters failing would_send for reciting the profile and ending on a
+stock close (panels opus-v2/v3).
+
+**Built:** writer rules in `app/llm/letter/tools/generate.py` (apply each piece of
+evidence to the employer's work from the ad, select instead of retelling, no new facts
+in the connecting sentence, no stock bridges/closes, a specific close), one line in
+`revise.py`, `SKILL.md` shape, and `style_lint` warnings `stock_close` / `stock_bridge`.
+19 new tests by a Sonnet subagent to a spec (699 total); fixed a flaky 7b test.
+
+**Result** (`workflow-v3`, 15 ads, $3.35): stock closes 13/15 -> 0/15, bridges 11 -> 0,
+verbatim profile copying 36% -> 18%; 15/15 clean; $0.213/letter like for like (+16%).
+Blind panel opus-v4 (57/60 consistent with opus-v3): musts 15 vs 15, claims 12 vs 11,
+detail 13 vs 13, **would_send 0 vs 0**: the writer swapped the old habits for new
+formulas ("prepares me to", "exactly the kind of"). Kept; wording polish deferred by
+the user. `evals/results/grading-opus-v4.md`.
+
+**Not done:** the agent on v3 (optional, not asked), and the follow-ups in the plan's
+Decision log (attachment claims in `check_claims`, "rather than" gap-led pattern,
+repeated-tail lint).
+
+---
+
 ## 2026-10-03 — Cover-letter Phase 7b: ask_user, remembered "no"s, the to-work-on list — DONE ✅ (API only)
 
 **Goal:** a must-have gap asks the user once instead of being silently left out; every

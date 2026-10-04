@@ -38,10 +38,12 @@ not its content or topic.
 
 ## Shape (for reference — a typical good letter)
 
-1. **Opening** — who you are, the role, one honest reason you want it.
-2. **Evidence paragraph(s)** — the strongest headline requirements, each with
-   a concrete example.
-3. **Closing** — a short line tying your interest back to the company/role,
-   then the sign-off.
+1. **Opening**: who you are and one honest reason you want *this* role.
+2. **Evidence paragraph(s)**: each built around a piece of the employer's work
+   from the ad, with the one or two profile details that fit it and a sentence
+   on how they bear on that work. Apply the evidence; don't recite the profile.
+3. **Closing**: one or two sentences on a specific thing in the role you want
+   to work on and why, then the sign-off. No stock close ("Thank you for
+   considering my application", "I look forward to discussing...").
 
 Three to four paragraphs. No subject line, no date header, no placeholders.

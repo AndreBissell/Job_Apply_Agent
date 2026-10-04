@@ -960,3 +960,40 @@ def test_integration_failed_claims_revise_then_checks_missing_on_new_draft(db, f
     # the revise prompt carried the claim issue
     revise_call = [c for c in fake.calls if c["task"] == "revise_letter"][0]
     assert "profile says 3 teams" in revise_call["user"]
+
+
+# ---------------------------------------------------------------------------
+# workflow-v3 prompt changes
+# ---------------------------------------------------------------------------
+def test_writer_prompt_has_the_apply_evidence_rules_and_keeps_the_old_ones(db, fake):
+    state, ctx = _fresh(db)
+    system = gen.writer_system_prompt(ctx)
+    for needle in (
+        "Apply the evidence, don't recite it",  # apply, don't recite
+        "No stock close",
+        "Thank you for considering my application",
+        '"daily"',  # no added frequency or scale
+        '"Apply my skills in X" is an experience claim',
+        'never "experience with"',  # pre-existing rules
+        "Do not lead with what the candidate has not done",
+        "Statements about the employer use only what the job ad says",
+        "Never invent links",
+    ):
+        assert needle in system, needle
+
+
+def test_revise_task_block_keeps_the_employer_link_and_the_specific_close(db, fake):
+    state, ctx = _failed_state(db, fake)
+    execute_tool(ctx, state, "revise_letter", rev.revise_letter)
+    task = fake.calls[0]["user"].split("=== TASK ===")[1]
+    assert "link to this employer's work" in task
+    assert "specific closing" in task
+    assert "stock close" in task
+
+
+def test_writer_context_lists_company_facts_from_the_ad_analysis(db, fake):
+    state, ctx = _fresh(db)
+    context = gen.writer_context(state, ctx)
+    assert "Facts about the employer from the ad:\n- They build logistics software" in context
+    state.job.company_facts = []
+    assert "Facts about the employer" not in gen.writer_context(state, ctx)

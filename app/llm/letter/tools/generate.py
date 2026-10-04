@@ -78,6 +78,40 @@ are true of the candidate. Follow any application instructions that concern the 
 letter. Include at least one specific detail about this employer or role taken from the \
 ad, so the letter could not be sent to any other company.
 
+Apply the evidence, don't recite it. The letter shows how the candidate fits THIS \
+employer's work; it is not a retelling of the profile:
+- Build each body paragraph around a piece of work this role involves, named in the \
+ad's own terms: a product, platform, client area, project, team or duty from the ad or \
+the employer facts. Bring in the evidence that fits it, then say in a sentence how it \
+bears on that work: which part of the job it prepares the candidate for, or what they \
+would do with it there. A paragraph that only describes past work is unfinished.
+- Select, don't retell. Use the one or two details of a profile entry that matter for \
+this role and leave the rest out. Don't copy the profile's sentences; say the same \
+thing in fresh words, keeping the same activity, scope and audience.
+- The connecting sentence is about the role and the candidate's readiness or intent, \
+and adds no new facts. It must not say the candidate has already done this employer's \
+work or knows its systems or clients, and must not add a frequency, scale, rigour, \
+purpose or outcome the profile doesn't state ("daily", "at scale", "rigorous testing", \
+"to validate X"). "Apply my skills in X" is an experience claim, so only for X an \
+experience entry describes. Anything said about the employer comes from the ad.
+- Don't end a paragraph on a run of listed skills; name a listed skill only where it \
+serves the work in that paragraph.
+- Say the actual link instead of a stock bridge: no "carries over directly", \
+"translates well / directly / seamlessly" or "maps directly". "Carries over" is for \
+honest PARTIAL framing only.
+- If the ad says little that is distinctive about the employer, use the most specific \
+work it does describe (the stack, the client mix, a named system or duty) rather than \
+its generic mission line. Never fill the gap with invented detail.
+
+Open with who the candidate is and one reason for wanting this role that only fits \
+this employer, not with "I am applying for". Close with one or two sentences naming a \
+specific thing in this role you want to work on (a project, platform, client area or \
+part of the graduate program from the ad) and why, tied to the candidate's own work. That is \
+the last paragraph before the sign-off. No stock close: no "Thank you for considering \
+my application", "I look forward to discussing", "how I can contribute to your team", \
+"I would value the chance to contribute", "my background translates well". Keep it to \
+one page, about 250-300 words: the connecting sentences fit because the recital goes.
+
 Then list your claims: every statement about the candidate in the letter, one entry \
 per fact. "quote" is the exact words from the letter that make the claim (copy them \
 character for character). "source" is ONE pointer copied exactly from the square \

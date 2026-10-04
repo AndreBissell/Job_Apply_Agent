@@ -346,11 +346,21 @@ confirm, /gaps/to-work-on, /gaps/{id}/clear), `scripts/gap_report.py` ->
 reports/to-work-on.md (gitignored). PUT /profile-ui/data carries `origin` over by natural
 key (the editors don't send it) and auto-clears matching "no"s. NOT built/verified: the
 sidebar question card and the idle loop resuming `answered` runs (both Phase 8).
-Next: the writer change as workflow-v3 (apply evidence to the employer's work, no stock
-close; user decision: after 7a), then 7c only if the user asks. Known: Gemini implicit
-caching never hits (cached_tokens 0 on every call), the writer still copies one stock
-line from the writing sample (future_work/voice-toggle-and-comparison.md), and the
-claims judge passes "daily" frequency claims and "apply my skills in X" on a listing.
+Writer v3 is DONE (2026-10-04): `_WRITER_RULES` in generate.py now asks the writer to
+apply each piece of evidence to the employer's work from the ad (select, don't recite; the
+connecting sentence adds no new facts), bans stock bridges and stock closes, and asks for a
+specific close; `style_lint` warns (doesn't block) on `stock_close` / `stock_bridge`.
+`workflow-v3`: $0.213/letter like for like (+16%), 15/15 clean, stock closes 13/15 -> 0/15,
+verbatim profile copying 36% -> 18%. Panel opus-v4 (57/60 consistent): musts 15 vs 15, claims
+12 vs 11, detail 13 vs 13, would_send 0 vs 0. The writer swapped the old habits for new
+formulas ("prepares me to", "exactly the kind of"). Kept. USER DECISION 2026-10-04: don't
+iterate on letter wording now; polish later. The agent was NOT re-run on v3.
+Next: 7c (side outputs) or Phase 8, only on the user's go-ahead. Known follow-ups (plan
+Decision log 2026-10-04): check_claims passes "I have included a link to a video"
+(invented attachment), "daily" frequency claims and "apply my skills in X" on a listing;
+style_lint's gap-led pattern misses "While my X rather than Y"; Gemini implicit caching
+never hits (cached_tokens 0); the writer still copies one stock line from the writing
+sample (future_work/voice-toggle-and-comparison.md).
 
 Parked fast-follows. Both need a live Seek session rather than guesswork:
 1. §5.2's apply-flow detection (see the extension-revamp entry below).

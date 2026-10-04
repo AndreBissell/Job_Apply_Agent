@@ -22,7 +22,7 @@ My honours thesis was an itinerary planner. It used a fine-tuned model to pull p
 
 Your ad mentions a move from a legacy desktop client to a web platform. Migration work like that rewards patience with old code and care with data, and both are habits I picked up on that internship. I also have four years at Coles, which taught me to stay calm when the queue is long and the customer is unhappy. I would like to bring the same steadiness to a team whose software sits underneath clinical work, where getting the details right matters more than getting them done fast.
 
-Thank you for considering my application. I would be glad to talk through the thesis or the internship in more detail.
+The legacy-to-web migration is the part of this role I would most like to work on. It is where the care with old code and data from the internship would count from the first week.
 
 Sincerely,
 Andre Bissell"""
@@ -60,13 +60,13 @@ def test_one_banned_phrase_allowed_two_block():
 
 
 def test_over_a_page_blocks():
-    long = GOOD.replace("Thank you for", "More words here. " * 30 + "Thank you for")
+    long = GOOD.replace("The legacy-to-web", "More words here. " * 30 + "The legacy-to-web")
     r = sl.lint(long)
     assert any(i.startswith("too_long") for i in r["issues"])
 
 
 def test_too_many_body_paragraphs_blocks():
-    many = GOOD.replace("Thank you for", "Extra.\n\nExtra.\n\nThank you for")
+    many = GOOD.replace("The legacy-to-web", "Extra.\n\nExtra.\n\nThe legacy-to-web")
     assert any(i.startswith("too_many_paragraphs") for i in sl.lint(many)["issues"])
 
 
@@ -218,3 +218,92 @@ def test_related_experience_framing_is_not_gap_led():
     text = ("Dear Hiring Manager,\n\nI used Tableau at university, which carries over to Power BI. "
             "While at Acme I built REST APIs.\n\nSincerely,\nBob")
     assert sl.gap_led_sentences(text) == []
+
+
+# -- stock closes and bridges (workflow-v3) -----------------------------------
+_SPECIFIC_CLOSE = (
+    "The legacy-to-web migration is the part of this role I would most like to work on. It is where "
+    "the care with old code and data from the internship would count from the first week."
+)
+
+
+def _with_last_paragraph(text: str) -> str:
+    assert _SPECIFIC_CLOSE in GOOD
+    return GOOD.replace(_SPECIFIC_CLOSE, text)
+
+
+def _warnings(res: dict, prefix: str) -> list[str]:
+    return [w for w in res["warnings"] if w.startswith(prefix)]
+
+
+def test_stock_close_in_last_paragraph_warns_but_passes():
+    res = sl.lint(_with_last_paragraph("Thank you for considering my application."))
+    assert res["passed"], res["issues"]
+    assert len(_warnings(res, "stock_close:")) == 1
+    assert res["stock_close_sentences"] == ["Thank you for considering my application."]
+
+
+@pytest.mark.parametrize("sentence", [
+    "I look forward to discussing the role with you.",
+    "I am keen to show how I can contribute to your team.",
+    "I would value the chance to contribute to the migration.",
+    "I hope to hear from you.",
+])
+def test_stock_close_variants_are_flagged_in_the_last_paragraph(sentence):
+    res = sl.lint(_with_last_paragraph(f"The migration appeals to me. {sentence}"))
+    assert res["stock_close_sentences"] == [sentence]
+    assert len(_warnings(res, "stock_close:")) == 1
+    assert res["passed"]
+
+
+def test_stock_close_in_an_earlier_paragraph_is_not_flagged():
+    early = GOOD.replace("That is work I want to be close to.",
+                         "That is work I want to be close to. Thank you for considering my application.")
+    res = sl.lint(early)
+    assert res["stock_close_sentences"] == []
+    assert _warnings(res, "stock_close:") == []
+
+
+@pytest.mark.parametrize("phrase", [
+    "translates well", "translates directly", "translate seamlessly",
+    "carries over directly", "maps directly", "map directly",
+])
+def test_stock_bridge_phrases_warn_once(phrase):
+    res = sl.lint(GOOD.replace("That is work I want", f"My thesis work {phrase}, and that is work I want"))
+    assert res["stock_bridges"] == [phrase]
+    warns = _warnings(res, "stock_bridge:")
+    assert len(warns) == 1 and phrase in warns[0]
+    assert res["passed"]
+
+
+def test_two_stock_bridges_are_two_entries_but_one_warning():
+    text = GOOD.replace("That is work I want", "That translates well and maps directly to work I want")
+    res = sl.lint(text)
+    assert res["stock_bridges"] == ["translates well", "maps directly"]
+    assert len(_warnings(res, "stock_bridge:")) == 1
+
+
+def test_honest_partial_framing_is_not_a_stock_bridge():
+    res = sl.lint(GOOD.replace("That is work I want", "I used Tableau, which carries over to Power BI. Work I want"))
+    assert res["stock_bridges"] == []
+    assert _warnings(res, "stock_bridge:") == []
+
+
+def test_greeting_and_sign_off_are_not_checked_for_stock_phrases():
+    text = GOOD.replace("Dear Hiring Manager,", "Dear Hiring Manager, thank you for considering my application.")
+    text = text.replace("Sincerely,\nAndre Bissell",
+                        "Sincerely,\nThank you for considering my application. It translates well.\nAndre Bissell")
+    res = sl.lint(text)
+    assert res["stock_close_sentences"] == [] and res["stock_bridges"] == []
+    assert res["warnings"] == []
+
+
+def test_rubric_does_not_read_the_stock_warnings():
+    stock = _with_last_paragraph(
+        "My work translates directly to yours. Thank you for considering my application.")
+    plain = _with_last_paragraph("My work applies to yours. A specific close about the migration here.")
+    assert sl.lint(stock)["stock_close_sentences"] and sl.lint(stock)["stock_bridges"]
+    a, b = rubric.auto_checks(stock), rubric.auto_checks(plain)
+    assert {k: a[k] for k in rubric.AUTO_ITEMS} == {k: b[k] for k in rubric.AUTO_ITEMS}
+    assert all(a[k] for k in rubric.AUTO_ITEMS), a
+    assert not any("stock" in k for k in a)

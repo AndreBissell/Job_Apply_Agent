@@ -62,7 +62,9 @@ def _task_block(state: LetterState) -> str:
         "While fixing these, do not break what already works: every MUST ADDRESS requirement "
         "in the LETTER PLAN must still be addressed afterwards, and the letter must stay about "
         f"the same length (it is {word_count(draft.text)} words; the limit is {MAX_WORDS}). If "
-        "you add something, make room by tightening another sentence.",
+        "you add something, make room by tightening another sentence. Keep each paragraph's "
+        "link to this employer's work and the specific closing: when you cut or reword a claim, "
+        "don't replace it with a generic sentence or a stock close.",
         "",
         f"CURRENT DRAFT {draft.version}:",
         "<<<",
