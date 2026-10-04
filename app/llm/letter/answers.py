@@ -108,15 +108,27 @@ the experiences above. Usually empty.
 
 def parse_answer(state: LetterState, question: UserQuestion, text: str, *, run_id: int) -> ProposedRows:
     """Ask the small model for proposed rows. Raises AnswerError if none come back."""
+    return parse_text(
+        requirement_text=question.requirement_text, skill=question.skill, job_title=state.job.title,
+        company=state.job.company, text=text, job_id=state.job.job_id, run_id=run_id,
+    )
+
+
+def parse_text(
+    *, requirement_text: str, skill: str, job_title: str, company: str | None, text: str,
+    job_id: int | None, run_id: int | None = None, task: str = "ask_user_parse",
+) -> ProposedRows:
+    """The parse behind a Yes, with or without a run (Quick Apply has none). Raises
+    AnswerError if no rows come back."""
     user = (
-        f"REQUIREMENT (in the employer's words): {question.requirement_text}\n"
-        f"SKILL IT NAMES: {question.skill or '(none)'}\n"
-        f"JOB: {state.job.title} at {state.job.company or 'unknown company'}\n\n"
+        f"REQUIREMENT (in the employer's words): {requirement_text}\n"
+        f"SKILL IT NAMES: {skill or '(none)'}\n"
+        f"JOB: {job_title} at {company or 'unknown company'}\n\n"
         f"THE CANDIDATE'S ANSWER:\n{text}"
     )
     data = complete_json(
-        _PARSE_PROMPT, user, schema=ProposedRows, tier=PARSE_TIER, task="ask_user_parse",
-        job_id=state.job.job_id, run_id=run_id,
+        _PARSE_PROMPT, user, schema=ProposedRows, tier=PARSE_TIER, task=task,
+        job_id=job_id, run_id=run_id,
     )
     rows = clean_rows(ProposedRows.model_validate(data), answer=text)
     if rows.is_empty():
@@ -284,12 +296,7 @@ def confirm(
     final = clean_rows(rows if rows is not None else ProposedRows.model_validate(q.proposal), answer=q.answer or "")
     if final.is_empty():
         raise AnswerError("There is nothing left to save. Edit the rows, or answer No.")
-    pointers = save_rows(db, state.profile_id, final)
-    profile = db.get(Profile, state.profile_id)
-    if profile is not None:
-        profile.profile_revised_at = now_utc()
-    db.commit()
-    cleared = gaps.auto_clear(db, state.profile_id)
+    pointers, cleared = save_confirmed(db, state.profile_id, final)
 
     req = state.requirement(q.requirement_id)
     if req is not None:
@@ -299,6 +306,68 @@ def confirm(
     _save(db, run, state, "user_confirm",
           {"question": q.id, "accepted": True, "saved_as": pointers, "auto_cleared": cleared})
     return state
+
+
+def save_confirmed(db: Session, profile_id: int, rows: ProposedRows) -> tuple[list[str], list[str]]:
+    """Save confirmed rows, mark the profile revised, commit, and clear any remembered
+    "no" the new skills cover. Returns (pointers, auto-cleared labels)."""
+    pointers = save_rows(db, profile_id, rows)
+    profile = db.get(Profile, profile_id)
+    if profile is not None:
+        profile.profile_revised_at = now_utc()
+    db.commit()
+    return pointers, gaps.auto_clear(db, profile_id)
+
+
+# ---------------------------------------------------------------------------
+# Run-less answers (Quick Apply questions, plan §10.1, Phase 9b)
+# ---------------------------------------------------------------------------
+# A wanted skill the profile has no trace of, asked about on the Quick Apply page. No
+# run is involved and none is reopened or rerun (user decision 2026-10-04): a No is
+# remembered like a run's No; a Yes only offers to add the skill to the profile, through
+# the same proposed rows -> one-click confirm. The proposal is not stored server-side:
+# the confirm call sends the (possibly edited) rows back.
+def propose_skill(
+    *, skill: str, requirement_text: str, job_title: str, company: str | None, job_id: int,
+    text: str | None = None,
+) -> ProposedRows:
+    """The rows a Yes would add. With no text: the skill alone, no model call. With the
+    user's own description of where they used it: the small model's parse, as for a run."""
+    skill = " ".join((skill or "").split())
+    if not skill:
+        raise AnswerError("Which skill is this about?")
+    text = (text or "").strip()
+    if not text:
+        return ProposedRows(experiences=[], qualifications=[], skills=[skill])
+    return parse_text(
+        requirement_text=requirement_text, skill=skill, job_title=job_title, company=company,
+        text=text[:MAX_ANSWER_CHARS], job_id=job_id, task="quick_apply_gap_parse",
+    )
+
+
+def confirm_runless(db: Session, profile_id: int, rows: ProposedRows) -> tuple[list[str], list[str]]:
+    """Save a confirmed Quick Apply Yes (``origin='ask_user'``). Commits."""
+    final = clean_rows(rows)
+    if final.is_empty():
+        raise AnswerError("There is nothing left to save. Edit the rows, or answer No.")
+    return save_confirmed(db, profile_id, final)
+
+
+def answer_no_runless(
+    db: Session, profile_id: int, *, skill: str, requirement_text: str | None, job_id: int,
+    job_title: str | None, importance: str | None = None,
+) -> gaps.GapDecision:
+    """Remember a Quick Apply No and count this ad (sighting source ``quick_apply``).
+    Commits. Returns the gap decision."""
+    skill = " ".join((skill or "").split())
+    key = gaps.skill_key(skill, requirement_text)
+    if not key:
+        raise AnswerError("Which skill is this about?")
+    decision = gaps.save_no(db, profile_id, label=skill or key, key=key, requirement_text=requirement_text)
+    gaps.record_sighting(db, decision, job_id=job_id, job_title=job_title, source="quick_apply",
+                         importance=importance)
+    db.commit()
+    return decision
 
 
 def _counts(rows: ProposedRows) -> dict:

@@ -1,4 +1,4 @@
-"""Quick Apply questions and the question bank (plan §10.1, Phase 9a): no LLM.
+"""Quick Apply questions and the question bank (plan §10.1, Phases 9a and 9b).
 
 Endpoints
 ---------
@@ -8,9 +8,18 @@ POST  /jobs/{job_id}/screening-questions   one capture of a job's "Answer employ
 GET   /jobs/{job_id}/screening-questions   the job's questions in form order
 GET   /screening-questions?status=new      the bank (status=new = the review list)
 PATCH /screening-questions/{id}            confirm or correct kind / strategy
+GET   /jobs/{job_id}/screening-assist      9b: the questions with help (what the job wants
+                                           / what your profile has), gated on the job's
+                                           letter; layer 5 sorts an unknown question here
+POST  /jobs/{job_id}/screening-gaps        9b: answer a wanted-but-missing skill: No is
+                                           remembered; Yes returns proposed profile rows
+POST  /jobs/{job_id}/screening-gaps/confirm   9b: save the (edited) rows of a Yes
 
 The content script posts what it read from the page the user opened: question
-text, input type, option labels and option ids. Never an answer.
+text, input type, option labels and option ids. Never an answer. Capture (POST
+screening-questions) never calls a model; only the assist view can (layer 5, once per
+bank row, full-pipeline jobs only), and a gap Yes with a typed description (one small
+call to turn it into rows). A Yes never reopens or reruns the letter.
 """
 
 from __future__ import annotations
@@ -23,8 +32,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.profile_ui import get_db
+from app.llm.client import DailyQuotaError, LLMError
+from app.llm.letter import answers
 from app.models import JobListing
-from app.screening import bank
+from app.screening import assist, bank
 from app.screening.sort import ASSISTED_STRATEGIES, CLASSIFIED_BY, USER_TOPICS
 
 router = APIRouter()
@@ -124,3 +135,60 @@ def review_screening_question(question_id: int, body: ReviewIn, db: Session = De
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except bank.CorrectionError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
+# 9b: help, and the run-less gap answers
+# ---------------------------------------------------------------------------
+class GapAnswerIn(BaseModel):
+    skill: str = Field(min_length=1, max_length=200)
+    choice: Literal["yes", "no"]
+    text: str | None = Field(default=None, max_length=answers.MAX_ANSWER_CHARS)  # optional, Yes only
+    requirement_text: str | None = Field(default=None, max_length=2000)
+    importance: Literal["essential", "important", "nice_to_have"] | None = None
+
+
+class GapConfirmIn(BaseModel):
+    skill: str = Field(min_length=1, max_length=200)
+    rows: answers.ProposedRows
+
+
+@router.get("/jobs/{job_id}/screening-assist")
+def get_screening_assist(job_id: int, profile_id: int = 1, db: Session = Depends(get_db)) -> dict:
+    _job_or_404(db, job_id)
+    return assist.assist_job(db, job_id, profile_id)
+
+
+@router.post("/jobs/{job_id}/screening-gaps")
+def answer_screening_gap(job_id: int, body: GapAnswerIn, profile_id: int = 1,
+                         db: Session = Depends(get_db)) -> dict:
+    job = _job_or_404(db, job_id)
+    try:
+        if body.choice == "no":
+            decision = answers.answer_no_runless(
+                db, profile_id, skill=body.skill, requirement_text=body.requirement_text,
+                job_id=job_id, job_title=job.title, importance=body.importance,
+            )
+            return {"skill": body.skill, "choice": "no", "gap_id": decision.id, "label": decision.label}
+        rows = answers.propose_skill(
+            skill=body.skill, requirement_text=body.requirement_text or body.skill, job_title=job.title,
+            company=job.company, job_id=job_id, text=body.text,
+        )
+    except answers.AnswerError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except DailyQuotaError as exc:
+        raise HTTPException(status_code=503, detail="The language model's daily quota is used up; try later.") from exc
+    except LLMError as exc:
+        raise HTTPException(status_code=502, detail=f"Couldn't read that answer: {exc}") from exc
+    return {"skill": body.skill, "choice": "yes", "proposal": rows.model_dump()}
+
+
+@router.post("/jobs/{job_id}/screening-gaps/confirm")
+def confirm_screening_gap(job_id: int, body: GapConfirmIn, profile_id: int = 1,
+                          db: Session = Depends(get_db)) -> dict:
+    _job_or_404(db, job_id)
+    try:
+        saved_as, cleared = answers.confirm_runless(db, profile_id, body.rows)
+    except answers.AnswerError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"skill": body.skill, "saved_as": saved_as, "auto_cleared": cleared}

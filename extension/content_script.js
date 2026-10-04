@@ -241,7 +241,7 @@ chrome.runtime.onMessage.addListener((msg) => {
     removeQuestionsPanel();
   } else if (msg.type === 'SIDEBAR_OPENED') {
     questionsHidden = false;
-    if (lastQuestionsList) renderQuestionsPanel(lastQuestionsList);
+    if (lastQuestionsList) renderQuestionsPanel(lastQuestionsList, lastQuestionsJobId);
   }
 });
 
@@ -616,7 +616,7 @@ async function postScreeningQuestions(jobId, questions, step) {
 
 const KIND_LABELS = {
   user: 'Yours to answer',
-  assisted: 'We’ll help — coming in 9b',
+  assisted: 'We’ll help',
   unknown: 'New — not sorted yet',
 };
 
@@ -631,6 +631,7 @@ let questionsPanelPos = null;
 // so the panel can come back when the side panel reopens.
 let questionsHidden = false;
 let lastQuestionsList = null;
+let lastQuestionsJobId = null;
 
 function placeQuestionsHost(host) {
   if (!questionsPanelPos) { // default: bottom left
@@ -682,8 +683,13 @@ window.addEventListener('resize', () => {
   if (host && questionsPanelPos) placeQuestionsHost(host);
 });
 
-function renderQuestionsPanel(questions) {
+// The panel's first paint is the plain 9a list (kind badges). With a job id it then asks
+// the backend for the help (GET screening-assist) and swaps the body for the shared
+// renderer's view; if that request fails the plain list stays. Every backend call goes
+// through backendFetch (the background worker).
+function renderQuestionsPanel(questions, jobId = null) {
   lastQuestionsList = questions;
+  lastQuestionsJobId = jobId;
   removeQuestionsPanel();
   if (questionsHidden) return;
   const host = document.createElement('div');
@@ -696,7 +702,7 @@ function renderQuestionsPanel(questions) {
   style.textContent = `
     :host { all: initial; }
     .panel { font-family: -apple-system, Segoe UI, Roboto, sans-serif; font-size: 13px;
-      width: 340px; max-width: calc(100vw - 32px); max-height: 60vh;
+      width: 380px; max-width: calc(100vw - 32px); max-height: 60vh;
       display: flex; flex-direction: column; background: #fff; border: 1px solid #cbd5e1;
       border-radius: 10px; box-shadow: 0 4px 20px rgba(0,0,0,0.18); overflow: hidden;
       color: #1c2330; }
@@ -715,7 +721,7 @@ function renderQuestionsPanel(questions) {
     .badge.assisted { color: #065f46; border-color: #10b981; background: #ecfdf5; }
     .badge.unknown { color: #92400e; border-color: #f59e0b; background: #fffbeb; }
     .note { font-size: 10px; color: #6b7280; margin-top: 4px; }
-  `;
+  ` + SCREENING_ASSIST_CSS;
   shadow.appendChild(style);
 
   const panel = document.createElement('div');
@@ -747,12 +753,40 @@ function renderQuestionsPanel(questions) {
 
   const body = document.createElement('div');
   body.className = 'body';
+  const content = document.createElement('div');
+  body.appendChild(content);
+  drawBasicQuestionList(content, questions);
+  panel.appendChild(body);
+  shadow.appendChild(panel);
+
+  if (!jobId) return;
+  async function refresh(notice) {
+    let data = null;
+    try {
+      const res = await backendFetch(`${BACKEND}/jobs/${jobId}/screening-assist?profile_id=1`);
+      if (res.ok) data = await res.json();
+    } catch (e) {
+      console.warn('[SeekAssistant] Question help unavailable:', e.message);
+    }
+    // The panel may have been redrawn or removed while the request ran.
+    if (!content.isConnected || !data || !Array.isArray(data.questions) || !data.questions.length) return;
+    const scrollTop = body.scrollTop;
+    renderScreeningAssist(content, data, {
+      fetchJson: backendFetch, backend: BACKEND, profileId: 1, onChanged: refresh, notice,
+    });
+    body.scrollTop = scrollTop;
+  }
+  refresh();
+}
+
+// The 9a view: every question with its kind, nothing else.
+function drawBasicQuestionList(container, questions) {
   const counts = { user: 0, assisted: 0, unknown: 0 };
   for (const q of questions) counts[q.kind in counts ? q.kind : 'unknown'] += 1;
   const summary = document.createElement('div');
   summary.className = 'summary';
   summary.textContent = `${counts.user} yours to answer · ${counts.assisted} we'll help · ${counts.unknown} new`;
-  body.appendChild(summary);
+  container.appendChild(summary);
 
   const list = document.createElement('ol');
   for (const q of questions) {
@@ -769,13 +803,11 @@ function renderQuestionsPanel(questions) {
     li.append(text, badge);
     list.appendChild(li);
   }
-  body.appendChild(list);
+  container.appendChild(list);
   const note = document.createElement('div');
   note.className = 'note';
   note.textContent = 'Nothing is filled in for you. New questions can be sorted in the profile editor.';
-  body.appendChild(note);
-  panel.appendChild(body);
-  shadow.appendChild(panel);
+  container.appendChild(note);
 }
 
 // The apply flow is a single-page app: the steps (and the jump from the detail
@@ -810,7 +842,7 @@ async function checkApplyStep() {
       const result = await postScreeningQuestions(jobId, questions, currentApplyStep());
       if (!result) { lastQuestionsSig = null; continue; }
       console.log(`[SeekAssistant] Captured ${questions.length} employer questions for job ${sourceJobId}.`);
-      if (lastQuestionsSig === sig) renderQuestionsPanel(result.questions);
+      if (lastQuestionsSig === sig) renderQuestionsPanel(result.questions, jobId);
     } while (applyCheckAgain);
   } finally {
     applyCheckRunning = false;

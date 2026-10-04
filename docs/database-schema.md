@@ -760,7 +760,7 @@ CREATE TABLE gap_decisions (
 
 The counter behind the to-work-on list: one row per ad that asked for a skill the
 user said no to. `UNIQUE (gap_id, job_id)` makes re-scanning or re-running a job
-free of double counts. Sightings come from three places, all code-only (no LLM):
+free of double counts. Sightings come from four places, all code-only (no LLM):
 
 - `scan`: after `extract.py` writes a job's `job_skills`, their names are matched
   against every active `skill_key` (every scanned ad, not just letter jobs).
@@ -768,6 +768,9 @@ free of double counts. Sightings come from three places, all code-only (no LLM):
   remembered "No" (with its `importance`).
 - `seed`: when a "No" is first saved, every job already in the DB that asks for
   it, so the list is useful straight away.
+- `quick_apply` (Phase 9b, 2026-10-04): a Quick Apply question on a job with a
+  full-pipeline letter wants a skill the user said no to (a "No" on the question's
+  gap card, or a remembered one shown again), with the checklist's `importance`.
 
 `job_id` has **no FK** and the title is copied into `job_title`, for the same
 reason as `llm_usage`: retention purges job rows, and the counts must survive
@@ -782,7 +785,7 @@ CREATE TABLE gap_sightings (
     job_id      BIGINT      NOT NULL,          -- label only, no FK (survives job purges)
     job_title   TEXT,                          -- copied in for the same reason
     importance  TEXT,                          -- 'essential','important','nice_to_have', or NULL
-    source      TEXT        NOT NULL,          -- 'scan','letter_run','seed'
+    source      TEXT        NOT NULL,          -- 'scan','letter_run','seed','quick_apply'
     seen_at     TIMESTAMPTZ NOT NULL DEFAULT now(),   -- when the AD was seen (job's date_scraped)
     UNIQUE (gap_id, job_id)
 );
@@ -824,8 +827,12 @@ selected or typed (Seek pre-fills answers), the user's name, or anything under
 
 **Sorting** (`kind`, `strategy`, `parameters`, `classified_by`): cheapest first, see
 `app/screening/sort.py`. `kind` is `user` (no AI help, never sent to the LLM),
-`assisted` (relates to the ad) or `unknown` (not sorted yet; layer 5, the model, is
-Phase 9b). `strategy` is `user` for a `user` question, one of `years_role_bracket`,
+`assisted` (relates to the ad) or `unknown` (not sorted yet). **Layer 5** (Phase
+9b, `app/screening/classify.py`): the small model sorts an `unknown` row once, the
+first time a job with a full-pipeline letter shows it (never at capture, never for a
+question the `user` keyword filter recognises); the role / skill it names must be
+words of the question or the answer is dropped and the row stays `unknown`. It sets
+`classified_by = 'model'` and leaves `status = 'new'`, so the review list shows it. `strategy` is `user` for a `user` question, one of `years_role_bracket`,
 `years_skill_text`, `skill_in_role_yes_no`, `skill_multi_select`,
 `free_text_describe` for an `assisted` one, NULL while `unknown`. `parameters` is a
 JSON object: `{"topic": "salary"}` for a `user` question, the role or skill asked

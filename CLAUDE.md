@@ -414,6 +414,14 @@ detail-page branch, which could mark the job expired), review list in the profil
 `scripts/export_question_bank.py`, `tests/e2e/quick_apply_e2e.py` (56/56, scrubbed fixtures,
 scratch DB via `run_api.py test --db`). Run `alembic upgrade head` (run_api does it) before use.
 NOT verified on a live Seek page; Chrome may ask once for local-network access on Seek.
+9b is DONE (2026-10-04, no DDL; plan §10.1 + Decision log): `app/screening/assist.py` (gating
+full/one_shot/no_letter/letter_pending via `view.letter_run`; strategies in code; labels need a
+pointer resolving in the CURRENT profile; `norm_skill` folds spellings only, NOT prefilter's broad
+HTML=CSS / MySQL=PostgreSQL aliases), `classify.py` (layer 5, small, only from the assist view for
+full jobs, never at capture, per-row lock), run-less gap path in `answers.py` (sighting source
+`quick_apply`), API `GET /jobs/{id}/screening-assist`, `POST /jobs/{id}/screening-gaps` (+`/confirm`),
+`extension/screening_assist.js` (overlay + sidebar card), test-only `LLM_PROVIDER=stub`
+(LLM_STUB_RESPONSES / LLM_STUB_LOG). 1394 tests; e2e 97/97. NOT verified live on Seek.
 9b/9c scope (user, 2026-10-04; plan §10.1): help ONLY for jobs with a full-pipeline letter
 (agent/workflow). ONE-SHOT LETTERS GET NO QUESTION ASSISTANCE (no on-demand analysis); no
 letter -> overlay offers "create a cover letter". Choice questions show what the job wants and

@@ -492,9 +492,59 @@ async function fillDetail(detailEl, job) {
     if (!cl?.generated_content && data.eligibility_notes?.length) {
       renderLetterNotes(detailEl, null, null, data);
     }
+    await renderQuickApplyQuestions(detailEl, job.job_id);
   } catch {
     detailEl.textContent = 'Could not load detail.';
   }
+}
+
+// ---------------------------------------------------------------------------
+// Quick Apply questions the user has already opened for this job (Phase 9b): the same
+// help the overlay on the apply page shows, from the question bank. Adds nothing when
+// the job has no captured questions or the request fails.
+// ---------------------------------------------------------------------------
+let screeningCssInjected = false;
+function injectScreeningAssistCss() {
+  if (screeningCssInjected) return;
+  screeningCssInjected = true;
+  const style = document.createElement('style');
+  style.textContent = SCREENING_ASSIST_CSS;
+  document.head.appendChild(style);
+}
+
+async function fetchScreeningAssist(jobId) {
+  try {
+    const res = await fetch(`${BACKEND}/jobs/${jobId}/screening-assist?profile_id=${PROFILE_ID}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    return Array.isArray(data.questions) && data.questions.length ? data : null;
+  } catch {
+    return null;
+  }
+}
+
+async function renderQuickApplyQuestions(detailEl, jobId) {
+  const data = await fetchScreeningAssist(jobId);
+  if (!data) return;
+  injectScreeningAssistCss();
+  const details = mk('details', 'letter-notes');
+  details.addEventListener('click', e => e.stopPropagation()); // don't collapse the card
+  details.appendChild(mk('summary', null, `Quick Apply questions (${data.questions.length})`));
+  const body = mk('div');
+  details.appendChild(body);
+  detailEl.appendChild(details);
+
+  async function refresh(notice) {
+    const next = await fetchScreeningAssist(jobId);
+    if (next) draw(next, notice);
+  }
+  function draw(d, notice) {
+    renderScreeningAssist(body, d, {
+      fetchJson: (url, init) => fetch(url, init), backend: BACKEND, profileId: PROFILE_ID,
+      onChanged: refresh, notice,
+    });
+  }
+  draw(data);
 }
 
 // ---------------------------------------------------------------------------

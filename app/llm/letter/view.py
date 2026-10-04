@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 
 from app.llm.letter import guardrails
 from app.llm.letter.runner import REFUSED
-from app.llm.letter.state import LetterState, Requirement
+from app.llm.letter.state import Draft, LetterState, Requirement
 from app.models import CoverLetter, LetterRun, LetterRunStep, Match
 
 # A run in these states says something about the card; a finished one speaks only through
@@ -108,6 +108,22 @@ def _last_error(db: Session, run_id: int) -> str | None:
     return None
 
 
+def letter_run(runs: list[LetterRun], letter: str | None) -> tuple[LetterRun, LetterState, Draft] | None:
+    """The pipeline run whose handed-back draft IS the letter's ``generated_content``
+    now, from ``runs`` (newest first), with its state and that draft. None when the
+    letter came from the one-shot, or has since moved on (a later one-shot)."""
+    if letter is None:
+        return None
+    for run in runs:
+        if run.status not in ("done", "budget_stopped", "failed") or run.final_draft_version is None or not run.state:
+            continue
+        state = LetterState.model_validate_json(run.state)
+        draft = next((d for d in state.drafts if d.version == run.final_draft_version), None)
+        if draft is not None and draft.text == letter:
+            return run, state, draft
+    return None
+
+
 def letter_info(db: Session, job_id: int, profile_id: int) -> dict | None:
     """The letter's story for one job card, or None when the job has no match.
 
@@ -131,13 +147,9 @@ def letter_info(db: Session, job_id: int, profile_id: int) -> dict | None:
             "open_questions": sum(1 for q in state.user_questions if q.status != "answered"),
         }
 
-    for run in runs:
-        if run.status not in ("done", "budget_stopped", "failed") or run.final_draft_version is None or not run.state:
-            continue
-        state = LetterState.model_validate_json(run.state)
-        draft = next((d for d in state.drafts if d.version == run.final_draft_version), None)
-        if draft is None or letter is None or draft.text != letter:
-            continue
+    found = letter_run(runs, letter)
+    if found is not None:
+        run, state, draft = found
         issues = guardrails.open_issues(draft)
         info["run"] = {
             "run_id": run.id, "engine": run.engine, "status": run.status, "draft_version": draft.version,
@@ -149,7 +161,6 @@ def letter_info(db: Session, job_id: int, profile_id: int) -> dict | None:
             "application_instructions": state.job.application_instructions,
             "side_outputs": side_output_view(state),
         }
-        break
 
     newest = runs[0] if runs else None
     if newest is not None and info["run"] is None and info["waiting"] is None and (
