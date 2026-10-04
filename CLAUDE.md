@@ -398,8 +398,14 @@ questions): screening found and answered honestly (all three "answer this yourse
 fine, but match_profile rated React Native/Flutter *partial* (React.js), so ask_user and
 suggest_learning were still not exercised on a model. The real profile's summary is "s" and its
 visa/work status is empty. Deferred tasks live in future_work/ (one file per task, indexed in its
-README): voice toggle, check_claims leaks, Gemini prompt caching.
-Next: whatever the user names. Known follow-ups (plan
+README): voice toggle, check_claims leaks, Gemini prompt caching, company research, letter
+framing/addressing, learn-from-edits.
+Phase 9 (rescoped 2026-10-04, plan §10.1) is ONE item: read the live screening questions from
+Seek's Quick Apply page so `answer_screening` can answer them. Blocked on parked fast-follow 1
+below (a live apply-flow session the user drives; don't guess selectors). The "Polish" button is
+already Regenerate (Phase 8). Vertex batch inference was checked (plan §10.2): possible on the
+trial and our models, but ~$0.001/job saved and scores a day late, so NOT built.
+Next: whatever the user names; Phase 9 when the user can do the live session. Known follow-ups (plan
 Decision log 2026-10-04): check_claims passes "I have included a link to a video"
 (invented attachment), "daily" frequency claims and "apply my skills in X" on a listing;
 style_lint's gap-led pattern misses "While my X rather than Y"; Gemini implicit caching
@@ -407,7 +413,8 @@ never hits (cached_tokens 0); the writer still copies one stock line from the wr
 sample (future_work/voice-toggle-and-comparison.md).
 
 Parked fast-follows. Both need a live Seek session rather than guesswork:
-1. §5.2's apply-flow detection (see the extension-revamp entry below).
+1. §5.2's apply-flow detection (see the extension-revamp entry below). Now also
+   the prerequisite for Phase 9 (live screening questions, plan §10.1).
 2. Verify the classification capture added 2026-09-21. readJsonLdJobPosting()
    is the primary source and should work, but SELECTORS.DETAIL_CLASSIFICATION /
    DETAIL_SUBCLASSIFICATION (the fallback) are UNVERIFIED guesses. Open a real

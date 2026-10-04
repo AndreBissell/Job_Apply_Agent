@@ -85,8 +85,13 @@ billed as output.
 | `gemini-3.1-pro-preview` | **Preview** | $2.00 / $12.00 | Strongest; preview, so it may change or be rate-limited |
 | `gemini-2.5-*` | Restricted | — | "Limited to existing users"; don't build on it |
 
-Also available: Batch API (50% off, latency up to hours), context caching,
-Google Search grounding (5,000 free requests/month, then $14 per 1,000).
+Also available: Vertex batch inference (50% off; all three of our models,
+the Pro preview included, on the `global` endpoint; most jobs finish within 24 h
+of starting, plus up to 72 h queueing; input is a JSONL file in Cloud Storage or
+a BigQuery table). **Checked 2026-10-04 and not worth it at our volume** (about
+$0.001 saved per job; §10.2). Also context caching, and Google Search grounding
+(5,000 free grounding *queries* a month across Gemini 3 models, then $14 per
+1,000; Vertex pricing page, checked 2026-10-04).
 
 ### Tiers (🧪 validate in Phases 2–6)
 
@@ -439,7 +444,7 @@ while True:
 
 - **Screening answers** (`answer_screening`): grounded in the profile, with the
   same evidence pointers. **v1 reads only the ad text** (Q10). Reading the real
-  questions live from Seek's Quick Apply page is a Phase 9 item, tied to the
+  questions live from Seek's Quick Apply page is Phase 9 (§10.1), tied to the
   parked apply-flow detection in CLAUDE.md.
 - **Learning suggestions** (`suggest_learning`): only for gaps the user
   confirmed as real (`leave_out`). Short, concrete (course, cert, small
@@ -579,9 +584,11 @@ Preferences in `profiles.preferences`, editable in the Personalise panel:
   fallback possible. The default is set by the Phase 7 comparison.
 - **Side-output toggles:** `resume_advice_enabled` (True),
   `learning_suggestions_enabled` (True), `screening_answers_enabled` (True;
-  ad text only for now).
-- *Nice-to-have:* a per-letter **"Polish"** button to run the pipeline on
-  demand below the bar.
+  ad text only for now; live Quick Apply questions are Phase 9, §10.1).
+- ~~*Nice-to-have:* a per-letter **"Polish"** button to run the pipeline on
+  demand below the bar.~~ **Built in Phase 8:** Regenerate runs the full
+  pipeline whatever the score when the master switch is on (Decision log
+  2026-10-04, Phase 8 design choice 6). No separate button.
 
 ---
 
@@ -750,11 +757,152 @@ budget guard comes in Phase 1.
 | 6 | ✅ **Fixed workflow = baseline** | `workflow.py`: analyze → match → unanswered gaps treated as `leave_out` (evals only; there is no UI yet) → draft → checks → revise ≤2 → finish, with the guardrails. Run evals. **Usable on its own; could ship here** | 5 |
 | 7 | ✅ **Agent + ask_user** (7a ✅ agent + comparison, 2026-10-03; 7b ✅ ask_user + to-work-on list, 2026-10-03 (API only; sidebar card in Phase 8); writer v3 ✅ 2026-10-04 (apply evidence, no stock close; panel unchanged, would_send 0/15); 7c ✅ side outputs, 2026-10-04) | `ask_user` (sidebar question card with Yes + text box / No, answer → profile rows, run resume), `gap_decisions` for remembered "no"s, **the to-work-on list (§5.9): `skill` field on `analyze_job`, `gap_sightings` counter hooked into extraction and letter runs, `GET /gaps/to-work-on`, `gap_report.py`**, side-output tools, tool descriptions, orchestrator prompt, `agent.py`. Run evals and fill in the comparison table. Set the `letter_engine` default from the result | 6 |
 | 8 | ✅ **Integration** (built 2026-10-04; the side-output sections landed with 7c the same day; see the Decision log) | Idle-loop trigger (§6), SSE progress, sidebar: final letter + open issues, "not claimed" list, side-output sections, a "To work on" section in the profile editor (ranked list with counts + clear button, §5.9), Personalise controls (wired like `auto_cover_letter_min_score`: `DEFAULTS` → `PreferencesUpdate` with bounds → `sidebar.js`) | 7 (or 6 if the workflow ships first) |
-| 9 | **Later / optional** | Read the live screening questions from Seek's Quick Apply page (needs the parked apply-flow detection); `research_company` tool with search grounding (recruiter-posted ads are a risk); tune the agent's "hiring manager" framing and addressing; learn-from-edits style notes; "Polish" button; Batch API for the extract/match backlog | 8 |
+| 9 | **Live Quick Apply screening questions** (§10.1; rescoped 2026-10-04) | The content script reads the screening questions on Seek's Quick Apply page the user opened → backend → `answer_screening` answers them → sidebar + Quick-Apply overlay with Copy. **Blocked on** the parked apply-flow detection (a live session the user drives). The other old Phase 9 items moved out: company research, framing/addressing and learn-from-edits to `future_work/`; the "Polish" button is built (Regenerate, Phase 8); Batch API checked and not worth it (§10.2) | 8 + the live apply-flow session |
 
 The baseline and harness come before any agent work on purpose. Without them we
 can't tell whether checks, revisions or an orchestrator beat one
 well-prompted Pro call.
+
+### 10.1 Phase 9: read the live screening questions from Quick Apply
+
+**Why.** `answer_screening` (7c) only sees questions written into the ad text
+(Q10): `analyze_job` lifts them into `state.job.screening_questions`, a list of
+strings. On Seek the real questions ("Which of the following statements best
+describes your right to work in Australia?", "How many years' experience do you
+have as a ...?", usually with fixed options) sit inside Seek's Quick Apply flow,
+not in the ad. So today the tool answers nothing for most real applications:
+neither real.db nor the eval set has an ad with screening questions in its text.
+
+**Prerequisite: the parked apply-flow detection** (CLAUDE.md, parked
+fast-follow 1; `docs/extension-revamp-plan.md` §5.2). Nobody has seen Seek's
+Quick Apply URL or DOM from this project. It needs a live session in which the
+user opens a real job, clicks Apply / Quick Apply and steps through to the
+questions screen, while the DOM and URLs are inspected. Selectors go into
+`extension/selectors.js` in its existing pattern. **Do not guess selectors,
+URLs or question markup.** Things to find out in that session:
+- the URL pattern(s) of the apply flow, and whether it stays on a host the
+  manifest already matches (`au.seek.com/*`, `www.seek.com.au/*`). If it moves
+  to another host, that is a new `host_permissions` entry and needs the user's
+  OK;
+- whether the questions are on their own step, and how each question's text,
+  type (single choice / multi choice / free text / yes-no) and options are
+  marked up;
+- how to tie the page back to a `job_listings` row (a job id in the URL, or
+  only on the detail page that led there);
+- whether the page has personal data that must not be captured (the user's
+  name, email, CV file name, previous answers Seek pre-fills).
+
+**Policy fit.** The content script only reads the DOM of a page the user opened
+and clicked through themselves. No extra navigation, no clicking through steps
+on the user's behalf, no second hop, no calls to Seek's own APIs from the
+extension or the backend, and nothing is submitted or filled in. It sits inside
+the 1-hop rule (CLAUDE.md, Seek access policy) as a pure read.
+
+**Rough flow.**
+1. *Capture.* On a recognised apply-flow page the content script reads each
+   question: text, type, options (in order), and whether it is required. It
+   sends them with the job id to the backend. Read-only; re-sent if the page
+   changes (Seek may render steps without a full page load).
+2. *Endpoint.* A new endpoint (e.g. `POST /jobs/{id}/screening-questions`) or
+   an extension of `/ingest`. Validates and de-duplicates; no LLM call on
+   capture.
+3. *Storage.* On the job (like `requirements_checklist`) or on the run (like
+   `state.side_outputs`); see the open questions. Schema doc first
+   (`docs/database-schema.md`), as always.
+4. *Answering.* `answer_screening` takes the captured questions in place of,
+   or alongside, the ad-text ones. Its rules stay: grounded in the profile with
+   pointers checked in code, "answer this yourself" when the profile doesn't
+   cover it, never invent.
+5. *Display.* The answers appear in the sidebar's screening section (already
+   built, with Copy) and in the Quick-Apply overlay with Copy, ideally on the
+   apply page itself, next to the questions.
+
+**Open design questions (not decided).**
+- **Questions that arrive after the letter run has finished.** The user usually
+  reaches Quick Apply after the letter exists, so this is the normal case, not
+  the edge case. Options: a standalone `answer_screening` call outside a letter
+  run; reopen the finished run and add one side output; or wait for the user to
+  press Regenerate (re-runs the whole letter, ~20c, for a ~1c answer). Each has
+  a different answer to "does the agent decide, or does code just call it?".
+- **Multiple-choice questions.** Must the answer be exactly one of the
+  captured options, checked in code? What happens when no option is honestly
+  supported (pick none and say "answer this yourself", or pick the closest and
+  flag it)? How are "select all that apply" questions handled? Free-text
+  questions keep today's behaviour.
+- **Per job versus per run.** The questions belong to the job (the same for
+  any run), so caching them on the job looks natural, but Seek may change them
+  and the user might apply twice. The answers depend on the profile at the
+  time, so they look per run. Which wins when the ad text and the apply page
+  both have questions: merge, or apply-page only?
+- Smaller: whether capture happens for jobs with no match/letter yet; whether
+  to keep the raw question markup for debugging (and how to keep personal data
+  out of it).
+
+**Verification plan.**
+1. *No cost first.* Playwright with the unpacked extension against a scratch
+   test DB on port 8001 (`run_api.py test`, never real.db), with the apply page
+   served from a saved, scrubbed HTML fixture through request interception (no
+   request reaches Seek) and the LLM stubbed. Check: capture → endpoint →
+   storage, the stored question types and options, the answers rendered with
+   Copy in the sidebar and the overlay, and that no navigation or click is
+   made by the extension.
+2. *One live check the user drives:* the user opens a real Quick Apply flow
+   with the loaded extension pointed at the **test** backend; confirm the
+   questions are captured and answered (one mid-tier `answer_screening` call,
+   about 1c, with the user's OK). Record it in the Decision log.
+
+### 10.2 Batch API for the extract/match backlog: checked 2026-10-04, not worth it
+
+Was an old Phase 9 item. Vertex batch inference **works for us**, but at our
+volume it would save about **$4 over the whole trial**, it delays scores by up
+to a day, and it needs new moving parts. Not built. Sources are Google's
+official docs, read 2026-10-04.
+
+| Question | Finding | Source |
+|---|---|---|
+| Our models supported? Preview excluded? | Yes, all three. The supported list includes Gemini 3.8 Flash, Gemini 3.1 Pro *preview* and Gemini 3.1 Flash-Lite. Preview models are not excluded; only *tuned* Gemini 3+ models are. The list gives display names, not ID strings (the IDs match ours, but that mapping is mine) | [Batch inference with Gemini](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/multimodal/batch-prediction-gemini) (last updated 2026-10-02) |
+| Discount | 50% off online prices. Flex/Batch table, global: 3.1 Flash-Lite $0.125 / $0.75 (online $0.25 / $1.50); 3.8 Flash $0.375 / $1.875 to 2026-12-31; 3.1 Pro preview $1.00 / $6.00. Doesn't stack with implicit caching (the 90% cache discount wins), which doesn't hit for us anyway (future_work/gemini-prompt-caching.md) | Same page; [Vertex pricing](https://docs.cloud.google.com/vertex-ai/generative-ai/pricing) ("Gemini models are available in batch mode at 50% discount") |
+| `GOOGLE_CLOUD_LOCATION=global`? | Yes, the global endpoint works for base models (not tuned ones). A BigQuery output dataset must be in the same region as the job | Batch page; [Batch from Cloud Storage](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/multimodal/batch-prediction-from-cloud-storage) |
+| Formats | Input: one JSONL file in Cloud Storage (one `{"request": GenerateContentRequest}` per line) or a BigQuery table. Output: JSONL in Cloud Storage (each line has `status`, the request, and `response` with `usageMetadata`) or a BigQuery table. The GenAI SDK's `client.batches.create(model=..., src="gs://...", config=CreateBatchJobConfig(dest=...))` covers it. No inline-request input on Vertex (inline lists are a Developer API feature) | Batch from Cloud Storage |
+| Latency | "Most jobs complete within 24 hours after it starts running (not counting the queue time)". A job can queue up to 72 h before it expires; work unfinished at 24 h is cancelled and only completed requests are billed | Batch page |
+| Limits / quota | Up to 200,000 requests per job; 1 GB input file from Cloud Storage. No predefined quota: a shared pool, so jobs may queue. Not a covered SLA service. No explicit caching or Provisioned Throughput | Batch page |
+| Trial credit covers it? | The $300 credit excludes only "Gemini API in AI Studio costs" and partner models sold as a managed API. Vertex AI and Cloud Storage aren't excluded, so batch and its bucket are covered. **Inferred**: no page names batch explicitly. Trial accounts can't request quota increases, but batch has no quota to raise | [Free Trial features](https://docs.cloud.google.com/free/docs/free-cloud-features) (last updated 2026-09-30) |
+| Does the trial or the org block it? | Nothing on the trial page blocks it. **Unverified**: whether the project's org policies (the same org that blocks API keys) allow creating a bucket, or restrict resource locations; and whether the AI Platform service agent can be granted read on the bucket. Check with `gcloud resource-manager org-policies list --project=<project>` before building anything | — |
+| Structured output and thinking levels in batch requests? | The request line is a full `GenerateContentRequest`, so `generationConfig.responseSchema` and `thinkingConfig` should carry over. **Unverified**: no page says so explicitly | Batch from Cloud Storage (request format) |
+| Developer API "Gemini Batch API" relevant? | No. It needs an API key (the org blocks keys) and the trial credit can't pay for AI Studio / Gemini API costs. Its one extra, inline requests (no bucket), doesn't change that | [Gemini API batch mode](https://ai.google.dev/gemini-api/docs/batch-mode); Free Trial features |
+
+**The saving at our volume.** Real per-job costs from `llm_usage` in
+`evals/eval.db` (54 jobs, small tier): `extract` $0.00123, `match` $0.00096,
+plus `employer_name` $0.00033 when the company is missing (app.db, 17 calls).
+About **$0.0022 per scanned job**, so batch saves about **$0.0011 per job**.
+The §9 envelope (3,600 scanned jobs in 90 days, an upper bound) gives **≈ $4
+saved over the whole trial**. Flash-Lite's price doesn't double on 2027-01-01,
+so the saving doesn't grow then. Letters (≈ $0.18–0.23 each, 70–80% of it the Pro
+draft and revision) would be the only meaningful saving, but they are
+multi-step tool runs where each call depends on the last, and a letter a day
+late defeats the idle loop. The cost reports (`evals/results/cost-*.md`) don't
+cover extract/match; their numbers are the letter's.
+
+**Why not, beyond the money.** Scores would arrive up to 24 h (+ queue) after
+a scan, so the sidebar's ranked list and the letter pipeline (which waits on a
+match) would lag by a day. It would add a bucket, a JSONL writer, a job poller,
+an output parser that maps results back to job ids, and partial-failure
+handling, none of which exists today.
+
+**When to revisit.** If the app becomes multi-user (hundreds of thousands of
+jobs a month), or for a bulk *re-score* that nobody waits on: the unbuilt
+"re-score against updated profile" button (CLAUDE.md, retention entry, item 10)
+re-matches every live match after a profile change, which is exactly a
+batch-shaped job. Sketch for then: `client.submit_batch(tier, task, requests)`
+and `client.collect_batch(job)` in `app/llm/client.py`, so the provider, model
+IDs and prices stay in the one place; callers still name a tier and a `task=`.
+`PRICES` gains the batch rate. One `llm_usage` row per response is written at
+collection time from its `usageMetadata`, with the `job_id` it belongs to and a
+batch marker (a new column or a task suffix; schema doc first). The budget
+guard checks an *estimate* (input tokens × batch price + a max-output
+allowance) before submitting, since the real cost is only known a day later;
+`small` stays never-blocked, as now. Bulk extract/match is all `small`, so in
+practice the guard would only matter if mid-tier work were ever batched.
 
 ---
 
@@ -795,7 +943,8 @@ well-prompted Pro call.
 - ~~Q1 Trial timing~~: new trial, ~2026-10-01 → ~2026-12-30. Confirm the
   expiry in Phase 0.
 - ~~Q2 Trigger~~: automatic at ≥85, tunable, with a master toggle (§6).
-- ~~Q3 Company research~~: later, as an experiment (Phase 9).
+- ~~Q3 Company research~~: later, as an experiment. Moved out of Phase 9 to
+  `future_work/research-company.md` (2026-10-04).
 - ~~Q4 Resume scope~~: tailoring notes only, behind a toggle (§5.6).
 
 - ~~Q5 Voice~~: a free-text "Your writing" paste box in the profile editor
@@ -812,7 +961,7 @@ well-prompted Pro call.
   answer to the profile as experience / skill / qualification rows; No means
   `leave_out` and is remembered (§5.5).
 - ~~Q10 Screening~~: ad text only at first; live Quick Apply questions later
-  (Phase 9).
+  (Phase 9, now the only Phase 9 item; §10.1).
 
 **Decided 2026-10-03 (user):** Q11 = confirm before saving; Q12 = a plain origin tag
 ("added while applying to a job"), no job title. See the Decision log.
@@ -940,3 +1089,5 @@ well-prompted Pro call.
 | 2026-10-04 | **The three per-run limits are wired** (they were in `DEFAULTS` but read by nothing; the caps were literals in `Budget`). `letter_max_drafts` (1-5, default 3), `letter_max_tool_calls` (6-40, 15) and `llm_run_budget_usd` (0.05-5.0, $0.50): `preferences.LIMIT_BOUNDS` -> `PreferencesUpdate` (same bounds) -> `letter_settings()["limits"]` (a bad stored value reads as the default) -> `production` -> `engines.run_letter(limits=)` -> `open_run`, which copies them into `state.budget`, so a paused or resumed run keeps the limits it opened with. `Budget`'s defaults now come from the same constants. The workflow's revision count follows `max_drafts - 1` unless a caller passes `max_revisions`. Sidebar: three number inputs in Personalise, out-of-range values snap back unsaved, and a note warns when the tool-call cap can't fit the drafts (4 per draft + 2). The evals still run on the defaults. Verified: 1126 tests (118 new in tests/test_letter_limits.py, Sonnet-written to a spec, reviewed), and the controls driven in Chromium against a scratch DB, 14/14 | Plan §7; Phase 8 design choice (9) |
 | 2026-10-04 | **Live gap + screening run ($0.2006, user-approved; scratch copy of real.db, real profile)** on job 18 (Tabcorp Software Engineer, first must-have "Experience in mobile development using React Native or Flutter"). No ad in real.db or the eval set has screening questions, so three were appended to the copy's ad text (work rights, years of React Native/Flutter, salary). `analyze_job` found all three. **`ask_user` did not fire**: `match_profile` rated the must-have *partial* ("Experience with React.js, but no React Native or Flutter"), which its rules allow (same kind of activity, related tool), so no gap was confirmed and `suggest_learning` was correctly "not needed". Path: analyze -> match -> generate -> 3 checks (all passed on draft 1) -> answer_screening -> suggest_resume_tweaks -> finish; 9 orchestrator turns, 0 refusals. **Screening answers: all three came back `covered: no` with a note telling the user to answer; nothing was invented.** Q1 because the real profile's visa/work status is empty, Q2 honestly (no React Native/Flutter), Q3 (salary is never in a profile). So the verified-answer path is still untested on a model. Résumé notes were grounded and flagged a real profile problem: the real profile's summary is the single letter "s". The letter frames the partial honestly ("While my experience is in web development rather than mobile development...") but that is the gap-led "While my X rather than Y" shape `style_lint` misses (known follow-up). Cost: generate $0.109, orchestrator $0.021 (9 turns), check_claims $0.021, match $0.016, answer_screening $0.012, résumé notes $0.011, analyze $0.010 | Side outputs on a real model; ask_user and suggest_learning still unproven on the agent |
 | 2026-10-04 | Eval spend on 2026-10-04: **$6.76** (workflow-v3 $3.35 incl. $0.14 re-analysis; agent-v2-side $3.41; the live gap run $0.20, on a scratch copy of real.db). The three Opus panel agents used no Gemini | Running total |
+| 2026-10-04 | **Phase 9 rescoped to one item: read the live screening questions from Seek's Quick Apply page** (§10.1). Blocked on the parked apply-flow detection, a live session the user drives; selectors are not guessed. Open questions named, not decided: questions arriving after the run has finished, multiple-choice answers, per-job vs per-run storage. The other old Phase 9 items moved out so nothing is lost: `research_company` → `future_work/research-company.md`; "hiring manager" framing/addressing → `future_work/letter-framing-and-addressing.md`; learn-from-edits style notes → `future_work/learn-from-edits.md` (own files, not folded into the voice toggle: each has its own trigger and data source); the "Polish" button is already built (Regenerate, Phase 8 design choice 6) | Wording work is put off (2026-10-04 decision); the screening item is the only one with a concrete user-facing gap |
+| 2026-10-04 | **Vertex batch inference checked: possible, not worth it; not built** (§10.2, sources there). All three of our models are supported, the Pro *preview* included; 50% off; works on the `global` endpoint; JSONL in Cloud Storage or BigQuery; most jobs finish within 24 h of starting, plus up to 72 h queueing; 200k requests / 1 GB per job; no predefined quota. The trial credit covers Vertex and Cloud Storage (inferred: only AI Studio and partner MaaS are excluded). The Developer API Batch API is irrelevant (needs an API key; the trial credit can't pay for it). Saving at our volume: extract + match ≈ $0.0022/job (eval.db `llm_usage`), so ≈ $0.0011/job, ≈ $4 over the trial at the §9 envelope. Letters can't be batched (multi-step, latency). **Unverified:** whether the org's policies allow the bucket; whether `responseSchema` / `thinkingConfig` carry over in batch requests. Revisit for multi-user volume or a bulk re-score after a profile change | The saving is trivial next to the 24 h lag on scores and the new moving parts (bucket, poller, result mapping) |
