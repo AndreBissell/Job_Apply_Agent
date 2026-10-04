@@ -74,6 +74,9 @@ const SCREENING_ASSIST_CSS = `
   .sa-opt .sa-tag { font-size: 10px; color: #4b5563; text-align: right; }
   .sa-gaps { margin-top: 6px; }
   .sa-remembered { margin-top: 4px; font-size: 11px; color: #6b7280; }
+  .sa-link { padding: 0; border: 0; background: none; font: inherit; font-size: 11px;
+    color: #2557a7; text-decoration: underline; cursor: pointer; }
+  .sa-link:disabled { color: #9ca3af; cursor: default; }
   .sa-gap { margin-top: 6px; padding: 6px 8px; border: 1px solid #fcd34d; background: #fffbeb; border-radius: 6px; }
   .sa-gap .sa-ask { font-size: 12px; }
   .sa-gap .sa-note { margin-top: 4px; font-size: 10px; color: #78350f; }
@@ -205,10 +208,33 @@ function saProposalEditor(proposal) {
   };
 }
 
-// A wanted-but-missing skill: remembered "no" (a muted line) or a small Yes/No card.
-// A Yes only offers to add the skill to the profile; it never changes the cover letter.
+// A remembered "no", with a way back: "Change my answer" takes it off the to-work-on
+// list (POST /gaps/{id}/clear, history kept) and the Yes/No card comes back.
+function saRememberedLine(g, opts) {
+  const line = saEl('div', 'sa-remembered', `You said you don't have ${g.skill}. `);
+  if (g.gap_id == null) return line;
+  const undo = saEl('button', 'sa-link', 'Change my answer');
+  undo.type = 'button';
+  const err = saEl('div', 'sa-err');
+  line.append(undo, err);
+  undo.addEventListener('click', async () => {
+    undo.disabled = true;
+    const r = await saRequest(opts,
+      `${opts.backend}/gaps/${g.gap_id}/clear?profile_id=${encodeURIComponent(opts.profileId)}`, {});
+    if (r.ok) {
+      return opts.onChanged && opts.onChanged(`Your "no" for ${g.skill} is undone. Answer again below.`);
+    }
+    err.textContent = saErrorText(r);
+    undo.disabled = false;
+  });
+  return line;
+}
+
+// A wanted-but-missing skill: remembered "no" (a muted line you can undo) or a small
+// Yes/No card. A Yes only offers to add the skill to the profile; it never changes the
+// cover letter.
 function saGapCard(g, jobId, opts) {
-  if (g.remembered) return saEl('div', 'sa-remembered', `You said you don't have ${g.skill}`);
+  if (g.remembered) return saRememberedLine(g, opts);
 
   const card = saEl('div', 'sa-gap');
   const importance = g.importance ? ` (${(SA_IMPORTANCE[g.importance] || g.importance).toLowerCase()})` : '';

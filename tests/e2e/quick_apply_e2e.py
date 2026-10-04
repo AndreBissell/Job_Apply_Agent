@@ -621,6 +621,19 @@ def run(headed: bool) -> int:
             sight = con.execute("SELECT source, importance FROM gap_sightings").fetchall()
             c.check(len(sight) >= 1 and all(r[0] == "quick_apply" for r in sight),
                     f"gap_sightings rows have source 'quick_apply' ({sight})")
+            # --- undo the No: "Change my answer" brings the Yes/No card back ----------
+            panel_locator(page).get_by_role("button", name="Change my answer").click()
+            c.check(wait_panel_text(page, "Objective-C — wanted (nice to have). Do you have it?"),
+                    "S2: 'Change my answer' brings the Objective-C Yes/No card back")
+            cleared = con.execute("SELECT cleared_at FROM gap_decisions WHERE label = 'Objective-C'").fetchone()
+            c.check(cleared is not None and cleared[0] is not None,
+                    f"the undone 'no' is cleared, not deleted ({cleared})")
+            # Say No again: the sidebar check further down expects the remembered No.
+            gap = panel_locator(page).locator(".sa-gap", has_text="Objective-C")
+            gap.get_by_role("button", name="No", exact=True).click()
+            reopened = (wait_panel_text(page, "You said you don't have Objective-C")
+                        and con.execute("SELECT COUNT(*) FROM gap_decisions WHERE cleared_at IS NULL").fetchone()[0] == 1)
+            c.check(reopened, "a second No reopens the same remembered row")
             fx = page_side_effects(page)
             c.check(fx["events"] == [] and fx["sameHref"] and fx["sameHistory"],
                     f"clicking in our overlay caused no event or navigation on Seek's elements ({fx['events']})")
