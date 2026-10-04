@@ -894,13 +894,27 @@ user reaches Quick Apply after the letter exists). Questions live in the bank an
 ad-text `answer_screening` path in the letter run stays as is.
 
 **Open questions (decide while building).**
-- Gap questions outside a run: `app/llm/letter/answers.py` takes a `run_id`; a run-less path
-  is needed. Does a "Yes" here also reopen the letter?
-- No honest option on a multiple-choice question: "none fits, answer yourself", or point at
-  the lowest option and flag it?
-- Jobs with no `match_profile` result (below the letter bar): spend ≈ $0.02 to analyse on
-  demand, or free name matching on `job_skills` only?
-- Motivation questions: `user` by default; an opt-in "draft from my cover letter" later?
+- ~~Gap questions outside a run~~ **Decided 2026-10-04 (user):** a "Yes" never reopens the
+  letter. When the user says they have a wanted skill or technology, the app offers to add it
+  to the profile (as a skill etc., through the existing proposed-rows + confirm step) and does
+  nothing else. A run-less path into `answers.py` is still needed for that.
+- ~~No honest option on a multiple-choice question~~ **Decided 2026-10-04 (user):** show two
+  things, clearly separated: **what the job wants** (from the ad) and **what your profile
+  has**. Then the user picks. **Honour system:** the app trusts what the user says about
+  themselves; it never suggests an option and never second-guesses the user's own answer. (The
+  app's own "you have it" label still needs profile evidence.)
+- ~~Jobs with no `match_profile` result~~ **Decided 2026-10-04 (user):** on Seek the questions
+  step comes after the documents step (where the cover letter is attached), so help is only
+  offered for jobs that **have a cover letter**. With no letter, the overlay says "Create a
+  cover letter to get help with these questions" (uses the existing Regenerate). Capture into
+  the bank (9a) still happens either way, at no cost. **One-shot letters get NO question
+  assistance (decided 2026-10-04, user):** a job whose letter came from the one-shot
+  `cover_letter.py` (score between `auto_cover_letter_min_score` and `letter_loop_min_score`,
+  or the loop switched off) has no requirements checklist or evidence, and none is built on
+  demand. Help (9b strategies, 9c drafts) is only for jobs whose letter came from the full
+  pipeline (agent or workflow). On a one-shot job the overlay lists the questions with their
+  kind only and says why: question help needs a full-pipeline letter.
+- ~~Motivation questions~~ **Decided 2026-10-04 (user):** stay `user` (yours to answer) for now.
 - Is `AU_Q_218` (C# in a role) one id per skill or one shared id? A second sample will tell.
 
 #### Steps (each committed, with the user's go-ahead between, as in Phase 7)
@@ -914,7 +928,9 @@ ad-text `answer_screening` path in the letter run stays as is.
   the profile editor; `scripts/export_question_bank.py`; `tests/e2e/quick_apply_e2e.py`.
 - **9b: assist.** Layer 5 (small model, once per new question), the strategies, years from
   dates, wanted/have labels, the gap → ask path, display.
-- **9c: drafts + evals.** `free_text_describe` / `years_skill_text` drafts through
+- **9c: drafts + evals.** A Personalise toggle (default on) for help with open-ended
+  questions: off = open-ended questions are shown as "yours to answer", with no AI draft and no
+  other help (decided 2026-10-04, user). `free_text_describe` / `years_skill_text` drafts through
   `answer_screening`; an eval set built from the bank (kind accuracy, where a `user` question
   reaching the model is a failure; strategy accuracy; no "you have it" without evidence).
 
@@ -1172,3 +1188,6 @@ practice the guard would only matter if mid-tier work were ever batched.
 | 2026-10-04 | **Phase 9 scope readjusted (user): help with the Quick Apply questions, not just answer them.** Each question is `user` (personal, legal, demographic or logistics: work rights, identity, salary, how you heard; motivation by default; no AI help, never sent to the LLM) or `assisted` (relates to the ad: languages, frameworks, years of experience). Assisted questions show what the employer wants (requirements checklist) beside what the user has (profile evidence); wanted-but-missing options go through the `ask_user` gap memory (ask once, remember the no). Leaning: runs outside the letter run, questions stored per job, labels derived. Split into 9a capture / 9b assist / 9c drafts + evals. Waits on the live session for the DOM | Most Seek questions aren't the app's to answer; the useful help is showing which options the ad wants and which the profile honestly backs |
 | 2026-10-04 | **Phase 9 revised from 5 real Quick Apply questionnaires (22 questions; `docs/quick-apply-samples.md`).** 17 of 22 were `user` (work rights on all 5 jobs). Sorting runs cheapest first: question bank → Seek library id table (`AU_Q_<n>`, stable across jobs) → `user` keyword filter (employers also ask work rights and salary in their own words) → templates for Seek's generated per-role questions (32-hex ids, new per role) → small model once per genuinely new question. Assisted questions get a strategy (`years_role_bracket`, `years_skill_text`, `skill_in_role_yes_no`, `skill_multi_select`, `free_text_describe`). **User decision: absorb every new question into a question bank** (two new tables; schema doc first) so the app learns how to answer it next time; never store selected or typed answers. The live-session prerequisite is met for the questions step (markup settled from the samples) | The bank turns a per-job model call into a one-off per question, and builds the 9c eval set as a side effect |
 | 2026-10-04 | **Phase 9a built: capture + question bank, no LLM.** Two tables (`screening_questions`: global bank, identity `lib:AU_Q_<n>` or `fp:<32 hex>` over normalised text + type + sorted option labels, kind/strategy/parameters/classified_by, status new→confirmed, `times_seen` = distinct jobs; `job_screening_questions`: per job, form order, Seek's per-form id, field name, option values; only added/updated, never removed by a capture), migration `b4d8e2f6a913`, schema doc first. Sorting layers 2–4 in `app/screening/sort.py` (library table `AU_Q_6/8/13` user, `AU_Q_136` multi-select, `AU_Q_218` skill-in-role; `user` keyword topics work_rights / identity / legal / salary / notice / work_arrangement / source / motivation, deliberately specific so "office manager" or "Microsoft Office" don't trip them; templates "years' experience as <role>" with options and "worked in a role which requires <skill> experience"). A bank row is only re-sorted while `unknown`; a user correction (`classified_by='user'`) is never overwritten. **All 22 sampled questions sort as the samples doc records**: 21 sorted (17 user, 4 assisted), S5's React Native years question left `unknown` for 9b's model. Content script: an apply page (`/job/{id}/apply/...`) no longer runs the detail-page branch (before, a Quick Apply visit could have marked the job **expired**, since it has no description); a debounced MutationObserver re-reads the step on single-page changes and only posts when what it read changed; a job never captured gets a stub row from the header `<h1>`. Overlay bottom-left lists each question as "Yours to answer (topic)" / "We'll help — coming in 9b" / "New — not sorted yet". Review list in the profile editor (Confirm, or correct kind/strategy). `scripts/export_question_bank.py` writes the bank in the samples doc's shape. `run_api.py test --db <file>` for scratch DBs. **Verified:** 1261 tests (135 new); Playwright with the unpacked extension against a scratch DB on `run_api.py test` (port 8001, `LLM_PROVIDER=stub`), pages built from the scrubbed samples via request interception: 56/56 checks (kinds in the overlay, 18 bank rows for 22 questions, repeat visit adds nothing, SPA step changes, no click/input/change/submit event, no navigation, no pre-filled answer or masked text stored, no LLM row, no request left the machine). **Finding:** Chromium 148 blocked the content script's fetch to localhost (Local Network Access) until the harness disabled that check; the user's own Chrome may show a one-time "access devices on your local network" prompt on Seek. **Not verified (needs the live check the user drives):** the real Seek markup through the extension, the step-change behaviour on Seek's real SPA, the header `<h1>`, and the review list's use in practice | The bank is the 9b/9c groundwork; sorting needs no model for 21/22 samples |
+| 2026-10-04 | **Three Phase 9 open questions decided (user).** (1) A "Yes" to a wanted skill never reopens the letter; the app only offers to add it to the profile (proposed rows → confirm). (2) No honest option on a multiple-choice question: open-ended, show what the employer wants and ask whether the user has any experience with it; never point at an option. (3) Motivation questions stay `user`. Still open: jobs below the letter bar (analyse on demand vs free name matching), `AU_Q_218` one id per skill | Keeps 9b small: no letter re-runs, no advice on which option to pick |
+| 2026-10-04 | **Phase 9 scope refined (user).** Choice questions show **what the job wants** and **what your profile has** side by side, and the user picks: an **honour system**, the app trusts the user's own answer and never recommends an option. Help (9b/9c) only for jobs with a **cover letter** (Seek's questions step follows the documents step); with none, the overlay offers "Create a cover letter to get help with these questions". 9c gets a Personalise toggle: off = no help at all (AI or otherwise) on open-ended questions. Open: one-shot-letter jobs have a letter but no checklist/evidence | Supersedes the "no honest option" wording in the previous row |
+| 2026-10-04 | **One-shot letters get no Quick Apply question assistance (user).** Only jobs with a full-pipeline letter (agent/workflow, so `analyze_job` + `match_profile` exist) get 9b/9c help; nothing is analysed on demand for a one-shot job. Its overlay lists the questions and kinds only, with a note that help needs a full-pipeline letter. Capture into the bank is unaffected | Closes the last scope question from the previous row; no extra per-job spend |

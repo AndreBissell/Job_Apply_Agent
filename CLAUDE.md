@@ -413,7 +413,13 @@ global bank + `job_screening_questions`), `app/screening/` (identity / sort laye
 detail-page branch, which could mark the job expired), review list in the profile editor,
 `scripts/export_question_bank.py`, `tests/e2e/quick_apply_e2e.py` (56/56, scrubbed fixtures,
 scratch DB via `run_api.py test --db`). Run `alembic upgrade head` (run_api does it) before use.
-NOT verified on a live Seek page; Chrome may ask once for local-network access on Seek. The questions-step markup is
+NOT verified on a live Seek page; Chrome may ask once for local-network access on Seek.
+9b/9c scope (user, 2026-10-04; plan §10.1): help ONLY for jobs with a full-pipeline letter
+(agent/workflow). ONE-SHOT LETTERS GET NO QUESTION ASSISTANCE (no on-demand analysis); no
+letter -> overlay offers "create a cover letter". Choice questions show what the job wants and
+what the profile has, user picks (honour system, never recommend an option). A "Yes" only offers
+to add the skill to the profile, never reopens the letter. Motivation stays `user`. 9c: a
+Personalise toggle, off = no help at all on open-ended questions. The questions-step markup is
 settled from the samples; anything else still needs a live check the user drives (parked
 fast-follow 1 below; don't guess selectors). The "Polish" button is
 already Regenerate (Phase 8). Vertex batch inference was checked (plan §10.2): possible on the
