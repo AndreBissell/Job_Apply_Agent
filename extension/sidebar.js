@@ -6,6 +6,17 @@
 // profile is id 1 in both — so this constant is correct for either.
 const PROFILE_ID = 1;
 
+// Tell the background worker while this side panel is open. When the panel is
+// closed the port drops, and the worker hides the Quick Apply questions panel on
+// Seek tabs (content_script.js). Reconnects if the worker was restarted.
+function announceSidebarOpen() {
+  try {
+    const port = chrome.runtime.connect({ name: 'sidebar' });
+    port.onDisconnect.addListener(() => setTimeout(announceSidebarOpen, 1000));
+  } catch { /* extension context gone: the panel is closing anyway */ }
+}
+announceSidebarOpen();
+
 // Score tiers (docs/extension-revamp-plan.md §1) — purely visual colouring.
 const GOLD_MIN = 95;
 const BLUE_MIN = 90;

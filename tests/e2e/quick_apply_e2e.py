@@ -273,11 +273,7 @@ def run(headed: bool) -> int:
         with sync_playwright() as p:
             ctx = p.chromium.launch_persistent_context(
                 str(work / "profile"), channel="chromium", headless=not headed,
-                args=[f"--disable-extensions-except={EXTENSION}", f"--load-extension={EXTENSION}",
-                      # Chrome asks before a public site's page reaches localhost (Local
-                      # Network Access); automation can't answer the prompt, so allow it
-                      # here, as the user does once in their own browser.
-                      "--disable-features=LocalNetworkAccessChecks"],
+                args=[f"--disable-extensions-except={EXTENSION}", f"--load-extension={EXTENSION}"],
             )
             ctx.route("**/*", route)
             sw = ctx.service_workers[0] if ctx.service_workers else ctx.wait_for_event("serviceworker")

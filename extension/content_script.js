@@ -4,9 +4,30 @@
 
 // BACKEND comes from config.js (real vs test environment).
 
+// Every call to the local backend goes through the background service worker
+// (background.js, BACKEND_FETCH). A request made from this content script carries
+// the Seek page's origin, and Chrome's Local Network Access blocks a public page
+// reaching localhost ("Permission was denied ... loopback address space"). The
+// worker runs as the extension, with the localhost host_permissions, so it isn't
+// subject to that rule. Returns the bits of Response the callers use.
+async function backendFetch(url, init = {}) {
+  const reply = await chrome.runtime.sendMessage({
+    type: 'BACKEND_FETCH',
+    url,
+    init: { method: init.method || 'GET', headers: init.headers, body: init.body },
+  });
+  if (!reply || reply.error) throw new Error((reply && reply.error) || 'no reply from the background worker');
+  return {
+    ok: reply.ok,
+    status: reply.status,
+    json: async () => JSON.parse(reply.body),
+    text: async () => reply.body,
+  };
+}
+
 async function ingest(listings) {
   try {
-    const res = await fetch(`${BACKEND}/ingest`, {
+    const res = await backendFetch(`${BACKEND}/ingest`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ listings, profile_id: 1 }),
@@ -212,6 +233,18 @@ function collectJobLinks() {
   return urls;
 }
 
+// The side panel closing hides the questions panel; reopening it brings it back.
+chrome.runtime.onMessage.addListener((msg) => {
+  if (!msg) return;
+  if (msg.type === 'SIDEBAR_CLOSED') {
+    questionsHidden = true;
+    removeQuestionsPanel();
+  } else if (msg.type === 'SIDEBAR_OPENED') {
+    questionsHidden = false;
+    if (lastQuestionsList) renderQuestionsPanel(lastQuestionsList);
+  }
+});
+
 // Hand the side panel the job links on this page (for the limited scan).
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg && msg.type === 'COLLECT_LINKS') {
@@ -234,7 +267,7 @@ const QUICK_APPLY_HOST_ID = 'seek-assistant-quick-apply-host';
 
 async function fetchJobDetail(jobId) {
   try {
-    const res = await fetch(`${BACKEND}/jobs/${jobId}?profile_id=1`);
+    const res = await backendFetch(`${BACKEND}/jobs/${jobId}?profile_id=1`);
     if (!res.ok) return null;
     return await res.json();
   } catch {
@@ -247,7 +280,7 @@ async function fetchJobDetail(jobId) {
 // a specific job (detail, status, screenshot, expired) needs the internal id.
 async function resolveInternalJobId(sourceJobId) {
   try {
-    const res = await fetch(`${BACKEND}/jobs/by-source-id/${sourceJobId}`);
+    const res = await backendFetch(`${BACKEND}/jobs/by-source-id/${sourceJobId}`);
     if (!res.ok) return null;
     const data = await res.json();
     return data.job_id ?? null;
@@ -258,7 +291,7 @@ async function resolveInternalJobId(sourceJobId) {
 
 async function markExpired(jobId) {
   try {
-    await fetch(`${BACKEND}/jobs/${jobId}/expired`, { method: 'PATCH' });
+    await backendFetch(`${BACKEND}/jobs/${jobId}/expired`, { method: 'PATCH' });
   } catch { /* best-effort — a missed flag just means the job stays visible */ }
 }
 
@@ -289,7 +322,7 @@ async function captureAndDownloadScreenshot(jobId) {
   a.remove();
 
   try {
-    const res = await fetch(`${BACKEND}/jobs/${jobId}/screenshot?profile_id=1`, {
+    const res = await backendFetch(`${BACKEND}/jobs/${jobId}/screenshot?profile_id=1`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ data_url: dataUrl }),
@@ -378,7 +411,7 @@ function buildQuickApplyPanel(jobId, data) {
     saveBtn.disabled = true;
     saveBtn.textContent = 'Saving…';
     try {
-      const res = await fetch(`${BACKEND}/jobs/${jobId}/cover-letter?profile_id=1`, {
+      const res = await backendFetch(`${BACKEND}/jobs/${jobId}/cover-letter?profile_id=1`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ edited_content: textarea.value }),
@@ -412,7 +445,7 @@ function buildQuickApplyPanel(jobId, data) {
     if (applyBtn.classList.contains('applied')) return;
     applyBtn.disabled = true;
     try {
-      const res = await fetch(`${BACKEND}/jobs/${jobId}/status?profile_id=1`, {
+      const res = await backendFetch(`${BACKEND}/jobs/${jobId}/status?profile_id=1`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: 'applied' }),
@@ -565,7 +598,7 @@ async function resolveOrCreateJob(sourceJobId) {
 
 async function postScreeningQuestions(jobId, questions, step) {
   try {
-    const res = await fetch(`${BACKEND}/jobs/${jobId}/screening-questions`, {
+    const res = await backendFetch(`${BACKEND}/jobs/${jobId}/screening-questions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ questions, step }),
@@ -591,11 +624,71 @@ function removeQuestionsPanel() {
   document.getElementById(QUESTIONS_HOST_ID)?.remove();
 }
 
+// Where the user dragged the panel to (viewport px, top-left corner). Kept for the
+// life of the page so a redraw (the step re-rendering) doesn't snap it back.
+let questionsPanelPos = null;
+// Hidden by the user's X or because the side panel was closed; the last list read,
+// so the panel can come back when the side panel reopens.
+let questionsHidden = false;
+let lastQuestionsList = null;
+
+function placeQuestionsHost(host) {
+  if (!questionsPanelPos) { // default: bottom left
+    host.style.cssText = 'position:fixed;bottom:16px;left:16px;z-index:2147483647;';
+    return;
+  }
+  const maxLeft = Math.max(0, window.innerWidth - 80);
+  const maxTop = Math.max(0, window.innerHeight - 40);
+  const left = Math.min(Math.max(0, questionsPanelPos.left), maxLeft);
+  const top = Math.min(Math.max(0, questionsPanelPos.top), maxTop);
+  host.style.cssText = `position:fixed;top:${top}px;left:${left}px;z-index:2147483647;`;
+}
+
+// Drag the panel by its header. A press that moves less than a few pixels is a
+// click (collapse/expand), not a drag.
+function makeDraggable(host, handle, onClick) {
+  handle.style.cursor = 'grab';
+  handle.style.touchAction = 'none';
+  handle.addEventListener('pointerdown', (down) => {
+    if (down.button !== 0) return;
+    const rect = host.getBoundingClientRect();
+    const dx = down.clientX - rect.left;
+    const dy = down.clientY - rect.top;
+    let dragging = false;
+    handle.setPointerCapture(down.pointerId);
+    const move = (e) => {
+      if (!dragging && Math.hypot(e.clientX - down.clientX, e.clientY - down.clientY) < 5) return;
+      dragging = true;
+      handle.style.cursor = 'grabbing';
+      questionsPanelPos = { left: e.clientX - dx, top: e.clientY - dy };
+      placeQuestionsHost(host);
+    };
+    const up = () => {
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', up);
+      handle.removeEventListener('pointercancel', up);
+      handle.style.cursor = 'grab';
+      if (!dragging) onClick();
+    };
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', up);
+    handle.addEventListener('pointercancel', up);
+  });
+}
+
+// A smaller window must not strand the panel off-screen.
+window.addEventListener('resize', () => {
+  const host = document.getElementById(QUESTIONS_HOST_ID);
+  if (host && questionsPanelPos) placeQuestionsHost(host);
+});
+
 function renderQuestionsPanel(questions) {
+  lastQuestionsList = questions;
   removeQuestionsPanel();
+  if (questionsHidden) return;
   const host = document.createElement('div');
   host.id = QUESTIONS_HOST_ID;
-  host.style.cssText = 'position:fixed;bottom:16px;left:16px;z-index:2147483647;';
+  placeQuestionsHost(host);
   document.body.appendChild(host);
   const shadow = host.attachShadow({ mode: 'open' });
 
@@ -633,8 +726,23 @@ function renderQuestionsPanel(questions) {
   title.textContent = `Employer questions (${questions.length})`;
   const caret = document.createElement('span');
   caret.textContent = '▾';
-  hdr.append(title, caret);
-  hdr.addEventListener('click', () => panel.classList.toggle('collapsed'));
+  const close = document.createElement('span');
+  close.textContent = '✕';
+  close.title = 'Hide until the next step or until you reopen the side panel';
+  close.style.cssText = 'margin-left:10px;padding:0 4px;cursor:pointer;font-size:13px;line-height:1;';
+  // The X must not start a drag or toggle the collapse underneath it.
+  close.addEventListener('pointerdown', (e) => e.stopPropagation());
+  close.addEventListener('click', (e) => {
+    e.stopPropagation();
+    questionsHidden = true;
+    removeQuestionsPanel();
+  });
+  const right = document.createElement('span');
+  right.style.cssText = 'display:flex;align-items:center;';
+  right.append(caret, close);
+  hdr.append(title, right);
+  hdr.title = 'Drag to move, click to collapse';
+  makeDraggable(host, hdr, () => panel.classList.toggle('collapsed'));
   panel.appendChild(hdr);
 
   const body = document.createElement('div');
@@ -686,8 +794,11 @@ async function checkApplyStep() {
       const sourceJobId = extractApplyJobId(location.pathname);
       const questions = sourceJobId ? parseQuestionnaire() : [];
       if (!questions.length) {
-        // Another step, or not an apply page: drop the panel.
+        // Another step, or not an apply page: drop the panel. Coming back to the
+        // questions step shows it again, even if the user had hidden it.
         lastQuestionsSig = null;
+        lastQuestionsList = null;
+        questionsHidden = false;
         removeQuestionsPanel();
         continue;
       }
