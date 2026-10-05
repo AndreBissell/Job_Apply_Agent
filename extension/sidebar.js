@@ -135,7 +135,7 @@ tabBtns.forEach(btn => {
     if (tab === 'profile' && !profileLoaded) loadProfile();
     if (tab === 'profile') loadToWorkOn(); // counts move as new ads are scanned — always refresh
     if (tab === 'overview') loadOverview(); // always refresh: counts move as you apply
-    if (tab === 'applied') loadApplied(); // always refresh — cheap query, keeps it current
+    if (tab === 'applied') loadAppliedPeriods(); // always refresh — cheap query, keeps it current
   });
 });
 
@@ -996,61 +996,9 @@ function renderCoverLetterEditor(container, jobId, cl) {
 }
 
 // ---------------------------------------------------------------------------
-// Applied tab — Centrelink mutual-obligation reporting
+// Applied tab — Centrelink mutual-obligation reporting. The monthly periods and the CSV
+// exports live in dashboard.js; the helpers below are shared with it.
 // ---------------------------------------------------------------------------
-const appliedStatusEl = document.getElementById('applied-status');
-const appliedListEl = document.getElementById('applied-list');
-let lastAppliedJobs = [];
-
-async function loadApplied() {
-  appliedStatusEl.textContent = 'Loading…';
-  appliedListEl.innerHTML = '';
-  let jobs;
-  try {
-    const res = await fetch(`${BACKEND}/jobs?profile_id=${PROFILE_ID}&min_score=0&status=applied`);
-    jobs = await res.json();
-  } catch {
-    appliedStatusEl.textContent = 'Backend not running — start run_api.py.';
-    return;
-  }
-  lastAppliedJobs = Array.isArray(jobs) ? jobs : [];
-  if (!lastAppliedJobs.length) {
-    appliedStatusEl.textContent = 'No applications logged yet. Use "Mark Applied" on a job in the Jobs tab.';
-    return;
-  }
-  appliedStatusEl.textContent = `${lastAppliedJobs.length} application(s).`;
-  for (const job of lastAppliedJobs) appliedListEl.appendChild(renderAppliedRow(job));
-}
-
-function renderAppliedRow(job) {
-  const li = document.createElement('li');
-  const row = document.createElement('div');
-  row.className = 'job-row';
-
-  const title = document.createElement('span');
-  title.className = 'job-title';
-  title.textContent = job.title || '(untitled)';
-  row.appendChild(title);
-
-  if (job.applied_at) {
-    const date = document.createElement('span');
-    date.className = 'applied-date';
-    date.textContent = new Date(job.applied_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' });
-    row.appendChild(date);
-  }
-  li.appendChild(row);
-
-  const meta = document.createElement('div');
-  meta.className = 'job-meta';
-  meta.textContent = [job.company, job.location].filter(Boolean).join(' · ') || '—';
-  li.appendChild(meta);
-
-  const evidence = evidenceNote(job);
-  if (evidence) li.appendChild(evidence);
-
-  li.addEventListener('click', () => chrome.tabs.create({ url: job.url }));
-  return li;
-}
 
 // Screenshot files are deleted after a fixed TTL (30 days by default) while the
 // application record stays. Say so on the card rather than letting the image
@@ -1080,30 +1028,6 @@ function csvEscape(val) {
   const s = String(val ?? '');
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
-
-document.getElementById('export-applied-btn').addEventListener('click', () => {
-  const rows = [['Date Applied', 'Job Title', 'Employer', 'Location', 'Source URL', 'Screenshot Evidence']];
-  for (const job of lastAppliedJobs) {
-    rows.push([
-      job.applied_at ? job.applied_at.slice(0, 10) : '',
-      job.title || '',
-      job.company || '',
-      job.location || '',
-      job.url || '',
-      // taken_at outlives the file, so distinguish expired from never-captured.
-      job.screenshot_url ? job.screenshot_taken_at.slice(0, 10)
-        : job.screenshot_taken_at ? `${job.screenshot_taken_at.slice(0, 10)} (file expired)` : 'No',
-    ]);
-  }
-  const csv = rows.map(r => r.map(csvEscape).join(',')).join('\r\n');
-  const blob = new Blob([csv], { type: 'text/csv' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `applied-jobs-${new Date().toISOString().slice(0, 10)}.csv`;
-  a.click();
-  URL.revokeObjectURL(url);
-});
 
 document.getElementById('export-evidence-btn').addEventListener('click', async () => {
   try {

@@ -414,7 +414,108 @@ def run(headed: bool, keep: bool = False) -> int:
 
 
 def run_applied_checks(c: Checks, side, con, work: Path) -> None:
-    """Filled in by the Applied-tab step."""
+    """The Applied tab, after the Overview checks: target 20, start ANCHOR, and Ready 96
+    marked applied today (so the current period holds 4)."""
+    print("Applied")
+    prev_start, two_back = add_months(ANCHOR, -1), add_months(ANCHOR, -2)
+    side.click("nav#tabs .tab[data-tab=applied]")
+    side.locator("details.period").first.wait_for(timeout=10000)
+    c.check(side.is_hidden("#hdr-jobs-btns"), "Scan Page / Refresh hide on Applied")
+    periods = side.locator("details.period")
+    starts = [periods.nth(i).get_attribute("data-start") for i in range(periods.count())]
+    c.check(starts == [ANCHOR.isoformat(), prev_start.isoformat(), two_back.isoformat()],
+            f"three periods, newest first ({starts})")
+    opened = [side.evaluate(f"document.querySelectorAll('details.period')[{i}].open") for i in range(3)]
+    c.check(opened == [True, False, False], f"the current period is open, the rest closed ({opened})")
+    c.check("27 applications in 3 periods" in side.inner_text("#applied-status"), "status: 27 applications in 3 periods")
+
+    cur_sum = periods.nth(0).locator("summary").inner_text()
+    end = add_months(ANCHOR, 1) - dt.timedelta(days=1)
+    c.check(f"{fmt(ANCHOR)} – {fmt(end)}" in cur_sum and "current" in cur_sum.lower(), "current period range and tag")
+    c.check("4/20" in cur_sum and "≈ US$0.25" in cur_sum, f"current: 4/20, ≈ US$0.25 ({cur_sum!r})")
+    c.check("2/20" in periods.nth(1).locator("summary").inner_text()
+            and "≈ US$0.20" in periods.nth(1).locator("summary").inner_text(), "previous: 2/20, ≈ US$0.20")
+    old = periods.nth(2).locator(".p-count")
+    c.check(old.inner_text() == "21/20 ✓" and "met" in old.get_attribute("class"), "two back: 21/20 ✓ in green")
+
+    rows = periods.nth(0).locator(".p-jobs li")
+    titles = {rows.nth(i).locator(".pj-title").inner_text() for i in range(rows.count())}
+    c.check(titles == {"Current Analyst A", "Current Analyst B", "Current Analyst C", "Ready 96"},
+            f"current period lists its 4 jobs, the hidden one included ({sorted(titles)})")
+    c.check("2 not costed" in periods.nth(0).locator(".p-foot").inner_text(), "2 not costed in the current period")
+    row_a = periods.nth(0).locator(".p-jobs li", has_text="Current Analyst A")
+    meta = row_a.locator(".pj-meta").inner_text()
+    c.check(meta == f"Company 1 · Applied {fmt(ANCHOR)} · ≈ US$0.20", f"row: company, date applied, cost ({meta!r})")
+    c.check(row_a.locator(".score").inner_text() == "91" and "t-blue" in row_a.locator(".score").get_attribute("class"),
+            "row: match score in its tier colour")
+
+    # + Interview: set, then undo (with a confirm)
+    iv = row_a.locator(".iv-btn")
+    c.check(iv.inner_text() == "+ Interview", "+ Interview button")
+    iv.click()
+    c.check(wait_for(lambda: iv.inner_text() == "✓ Interview"), "click: ✓ Interview")
+    row = con.execute("SELECT status, interview_at FROM matches WHERE id = 1").fetchone()
+    c.check(row[0] == "applied" and row[1], "interview stored, status still applied")
+    c.check(not side.evaluate("window.__opened.some(u => u.endsWith('/job/90001'))"), "the button doesn't open the ad")
+    side.once("dialog", lambda d: d.accept())
+    iv.click()
+    c.check(wait_for(lambda: iv.inner_text() == "+ Interview"), "click again (confirmed): undone")
+    c.check(con.execute("SELECT interview_at FROM matches WHERE id = 1").fetchone()[0] is None, "interview cleared in the DB")
+
+    # a row opens its ad
+    before = side.evaluate("window.__opened.length")
+    row_a.locator(".pj-title").click()
+    wait_for(lambda: side.evaluate("window.__opened.length") > before)
+    c.check(side.evaluate("window.__opened.at(-1)") == "https://au.seek.com/job/90001", "a row opens its ad")
+
+    # open sections survive a reload
+    periods.nth(1).locator("summary").click()
+    side.click("nav#tabs .tab[data-tab=overview]")
+    side.click("nav#tabs .tab[data-tab=applied]")
+    time.sleep(0.8)
+    opened = [side.evaluate(f"document.querySelectorAll('details.period')[{i}].open") for i in range(3)]
+    c.check(opened == [True, True, False], f"open sections are kept across a reload ({opened})")
+
+    # exports
+    with side.expect_download() as dl:
+        periods.nth(0).locator("button", has_text="Export this period").click()
+    d = dl.value
+    c.check(d.suggested_filename == f"applied-jobs-{ANCHOR.isoformat()}-to-{end.isoformat()}.csv",
+            f"per-period CSV name ({d.suggested_filename})")
+    rows_csv = list(csv.reader(io.StringIO(Path(d.path()).read_text(encoding="utf-8"))))
+    c.check(len(rows_csv) == 5 and rows_csv[0][0] == "Date Applied", f"per-period CSV: header + 4 rows ({len(rows_csv)})")
+    with side.expect_download() as dl:
+        side.click("#export-applied-btn")
+    all_rows = list(csv.reader(io.StringIO(Path(dl.value.path()).read_text(encoding="utf-8"))))
+    dates = [r[0] for r in all_rows[1:]]
+    c.check(len(all_rows) == 28, f"Export CSV: header + all 27 applications ({len(all_rows)})")
+    c.check(dates == sorted(dates, reverse=True), "Export CSV: newest first")
+
+    c.check(side.evaluate("document.scrollingElement.scrollWidth <= window.innerWidth"), "narrow: no sideways page scroll")
+    side.screenshot(path=str(work / "applied-narrow.png"), full_page=True)
+    side.set_viewport_size({"width": 760, "height": 900})
+    time.sleep(0.4)
+    c.check(side.evaluate("document.scrollingElement.scrollWidth <= window.innerWidth"), "wide: no sideways page scroll")
+    side.screenshot(path=str(work / "applied-wide.png"))
+    side.set_viewport_size({"width": 380, "height": 900})
+
+    # no start date: calendar months, with a pointer to the Overview
+    prefs = json.loads(con.execute("SELECT preferences FROM profiles WHERE id = 1").fetchone()[0])
+    con.execute("UPDATE profiles SET preferences = ? WHERE id = 1",
+                (json.dumps({**prefs, "obligation_cycle_start": None}),))
+    con.commit()
+    side.click("nav#tabs .tab[data-tab=overview]")
+    side.click("nav#tabs .tab[data-tab=applied]")
+    note = side.locator(".ap-note")
+    note.wait_for(timeout=10000)
+    first = side.locator("details.period").first
+    c.check("calendar month" in note.inner_text() and first.get_attribute("data-start") == TODAY.replace(day=1).isoformat(),
+            "no start date: grouped by calendar month, with a note")
+    c.check(side.evaluate("document.querySelector('details.period').open"), "calendar view: the current month is open")
+    note.locator("button").click()
+    c.check(side.locator("nav#tabs .tab.active").inner_text() == "Overview"
+            and wait_for(lambda: side.locator("#ov-progress .ov-setup").count() == 1),
+            "the note's link opens the Overview's start-date prompt")
 
 
 if __name__ == "__main__":

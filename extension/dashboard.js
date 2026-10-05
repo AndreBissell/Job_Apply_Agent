@@ -5,7 +5,7 @@
 //
 // Classic script loaded after sidebar.js, sharing its globals: BACKEND, PROFILE_ID, mk,
 // tierOf, coverLetterState, autoLetterMin, seekSearchUrl, markApplied, loadJobs, showTab,
-// typingIn, overviewSection, appliedSection.
+// typingIn, overviewSection, appliedSection, evidenceNote, csvEscape.
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -43,7 +43,7 @@ function refreshDashboard() {
       }
       loadOverview();
     } else if (!appliedSection.hidden && !typingIn(appliedSection)) {
-      loadApplied();
+      loadAppliedPeriods();
     }
   }, 300);
 }
@@ -374,4 +374,212 @@ function renderSuggestions(data) {
 // its notices appear), so go there.
 scanBtn.addEventListener('click', () => {
   if (!overviewSection.hidden) showTab('jobs');
+});
+
+// ---------------------------------------------------------------------------
+// Applied tab: one collapsible section per monthly period, newest first
+// ---------------------------------------------------------------------------
+const apStatusEl = document.getElementById('applied-status');
+const apPeriodsEl = document.getElementById('applied-periods');
+
+let apData = null;          // the last GET /obligation payload drawn here
+const apOpen = new Set();   // period starts the user has open; kept across reloads
+let apSeq = 0;
+
+async function loadAppliedPeriods() {
+  const seq = ++apSeq;
+  let data;
+  try {
+    data = await getJson(`${BACKEND}/obligation?profile_id=${PROFILE_ID}`);
+  } catch {
+    if (seq !== apSeq) return;
+    apStatusEl.textContent = 'Backend not running — start run_api.py.';
+    return;
+  }
+  if (seq !== apSeq) return;
+  // A new start date re-buckets everything: open the current period again.
+  if (apData && apData.cycle_start !== data.cycle_start) apOpen.clear();
+  if (!apOpen.size) {
+    const current = data.periods.find(p => p.is_current);
+    if (current) apOpen.add(current.start);
+  }
+  apData = data;
+  renderAppliedPeriods();
+}
+
+function renderAppliedPeriods() {
+  const d = apData;
+  apPeriodsEl.innerHTML = '';
+  const total = d.periods.reduce((n, p) => n + p.applied, 0);
+  apStatusEl.textContent = total
+    ? `${plural(total, 'application')} in ${plural(d.periods.filter(p => p.applied).length, 'period')}.`
+    : 'No applications logged yet. Mark a job applied on the Overview or Jobs tab.';
+
+  if (!d.cycle_start) {
+    const note = mk('div', 'ap-note', 'Grouped by calendar month for now. ');
+    const link = mk('button', null, 'Set your Centrelink start date');
+    link.addEventListener('click', () => showTab('overview'));
+    note.append(link, document.createTextNode(' to group by your real periods.'));
+    apPeriodsEl.appendChild(note);
+  }
+  for (const period of d.periods) apPeriodsEl.appendChild(renderPeriod(period, d.target));
+}
+
+// One period: "07/10/2026 – 06/11/2026  (current)  7/20  ≈ US$1.48", then its jobs.
+function renderPeriod(period, target) {
+  const det = document.createElement('details');
+  det.className = 'period' + (period.is_current ? ' current' : '');
+  det.dataset.start = period.start;
+  det.open = apOpen.has(period.start);
+  det.addEventListener('toggle', () => {
+    if (det.open) apOpen.add(period.start); else apOpen.delete(period.start);
+  });
+
+  const sum = document.createElement('summary');
+  sum.appendChild(mk('span', 'p-chev', '▶'));
+  sum.appendChild(mk('span', 'p-range', fmtRange(period)));
+  if (period.is_current) sum.appendChild(mk('span', 'p-tag', 'current'));
+  const stats = mk('span', 'p-stats');
+  const met = period.applied >= target;
+  const count = mk('span', 'p-count' + (met ? ' met' : ''), `${period.applied}/${target}${met ? ' ✓' : ''}`);
+  count.title = met ? 'Target met for this period' : `${target - period.applied} more needed for this period`;
+  stats.appendChild(count);
+  const cost = mk('span', 'p-cost', periodCostText(period));
+  cost.title = 'Estimated AI spend on the jobs you applied to this period (scoring, letters, Quick Apply help)';
+  stats.appendChild(cost);
+  sum.appendChild(stats);
+  det.appendChild(sum);
+
+  if (!period.jobs.length) {
+    det.appendChild(mk('div', 'p-empty', 'No applications yet this period.'));
+    return det;
+  }
+  const ul = mk('ul', 'p-jobs');
+  for (const job of period.jobs) ul.appendChild(renderPeriodJob(job));
+  det.appendChild(ul);
+
+  const foot = mk('div', 'p-foot');
+  if (period.uncosted) {
+    const n = period.uncosted;
+    const why = mk('span', 'p-uncosted', `${n} not costed`);
+    why.title = `${plural(n, 'job')} applied before AI spend was logged (2026-10-01)`;
+    foot.appendChild(why);
+  }
+  const exp = mk('button', 'btn btn-sm', 'Export this period (CSV)');
+  exp.addEventListener('click', () => exportPeriodCsv(period));
+  foot.appendChild(exp);
+  det.appendChild(foot);
+  return det;
+}
+
+function periodCostText(period) {
+  if (!period.applied) return '';
+  if (period.uncosted === period.applied) return 'not costed';
+  return `≈ US$${period.cost_usd.toFixed(2)}`;
+}
+
+function renderPeriodJob(job) {
+  const li = document.createElement('li');
+  li.dataset.jobId = job.job_id;
+  li.title = 'Open the ad';
+  li.addEventListener('click', () => chrome.tabs.create({ url: job.url }));
+
+  const main = mk('div', 'pj-main');
+  main.appendChild(mk('div', 'pj-title', job.title || '(untitled)'));
+  const meta = [job.company, `Applied ${fmtDay(localDay(job.applied_at))}`];
+  if (job.cost_usd != null) meta.push(`≈ US$${job.cost_usd.toFixed(2)}`);
+  main.appendChild(mk('div', 'pj-meta', meta.filter(Boolean).join(' · ')));
+  const evidence = evidenceNote(job);
+  if (evidence) main.appendChild(evidence);
+  li.appendChild(main);
+
+  if (job.score != null) {
+    const score = mk('span', `score t-${tierOf(job.score)}`, String(Math.round(job.score)));
+    score.title = 'Match score';
+    li.appendChild(score);
+  }
+  const iv = mk('button', 'iv-btn');
+  paintInterview(iv, job);
+  iv.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleInterview(job, iv);
+  });
+  li.appendChild(iv);
+  return li;
+}
+
+// "2026-10-06T22:00:00+00:00" -> the local "YYYY-MM-DD" (the day it counts on)
+function localDay(iso) {
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function paintInterview(btn, job) {
+  const on = !!job.interview_at;
+  btn.classList.toggle('on', on);
+  btn.textContent = on ? '✓ Interview' : '+ Interview';
+  btn.title = on
+    ? `Interview recorded ${fmtDay(localDay(job.interview_at))}. Click to undo.`
+    : 'Record that this application got an interview';
+}
+
+async function toggleInterview(job, btn) {
+  const want = !job.interview_at;
+  if (!want && !confirm(`Remove the interview recorded for "${job.title}"?`)) return;
+  btn.disabled = true;
+  try {
+    const res = await getJson(`${BACKEND}/jobs/${job.job_id}/interview?profile_id=${PROFILE_ID}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ interview: want }),
+    });
+    job.interview_at = res.interview_at;
+    paintInterview(btn, job);
+  } catch {
+    alert('Could not save the interview — is the backend running?');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// CSV for Centrelink: one row per application (the same columns as before the periods).
+function appliedCsv(jobs) {
+  const rows = [['Date Applied', 'Job Title', 'Employer', 'Location', 'Source URL', 'Screenshot Evidence']];
+  for (const job of jobs) {
+    rows.push([
+      job.applied_at ? localDay(job.applied_at) : '',
+      job.title || '',
+      job.company || '',
+      job.location || '',
+      job.url || '',
+      // taken_at outlives the file, so distinguish expired from never-captured.
+      job.screenshot_url ? job.screenshot_taken_at.slice(0, 10)
+        : job.screenshot_taken_at ? `${job.screenshot_taken_at.slice(0, 10)} (file expired)` : 'No',
+    ]);
+  }
+  return rows.map(r => r.map(csvEscape).join(',')).join('\r\n');
+}
+
+function downloadCsv(filename, csv) {
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function exportPeriodCsv(period) {
+  downloadCsv(`applied-jobs-${period.start}-to-${period.end}.csv`, appliedCsv(period.jobs));
+}
+
+// Every application, all periods, newest first.
+document.getElementById('export-applied-btn').addEventListener('click', async () => {
+  try {
+    const data = apData || await getJson(`${BACKEND}/obligation?profile_id=${PROFILE_ID}`);
+    downloadCsv(`applied-jobs-${localDay(new Date().toISOString())}.csv`,
+      appliedCsv(data.periods.flatMap(p => p.jobs)));
+  } catch {
+    alert('Could not export — is the backend running?');
+  }
 });
