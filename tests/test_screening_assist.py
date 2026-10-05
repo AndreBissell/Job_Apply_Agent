@@ -436,6 +436,7 @@ class TestSkillInRole:
         assert a["have"]["not_counted"] == []
         assert [g["skill"] for g in a["gaps"]] == ["C#"]
         assert a["gaps"][0]["remembered"] is False
+        assert a["gaps"][0]["wanted_by_ad"] is True  # R1 asks for C#
         assert a["open_ended"] is True
         assert a["prompt"] == assist.OPEN_PROMPT
 
@@ -443,6 +444,28 @@ class TestSkillInRole:
 # =====================================================================================
 # 5. skill_multi_select (S2 languages)
 # =====================================================================================
+class TestGapCardWording:
+    """Live check 2026-10-05 (Pitch Black, "Do you have experience using Microsoft Azure
+    DevOps?"): the card said "wanted" while "What the job wants" said nothing in the ad
+    matched. A card for a skill only the form asks about is not "wanted by the ad"."""
+
+    def test_skill_only_the_form_asks_about_is_not_wanted_by_the_ad(self, db):
+        add_profile(db, [exp_spec("Developer", skills=["Python"])])
+        add_job(db, 5)
+        add_letter(db, 5, [req("R1", "Strong Python skills", skill="Python")])
+        a = by_text(assist_for(db, 5, Q_CSHARP()), "C# development")["assist"]
+        assert a["wanted"] == []
+        [card] = a["gaps"]
+        assert card["skill"] == "C#" and card["wanted_by_ad"] is False and card["importance"] is None
+
+
+class TestCompactEvidence:
+    def test_sentence_dropped_when_its_whole_experience_is_listed(self):
+        items = [{"pointer": "experience:3"}, {"pointer": "experience:3#s1"}, {"pointer": "skill:7"},
+                 {"pointer": "experience:3"}, {"pointer": "experience:9#s2"}]
+        assert [i["pointer"] for i in assist.compact(items)] == ["experience:3", "skill:7", "experience:9#s2"]
+
+
 class TestMultiSelect:
     REQS = [
         req("R1", "JavaScript development", skill="JavaScript", importance="essential"),
@@ -467,6 +490,20 @@ class TestMultiSelect:
         a = by_text(out, "programming languages")["assist"]
         assert a["strategy"] == "skill_multi_select"
         return a, {o["label"]: o for o in a["options"]}
+
+    def test_the_have_list_shows_each_piece_of_evidence_once(self, db):
+        """Live check 2026-10-05: 7 rows for 2 options (each experience whole AND its
+        sentence, and again per option)."""
+        add_profile(db, [exp_spec("Developer", start=D(2023, 1), end=D(2023, 12),
+                                  desc="Built tools in Python and JavaScript.", skills=["Python", "JavaScript"])])
+        add_job(db, 5)
+        add_letter(db, 5, self.REQS)
+        a = by_text(assist_for(db, 5, Q_LANGS()), "programming languages")["assist"]
+        pointers = [i["pointer"] for i in a["have"]["evidence"]]
+        assert len(pointers) == len(set(pointers))
+        assert not any("#" in p and p.split("#")[0] in pointers for p in pointers)
+        opts = {o["label"]: o for o in a["options"]}
+        assert any("#" in i["pointer"] for i in opts["Python"]["evidence"])  # labels keep the full list
 
     def test_tags(self, out):
         _, o = self._opts(out)

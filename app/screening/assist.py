@@ -443,6 +443,9 @@ class _Gaps:
         decision = gaps.find_decision(self.decisions, label)
         card = {
             "skill": label, "skill_key": gaps.skill_key(label), "importance": importance,
+            # False = no ad requirement asks for it, only the form's question does: the card
+            # must not say "wanted" (found in the live check 2026-10-05, Azure DevOps).
+            "wanted_by_ad": bool(wanted),
             "requirement_text": requirement_text, "remembered": decision is not None,
             "gap_id": decision.id if decision else None,
         }
@@ -464,6 +467,21 @@ def _labels_for_parts(asked: str, missing: list[str]) -> list[str]:
 # --------------------------------------------------------------------------------------
 def _have_view(evidence: dict) -> list[dict]:
     return [i for b in BASIS_ORDER for i in evidence.get(b, [])]
+
+
+def compact(items: list[dict]) -> list[dict]:
+    """The evidence rows to SHOW: each pointer once, and a sentence of an experience
+    (``experience:12#s2``) dropped when the whole experience (``experience:12``, whose
+    text holds that sentence) is already listed. Labels still come from the full list."""
+    whole = {i["pointer"] for i in items if "#" not in i["pointer"]}
+    seen, out = set(), []
+    for i in items:
+        p = i["pointer"]
+        if p in seen or ("#" in p and p.split("#")[0] in whole):
+            continue
+        seen.add(p)
+        out.append(i)
+    return out
 
 
 def _empty_assist(strategy: str, subject: str | None) -> dict:
@@ -488,8 +506,8 @@ def _skill_question(q: dict, state, profile, index, gap_box: _Gaps, today, *, in
         counted, not_counted = ev["work"], ev["project"] + ev["study"] + ev["listed"]
     else:
         counted, not_counted = _have_view(ev), []
-    out["have"]["evidence"] = counted
-    out["have"]["not_counted"] = not_counted
+    out["have"]["evidence"] = compact(counted)
+    out["have"]["not_counted"] = compact(not_counted)
 
     if years:
         work_exps = [e for e in ev["experiences"] if e.experience_type in WORK_TYPES]
@@ -582,7 +600,7 @@ def _multi_select(q: dict, state, profile, index, gap_box: _Gaps) -> dict:
             if w["requirement_id"] not in seen:
                 seen.add(w["requirement_id"])
                 out["wanted"].append(w)
-    out["have"]["evidence"] = [i for o in out["options"] for i in o["evidence"]]
+    out["have"]["evidence"] = compact([i for o in out["options"] for i in o["evidence"]])
     n_have = sum(1 for o in out["options"] if o["have"])
     out["have"]["summary"] = f"Your profile backs {n_have} of {len(out['options'])} options"
     return out

@@ -248,7 +248,9 @@ function saGapCard(g, jobId, opts) {
 
   const card = saEl('div', 'sa-gap');
   const importance = g.importance ? ` (${(SA_IMPORTANCE[g.importance] || g.importance).toLowerCase()})` : '';
-  card.appendChild(saEl('div', 'sa-ask', `${g.skill} — wanted${importance}. Do you have it?`));
+  // Only an ad requirement makes a skill "wanted"; otherwise just the form asks about it.
+  const why = g.wanted_by_ad === false ? 'asked about on this form' : `wanted${importance}`;
+  card.appendChild(saEl('div', 'sa-ask', `${g.skill} — ${why}. Do you have it?`));
   const stage = saEl('div');
   card.appendChild(stage);
   card.appendChild(saEl('div', 'sa-note',

@@ -632,6 +632,11 @@ let questionsPanelPos = null;
 let questionsHidden = false;
 let lastQuestionsList = null;
 let lastQuestionsJobId = null;
+// Where the user had scrolled the panel's body to, and whether it was collapsed, for the
+// job it shows: a redraw of the same job keeps both instead of jumping back to the top.
+let questionsScroll = 0;
+let questionsCollapsed = false;
+let questionsPanelJobId = null;
 
 function placeQuestionsHost(host) {
   if (!questionsPanelPos) { // default: bottom left
@@ -690,6 +695,11 @@ window.addEventListener('resize', () => {
 function renderQuestionsPanel(questions, jobId = null) {
   lastQuestionsList = questions;
   lastQuestionsJobId = jobId;
+  if (jobId !== questionsPanelJobId) { // another job: start at the top, expanded
+    questionsPanelJobId = jobId;
+    questionsScroll = 0;
+    questionsCollapsed = false;
+  }
   removeQuestionsPanel();
   if (questionsHidden) return;
   const host = document.createElement('div');
@@ -748,7 +758,8 @@ function renderQuestionsPanel(questions, jobId = null) {
   right.append(caret, close);
   hdr.append(title, right);
   hdr.title = 'Drag to move, click to collapse';
-  makeDraggable(host, hdr, () => panel.classList.toggle('collapsed'));
+  makeDraggable(host, hdr, () => { questionsCollapsed = panel.classList.toggle('collapsed'); });
+  if (questionsCollapsed) panel.classList.add('collapsed');
   panel.appendChild(hdr);
 
   const body = document.createElement('div');
@@ -758,6 +769,7 @@ function renderQuestionsPanel(questions, jobId = null) {
   drawBasicQuestionList(content, questions);
   panel.appendChild(body);
   shadow.appendChild(panel);
+  body.addEventListener('scroll', () => { questionsScroll = body.scrollTop; });
 
   if (!jobId) return;
   async function refresh(notice) {
@@ -770,7 +782,7 @@ function renderQuestionsPanel(questions, jobId = null) {
     }
     // The panel may have been redrawn or removed while the request ran.
     if (!content.isConnected || !data || !Array.isArray(data.questions) || !data.questions.length) return;
-    const scrollTop = body.scrollTop;
+    const scrollTop = questionsScroll; // where the user was, even if this panel is new
     renderScreeningAssist(content, data, {
       fetchJson: backendFetch, backend: BACKEND, profileId: 1, onChanged: refresh, notice,
     });
@@ -812,10 +824,39 @@ function drawBasicQuestionList(container, questions) {
 
 // The apply flow is a single-page app: the steps (and the jump from the detail
 // page into the flow) can change without a page load, so watch the DOM and
-// re-check after it settles. A capture is only sent when what was read changed.
+// re-check after it settles. A capture (and a redraw) only happens when the form's
+// SET OF QUESTIONS changed: the job and the ordered question ids. Seek re-renders the
+// form now and then (while the user answers), and any small difference in what was read
+// used to rebuild the panel, re-fetch the help and scroll it back to the top.
 let lastQuestionsSig = null;
+let lastQuestionsIds = null; // the question ids the panel shows
+let lastQuestionsStep = null; // the progress bar's step when they were captured
+let questionsShortSince = null; // when a read first came back short on the same step
+let questionsRecheck = null;
+const QUESTIONS_SETTLE_MS = 1500;
 let applyCheckRunning = false;
 let applyCheckAgain = false;
+
+// A read that finds only some (or none) of the questions the panel shows, while the
+// progress bar still shows the same step, is the form mid-re-render, not a new step.
+// Keep the panel and look again shortly; only a read that stays short is believed.
+function isTransientRead(ids, step) {
+  if (!lastQuestionsIds || !step || step !== lastQuestionsStep) return false;
+  const subset = ids.length < lastQuestionsIds.length && ids.every((id) => lastQuestionsIds.includes(id));
+  if (!subset) {
+    questionsShortSince = null;
+    return false;
+  }
+  const now = Date.now();
+  if (questionsShortSince === null) questionsShortSince = now;
+  if (now - questionsShortSince >= QUESTIONS_SETTLE_MS) {
+    questionsShortSince = null;
+    return false; // still short after the wait: it really changed
+  }
+  clearTimeout(questionsRecheck);
+  questionsRecheck = setTimeout(checkApplyStep, QUESTIONS_SETTLE_MS - (now - questionsShortSince) + 50);
+  return true;
+}
 
 async function checkApplyStep() {
   if (applyCheckRunning) { applyCheckAgain = true; return; }
@@ -825,18 +866,24 @@ async function checkApplyStep() {
       applyCheckAgain = false;
       const sourceJobId = extractApplyJobId(location.pathname);
       const questions = sourceJobId ? parseQuestionnaire() : [];
+      const ids = questions.map((q) => q.seek_question_id);
+      if (isTransientRead(ids, currentApplyStep())) continue;
       if (!questions.length) {
         // Another step, or not an apply page: drop the panel. Coming back to the
         // questions step shows it again, even if the user had hidden it.
         lastQuestionsSig = null;
+        lastQuestionsIds = null;
+        lastQuestionsStep = null;
         lastQuestionsList = null;
         questionsHidden = false;
         removeQuestionsPanel();
         continue;
       }
-      const sig = `${sourceJobId}|${JSON.stringify(questions)}`;
+      const sig = `${sourceJobId}|${ids.join(',')}`;
       if (sig === lastQuestionsSig) continue;
       lastQuestionsSig = sig;
+      lastQuestionsIds = ids;
+      lastQuestionsStep = currentApplyStep();
       const jobId = await resolveOrCreateJob(sourceJobId);
       if (!jobId) { lastQuestionsSig = null; continue; }
       const result = await postScreeningQuestions(jobId, questions, currentApplyStep());

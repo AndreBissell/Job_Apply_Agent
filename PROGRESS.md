@@ -10,7 +10,8 @@ one block per milestone.
 - Branch `centerlink-preperation`. Toggle `screening_question_help_enabled` (Personalise; off = no help on any question, no model call). One-click drafts for open-ended assisted questions (`POST /jobs/{id}/screening-drafts`, mid), code-checked, stored on `job_screening_questions.draft` (migration `a9e3c5d7f142`) and marked "redraft" when the profile, the question's sorting or the letter changes. Draft / Redraft / Copy in the overlay and sidebar.
 - `python -m pytest -q`: 1465 passed. E2E `tests/e2e/quick_apply_e2e.py`: 120/120 (stub LLM, scratch DB).
 - Eval `screening-v1` ($0.196): sorting 45/45; 3 `user` wordings would reach the model (logged); labels 0 problems over 420 pointers; drafts 7/7 answered passed, planted 4/4 clean; 4 answers talked to the candidate ("my profile...") -> code check + prompt line.
-- Fixed: a test that made a paid Gemini call on every full test run. Not verified: a live Seek page.
+- Fixed: a test that made a paid Gemini call on every full test run.
+- Live check passed on the TEST backend (job 57, 7 questions; layer 5 live); fixed three defects it found (gap card "wanted" for a form-only skill; duplicate evidence rows; the panel re-fetching and jumping to the top when Seek re-renders the form). 1468 tests; e2e 123/123. Drafts not yet seen on a live page.
 
 ---
 

@@ -641,6 +641,45 @@ def run(headed: bool) -> int:
             after = con.execute("SELECT SUM(times_seen), COUNT(*) FROM screening_questions").fetchone()
             c.check(before == after, f"repeat S2 visit adds no rows and no sightings ({before} -> {after})")
 
+            # --- Seek re-rendering the form must not rebuild the panel or lose the scroll ---
+            # (live check 2026-10-05: the panel re-fetched now and then and jumped to the top)
+            def mark_and_scroll() -> int:
+                return page.evaluate("""() => {
+                  const host = document.getElementById('seek-assistant-questions-host');
+                  host.dataset.e2eMark = 'same-panel';
+                  const body = host.shadowRoot.querySelector('.body');
+                  body.scrollTop = 250;
+                  return body.scrollTop;
+                }""")
+
+            def panel_state() -> dict:
+                return page.evaluate("""() => {
+                  const host = document.getElementById('seek-assistant-questions-host');
+                  return { same: !!host && host.dataset.e2eMark === 'same-panel',
+                           scroll: host ? host.shadowRoot.querySelector('.body').scrollTop : -1 };
+                }""")
+
+            scrolled = mark_and_scroll()
+            rerendered_before = con.execute("SELECT SUM(times_seen), COUNT(*) FROM screening_questions").fetchone()
+            # 1) the form emptied for a moment, then the same questions back
+            page.evaluate("""() => { const f = document.querySelector('form'); const h = f.innerHTML;
+                                     f.innerHTML = ''; setTimeout(() => { f.innerHTML = h; }, 400); }""")
+            page.wait_for_timeout(3000)
+            st = panel_state()
+            c.check(scrolled > 0 and st["same"] and st["scroll"] == scrolled,
+                    f"a brief re-render of the form keeps the same panel and its scroll ({scrolled} -> {st})")
+            # 2) the same question ids with a label reading differently
+            page.evaluate("""() => { const l = document.querySelector('form label');
+                                     l.textContent = l.textContent + ' '; l.textContent += '(required)'; }""")
+            page.wait_for_timeout(2500)
+            st = panel_state()
+            c.check(st["same"] and st["scroll"] == scrolled,
+                    f"a label reading differently (same question ids) does not rebuild the panel ({st})")
+            c.check(con.execute("SELECT SUM(times_seen), COUNT(*) FROM screening_questions").fetchone()
+                    == rerendered_before, "neither re-render was captured as a new form")
+            page.goto(apply_url(samples["S2"]))  # a clean page for the gap checks below
+            wait_overlay(page, len(samples["S2"]["questions"]))
+
             shot(page, "s2-overlay")
             # --- gap No, through our own overlay -----------------------------------
             c.check(con.execute("SELECT COUNT(*) FROM gap_decisions").fetchone()[0] == 0, "no remembered gaps before")

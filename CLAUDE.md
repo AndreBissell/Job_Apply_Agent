@@ -446,9 +446,14 @@ for the candidate inside the answer. Stored on `job_screening_questions.draft` (
 Overlay + sidebar: Draft / Redraft / Copy only. Eval `scripts/screening_eval.py` (scratch copy of
 eval.db; `evals/screening/set.json` adjudicated) -> `evals/results/screening-v1.md` ($0.196).
 1465 tests; e2e 120/120. The test suite no longer makes a paid call (one leaking test fixed).
-NOT verified live on Seek. Follow-ups: future_work/quick-apply-user-keywords.md,
-future_work/quick-apply-draft-followups.md.
-Next: whatever the user names; the live Quick Apply check (TEST backend) is still owed. Known follow-ups (plan
+LIVE CHECK PASSED 2026-10-05 (TEST backend, job 57 Pitch Black, 7 questions: capture, sorting,
+live layer 5, the 9b views, side panel, help-off switch, nothing touched on Seek's form); it found
+and fixed two 9b display defects (gap card "wanted" for a skill only the form asks about ->
+`wanted_by_ad`; duplicate evidence rows -> `assist.compact`) and the panel jumping to the top on
+Seek's re-renders (content script now recaptures only when the question ids change). Drafts are
+still unseen on a live page (that form had no free-text question). 1468 tests; e2e 123/123. Follow-ups:
+future_work/quick-apply-user-keywords.md, future_work/quick-apply-draft-followups.md.
+Next: whatever the user names. Known follow-ups (plan
 Decision log 2026-10-04): check_claims passes "I have included a link to a video"
 (invented attachment), "daily" frequency claims and "apply my skills in X" on a listing;
 style_lint's gap-led pattern misses "While my X rather than Y"; Gemini implicit caching
