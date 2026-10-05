@@ -22,7 +22,9 @@ Not collected by pytest (needs Chromium and a server). What it does:
    Keep Applying row and its arrows, Copy / Open / Mark applied, the suggested searches,
    the ✎ editor) and the Applied tab (periods newest first with the current one open,
    counts against the target, cost and "not costed", + Interview set and undo, the
-   per-period and full CSV exports), at a narrow and a wide panel width.
+   per-period and full CSV exports), at a narrow and a wide panel width. Then deleting:
+   no Delete on an applied job's Jobs card, the backend's 409, and the Applied tab's Delete
+   (cancel, confirm, the row, DB rows and period count gone).
 
 Exit code 0 = all checks passed.
 """
@@ -41,6 +43,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
 import urllib.request
 from decimal import Decimal
 from pathlib import Path
@@ -395,6 +398,7 @@ def run(headed: bool, keep: bool = False) -> int:
             side.screenshot(path=str(work / "overview-narrow.png"), full_page=True)
 
             run_applied_checks(c, side, con, work)
+            run_delete_checks(c, side, con)
 
             c.check(not errors, f"no page errors {errors[:3]}")
             usage_after = con.execute("SELECT COUNT(*) FROM llm_usage").fetchone()[0]
@@ -516,6 +520,68 @@ def run_applied_checks(c: Checks, side, con, work: Path) -> None:
     c.check(side.locator("nav#tabs .tab.active").inner_text() == "Overview"
             and wait_for(lambda: side.locator("#ov-progress .ov-setup").count() == 1),
             "the note's link opens the Overview's start-date prompt")
+
+
+def run_delete_checks(c: Checks, side, con) -> None:
+    """An applied job is evidence: no Delete on its Jobs card, the backend refuses it
+    without allow_applied, and the Applied tab's own Delete removes it after a confirm.
+    Runs after run_applied_checks (no start date: calendar-month periods)."""
+    print("Delete")
+    side.click("nav#tabs .tab[data-tab=jobs]")
+    card_a = side.locator("#job-list li", has_text="Current Analyst A")
+    card_a.wait_for(timeout=10000)
+    c.check(card_a.locator(".del-btn").count() == 0, "Jobs tab: an applied job's card has no Delete")
+    card_new = side.locator("#job-list li", has_text="No Letter Yet")
+    c.check(card_new.locator(".del-btn").count() == 1, "Jobs tab: an unapplied job's card keeps Delete")
+    card_new.locator(".apply-btn").click()
+    c.check(wait_for(lambda: card_new.locator(".del-btn").count() == 0), "Mark Applied on a card removes its Delete")
+
+    req = urllib.request.Request(f"{BACKEND}/jobs/1?profile_id=1", method="DELETE")
+    try:
+        urllib.request.urlopen(req)
+        refused = False
+    except urllib.error.HTTPError as e:
+        refused = e.code == 409
+    c.check(refused, "backend: DELETE of an applied job without allow_applied is 409")
+    c.check(con.execute("SELECT COUNT(*) FROM matches WHERE id = 1").fetchone()[0] == 1, "...and the match is still there")
+
+    side.click("nav#tabs .tab[data-tab=applied]")
+    period = side.locator("details.period").first
+    row = period.locator(".p-jobs li", has_text="Current Analyst C")
+    # Switching tabs re-renders the list; wait for the job just marked applied so the
+    # count below is read from the fresh render, not the stale one.
+    period.locator(".p-jobs li", has_text="No Letter Yet").wait_for(timeout=10000)
+    count_before = period.locator(".p-count").inner_text()
+    jid = int(row.get_attribute("data-job-id"))
+    del_btn = row.locator(".del-btn")
+    c.check(del_btn.count() == 1, "Applied tab: each row has a Delete")
+
+    opened_before = side.evaluate("window.__opened.length")
+    messages: list[str] = []
+    side.once("dialog", lambda d: (messages.append(d.message), d.dismiss()))
+    del_btn.click()
+    time.sleep(0.5)
+    c.check(messages and "Permanently delete this application" in messages[0]
+            and "evidence export" in messages[0] and "can't be undone" in messages[0],
+            f"Delete asks to confirm, naming the period and the export ({messages[:1]})")
+    c.check(con.execute("SELECT COUNT(*) FROM matches WHERE job_id = ?", (jid,)).fetchone()[0] == 1,
+            "cancelled: nothing deleted")
+    c.check(side.evaluate("window.__opened.length") == opened_before, "the Delete button doesn't open the ad")
+
+    side.once("dialog", lambda d: d.accept())
+    del_btn.click()
+    c.check(wait_for(lambda: period.locator(".p-jobs li", has_text="Current Analyst C").count() == 0),
+            "confirmed: the row leaves the Applied tab")
+    gone = con.execute("SELECT (SELECT COUNT(*) FROM job_listings WHERE id = ?) + "
+                       "(SELECT COUNT(*) FROM matches WHERE job_id = ?)", (jid, jid)).fetchone()[0]
+    c.check(gone == 0, "confirmed: job and match deleted in the DB")
+    n_before = int(count_before.split("/")[0])
+    c.check(wait_for(lambda: period.locator(".p-count").inner_text().startswith(f"{n_before - 1}/")),
+            f"the period count drops by one (was {count_before})")
+    side.click("nav#tabs .tab[data-tab=jobs]")
+    c.check(wait_for(lambda: side.locator("#job-list li", has_text="Current Analyst A").count() == 1)
+            and side.locator("#job-list li", has_text="Current Analyst C").count() == 0,
+            "the Jobs tab no longer lists it")
 
 
 if __name__ == "__main__":
