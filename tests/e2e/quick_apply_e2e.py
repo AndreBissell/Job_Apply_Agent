@@ -32,6 +32,14 @@ gating state (never a recommended or ticked answer), the gap No and Yes flows th
 own shadow-DOM UI (the Yes flow must leave the letter tables untouched), and that the side
 panel's job card shows the same help.
 
+Phase 9c (drafts) adds: S5's open-ended question offers "Draft an answer" and viewing it
+makes no call; the click makes ONE stub call (task "quick_apply_draft", canned answer),
+the draft shows with Copy and a check mark, is stored, is served again on a revisit
+with no call, and turns stale after a profile edit (a gap Yes). The Personalise
+checkbox "Help with Quick Apply questions" turns all help off: every question is yours
+to answer, no draft or help blocks, no model call. Neither model call carries a `user`
+question's text.
+
 Exit code 0 = all checks passed.
 """
 
@@ -68,6 +76,31 @@ LETTER_S4 = "Dear Hiring Manager, I enjoy building React front ends. Sincerely, 
 LETTER_S5 = "Dear Hiring Manager, I build mobile and web applications. Sincerely, E2E Test"
 
 KIND_OF_LABEL = {"Yours to answer": "user", "We’ll help": "assisted", "New": "unknown"}
+
+# 9c: the canned draft for S5's React Native question. Honest about the missing parts and
+# cites the Full Stack Developer role's first sentence ("Built React front ends.").
+DRAFT_ANSWER = "I haven't used React Native or Expo in a role yet. At Acme I built React front ends."
+
+
+def stub_draft(experience_id: int) -> dict:
+    return {"answers": [{
+        "number": 1, "covered": "partly", "answer": DRAFT_ANSWER,
+        "claims": [{"quote": "built React front ends", "source": f"experience:{experience_id}#s1"}],
+        "note": "Add any React Native work the profile doesn't show.",
+    }]}
+
+
+def http_json(method: str, path: str, body: dict | None = None) -> dict:
+    req = urllib.request.Request(f"{BACKEND}{path}", method=method,
+                                 data=json.dumps(body).encode() if body is not None else None,
+                                 headers={"Content-Type": "application/json"})
+    return json.load(urllib.request.urlopen(req, timeout=10))
+
+
+def stub_calls(stub_log: Path) -> list[dict]:
+    if not stub_log.exists():
+        return []
+    return [json.loads(line) for line in stub_log.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
 # ---------------------------------------------------------------------------
@@ -446,7 +479,10 @@ def run(headed: bool) -> int:
     db = make_scratch_db(work, samples)
     stub_log = work / "llm_stub.jsonl"
     stub_responses = work / "llm_stub_responses.json"
-    stub_responses.write_text(json.dumps({"screening_classify": STUB_CLASSIFY}), encoding="utf-8")
+    with sqlite3.connect(db) as seed:
+        e1 = seed.execute("SELECT id FROM experiences WHERE title = 'Full Stack Developer'").fetchone()[0]
+    stub_responses.write_text(json.dumps({"screening_classify": STUB_CLASSIFY,
+                                          "quick_apply_draft": stub_draft(e1)}), encoding="utf-8")
     server = start_server(db, work / "server.log", stub_responses, stub_log)
     c = Checks()
     blocked: list[str] = []
@@ -670,6 +706,57 @@ def run(headed: bool) -> int:
             c.check(fx["events"] == [] and fx["sameHref"] and fx["sameHistory"],
                     f"the Yes flow caused no event or navigation on Seek's elements ({fx['events']})")
 
+            # --- 9c: a draft for the open-ended question, on click only ---------------
+            rn_q = panel_locator(page).locator(".sa-q", has_text="React Native with Expo")
+            drafts_logged = lambda: [e for e in stub_calls(stub_log) if e["task"] == "quick_apply_draft"]  # noqa: E731
+            c.check(rn_q.get_by_role("button", name="Draft an answer").count() == 1 and not drafts_logged(),
+                    "S5: the open-ended question offers 'Draft an answer' and viewing it made no draft call")
+            others = [q for q in panel_dump(page)["questions"] if "React Native" not in q["text"]]
+            c.check(not any("Draft answer" in q["text_all"] for q in others),
+                    "S5: no other question (all `user`) offers a draft")
+            rn_q.get_by_role("button", name="Draft an answer").click()
+            c.check(wait_panel_text(page, DRAFT_ANSWER), "S5: the draft appears after the click")
+            shot(page, "s5-draft")
+            rn_q = panel_locator(page).locator(".sa-q", has_text="React Native with Expo")
+            c.check("Every statement is tied to your profile" in rn_q.inner_text()
+                    and rn_q.locator(".sa-warn").count() == 0,
+                    "S5: the grounded draft is marked as tied to your profile, with no issues")
+            c.check(rn_q.get_by_role("button", name="Copy", exact=True).count() == 1
+                    and rn_q.get_by_role("button", name="Redraft").count() == 1,
+                    "S5: the draft has Copy and Redraft, nothing that fills Seek's form")
+            rn_q.get_by_role("button", name="Copy", exact=True).click()
+            calls = drafts_logged()
+            c.check(len(calls) == 1 and calls[0]["tier"] == "mid",
+                    f"exactly one quick_apply_draft call, mid tier ({[(e['task'], e['tier']) for e in calls]})")
+            sent_draft = " ".join((calls[0]["user_content"] if calls else "").split())
+            c.check("NOT IN PROFILE (never claim): React Native" in sent_draft,
+                    "the draft call told the writer React Native is not in the profile")
+            stored = con.execute("SELECT draft FROM job_screening_questions WHERE draft IS NOT NULL").fetchall()
+            c.check(len(stored) == 1 and json.loads(stored[0][0])["verified"] is True,
+                    f"one draft stored on the job link, verified ({len(stored)})")
+            # Cached: a fresh visit shows it without another call.
+            page.goto(apply_url(samples["S5"]))
+            wait_overlay(page, len(samples["S5"]["questions"]))
+            c.check(wait_panel_text(page, DRAFT_ANSWER) and len(drafts_logged()) == 1,
+                    "S5: a revisit shows the stored draft with no new call")
+            # A profile edit (Yes on the React Native card adds the skill) makes it stale.
+            rn_gap = panel_locator(page).locator(".sa-gap", has_text="React Native — wanted")
+            rn_gap.get_by_role("button", name="Yes", exact=True).click()
+            rn_gap.get_by_role("button", name="Continue", exact=True).click()
+            rn_gap.get_by_role("button", name="Add to my profile").wait_for(timeout=15000)
+            rn_gap.get_by_role("button", name="Add to my profile").click()
+            c.check(wait_panel_text(page, "Your profile changed since this draft was written: redraft it."),
+                    "S5: after a profile edit the draft says 'Your profile changed... redraft it'")
+            rn_q = panel_locator(page).locator(".sa-q", has_text="React Native with Expo")
+            c.check("Every statement is tied to your profile" not in rn_q.inner_text()
+                    and len(drafts_logged()) == 1,
+                    "S5: a stale draft loses its check mark, and nothing was redrafted on its own")
+            fx = page_side_effects(page)
+            c.check(fx["events"] == [] and fx["sameHref"] and fx["sameHistory"],
+                    f"drafting and copying caused no event or navigation on Seek's elements ({fx['events']})")
+            c.check(all(PREFILL in t or MASKED in t for t in fx["textareas"]),
+                    f"S5: Seek's own text boxes are untouched ({fx['textareas']})")
+
             # --- single-page step changes (no page load) ---------------------------
             s = samples["S3"]
             pages[urlparse(apply_url(s)).path] = page_html(s, "Choose documents")
@@ -712,20 +799,50 @@ def run(headed: bool) -> int:
                     "sidebar: the section shows the same wants/has blocks and the remembered 'no'")
             c.check(side.locator(".job-detail").first.is_visible(),
                     "sidebar: interacting with the section does not collapse the card")
+
+            # --- 9c: the Personalise checkbox switches all question help off ----------
+            side.locator("#personalise-toggle").click()
+            box = side.locator("#qa-question-help")
+            box.wait_for(timeout=5000)
+            c.check(box.is_checked(), "sidebar: 'Help with Quick Apply questions' is on by default")
+            calls_before = len(stub_calls(stub_log))
+            box.uncheck()
+            off = False
+            for _ in range(20):
+                if http_json("GET", "/profile/1/preferences").get("screening_question_help_enabled") is False:
+                    off = True
+                    break
+                side.wait_for_timeout(250)
+            c.check(off, "sidebar: unticking it saves screening_question_help_enabled = false")
             side.close()
 
+            page.goto(apply_url(samples["S5"]))
+            wait_overlay(page, len(samples["S5"]["questions"]))
+            c.check(wait_panel_text(page, "Question help is switched off"),
+                    "help off: the overlay says question help is switched off")
+            doff = panel_dump(page)
+            c.check(doff["questions"] and all(q["badge"].startswith("Yours to answer") for q in doff["questions"])
+                    and not any(q["wants"] or q["has"] or q["gaps"] or q["blocks"] for q in doff["questions"]),
+                    "help off: every question is 'Yours to answer', with no wants/has view, gap card or draft")
+            c.check(not any(b in ("Draft an answer", "Redraft", "Copy") for b in doff["buttons"])
+                    and DRAFT_ANSWER not in doff["text"],
+                    f"help off: no draft button and the stored draft isn't shown ({doff['buttons']})")
+            c.check(len(stub_calls(stub_log)) == calls_before, "help off: no model call")
+            http_json("PUT", "/profile/1/preferences", {"screening_question_help_enabled": True})
+
             # --- the model calls, and nothing else -----------------------------------
-            log = ([json.loads(line) for line in stub_log.read_text(encoding="utf-8").splitlines() if line.strip()]
-                   if stub_log.exists() else [])
-            c.check([e["task"] for e in log] == ["screening_classify"],
-                    f"the stub log holds exactly one call, task screening_classify ({[e['task'] for e in log]})")
+            log = stub_calls(stub_log)
+            c.check([e["task"] for e in log] == ["screening_classify", "quick_apply_draft"],
+                    f"the stub log holds exactly two calls, screening_classify then quick_apply_draft "
+                    f"({[e['task'] for e in log]})")
             norm = lambda t: " ".join(t.split())  # noqa: E731
-            sent = norm(log[0]["user_content"]) if log else ""
             s5q4 = next(q for q in samples["S5"]["questions"] if "React Native" in q["text"])
             user_texts = [norm(q["text"]) for smp in samples.values() for q in smp["questions"]
                           if q["expected"]["kind"] == "user"]
-            c.check(bool(log) and norm(s5q4["text"]) in sent and not [t for t in user_texts if t in sent],
-                    f"that call carried S5 Q4 and none of the {len(user_texts)} user-kind question texts")
+            for e in log:
+                sent = norm(e["user_content"])
+                c.check(norm(s5q4["text"]) in sent and not [t for t in user_texts if t in sent],
+                        f"the {e['task']} call carried S5 Q4 and none of the {len(user_texts)} user-kind question texts")
 
             usage = con.execute("SELECT COUNT(*) FROM llm_usage").fetchone()[0]
             c.check(usage == 0, f"no LLM call recorded ({usage} llm_usage rows)")
