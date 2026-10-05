@@ -348,6 +348,114 @@
       display: flex; gap: 10px; flex: 1 0 100%; margin-top: 4px;
     }
 
+    /* ── Overview tab ─────────────────────────────────────── */
+    #overview-section { padding: 12px 14px 24px; }
+    #ov-status { font-size: 12px; color: #6b7280; margin-bottom: 8px; }
+    #ov-status:empty { display: none; }
+    .ov-card {
+      background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px 14px;
+    }
+    .ov-card:empty { display: none; }
+    .ov-count { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+    .ov-count .big { font-size: 30px; font-weight: 700; line-height: 1; color: #1c2330; font-variant-numeric: tabular-nums; }
+    .ov-count .of { font-size: 16px; font-weight: 600; color: #6b7280; }
+    .ov-count .lbl { font-size: 13px; color: #6b7280; }
+    .ov-card.met .ov-count .big, .ov-card.met .ov-count .of { color: #059669; }
+    .ov-bar { height: 8px; border-radius: 999px; background: #e5e7eb; overflow: hidden; margin: 10px 0 8px; }
+    .ov-fill { height: 100%; border-radius: 999px; background: #2557a7; transition: width .3s ease; }
+    .ov-card.met .ov-fill { background: #059669; }
+    .ov-period { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #6b7280; }
+    .ov-period span { flex: 1; min-width: 0; }
+    .ov-edit-btn {
+      background: none; border: 1px solid transparent; border-radius: 5px; cursor: pointer;
+      color: #6b7280; font-size: 13px; padding: 1px 6px; flex: none;
+    }
+    .ov-edit-btn:hover { background: #f3f4f6; border-color: #e5e7eb; color: #2557a7; }
+    .ov-waiting {
+      display: flex; justify-content: space-between; align-items: center; margin-top: 10px;
+      padding: 6px 10px; border-radius: 6px; background: #fffbeb; border: 1px solid #fde68a;
+      color: #92400e; font-size: 12px; font-weight: 600; cursor: pointer; width: 100%; text-align: left;
+      font-family: inherit;
+    }
+    .ov-waiting:hover { background: #fef3c7; }
+    .ov-setup h3 { margin: 0 0 4px; font-size: 14px; }
+    .ov-setup p { margin: 0; font-size: 12px; color: #6b7280; line-height: 1.45; }
+    .ov-form { display: flex; align-items: flex-end; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+    .ov-form label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: #6b7280; }
+    .ov-form input {
+      padding: 4px 6px; border: 1px solid #d1d5db; border-radius: 5px; font-size: 12px;
+      font-family: inherit; color: #1c2330;
+    }
+    .ov-form input[type="number"] { width: 60px; }
+    .ov-form .ov-err { flex-basis: 100%; font-size: 11px; color: #b91c1c; }
+    .ov-form .ov-err:empty { display: none; }
+    .ov-block { margin-top: 18px; }
+    .ov-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+    .ov-head h2 {
+      margin: 0; font-size: 11px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .05em; color: #374151;
+    }
+    .ov-sub { font-size: 12px; color: #059669; font-weight: 600; margin-top: 2px; }
+    .ov-sub.none { color: #9ca3af; font-weight: 500; }
+    .ov-nav { display: flex; gap: 4px; }
+    .ov-nav[hidden] { display: none; }
+    .ov-arrow {
+      width: 26px; height: 26px; border: 1px solid #d1d5db; border-radius: 999px; background: #fff;
+      font-size: 17px; line-height: 1; color: #374151; cursor: pointer; padding: 0 0 2px;
+    }
+    .ov-arrow:hover:not(:disabled) { background: #f0f4fb; border-color: #2557a7; color: #2557a7; }
+    .ov-arrow:disabled { opacity: .35; cursor: default; }
+    .ov-scroller {
+      display: flex; gap: 10px; overflow-x: auto; scroll-snap-type: x mandatory;
+      scroll-behavior: smooth; padding: 2px 2px 8px; margin: 0 -2px;
+      scrollbar-width: thin;
+    }
+    .ov-empty {
+      font-size: 12px; color: #6b7280; background: #fff; border: 1px dashed #d1d5db;
+      border-radius: 10px; padding: 12px 14px; line-height: 1.45; flex: 1;
+    }
+    .mini-card {
+      flex: 0 0 200px; scroll-snap-align: start; display: flex; flex-direction: column;
+      background: #fff; border: 1px solid #e5e7eb; border-top: 4px solid var(--tier-color, #10b981);
+      border-radius: 10px; padding: 10px 12px; min-height: 168px;
+      transition: opacity .25s ease, transform .25s ease;
+    }
+    .mini-card[data-tier="gold"]  { --tier-color: #d99a00; background: linear-gradient(160deg, #fffbea 0%, #fff 60%); }
+    .mini-card[data-tier="blue"]  { --tier-color: #22d3ee; background: linear-gradient(160deg, #f0fdff 0%, #fff 60%); }
+    .mini-card[data-tier="green"] { --tier-color: #10b981; }
+    .mini-card[data-tier="amber"], .mini-card[data-tier="hidden"] { --tier-color: #f59e0b; }
+    .mini-card.leaving { opacity: 0; transform: translateY(-6px) scale(.97); }
+    .mc-top { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+    .mini-card .score { background: var(--tier-color); }
+    .mini-card[data-tier="gold"] .score { background: linear-gradient(135deg, #f5b800, #c98a00); }
+    .mini-card[data-tier="blue"] .score { background: linear-gradient(135deg, #22d3ee, #0ea5e9); }
+    .mc-loc { font-size: 11px; color: #9ca3af; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+    .mc-title {
+      font-size: 13px; font-weight: 600; margin-top: 8px; line-height: 1.3; color: #1c2330;
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+    }
+    .mc-company { font-size: 12px; color: #6b7280; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .mc-actions { display: flex; gap: 6px; margin-top: auto; padding-top: 10px; }
+    .mc-actions .btn { flex: 1; padding: 4px 6px; white-space: nowrap; }
+    .mc-applied {
+      margin-top: 6px; width: 100%; padding: 5px 6px; font-size: 12px; font-weight: 600;
+      border: 1px solid #10b981; border-radius: 6px; background: #fff; color: #059669; cursor: pointer;
+      font-family: inherit;
+    }
+    .mc-applied:hover:not(:disabled) { background: #ecfdf5; }
+    .mc-applied.confirm, .mc-applied.confirm:hover:not(:disabled) { background: #059669; color: #fff; }
+    .mc-applied:disabled { opacity: .6; cursor: default; }
+    .ov-search {
+      display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+      background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 9px 12px;
+      margin-bottom: 6px; cursor: pointer; font-size: 13px; color: #1c2330; font-family: inherit;
+    }
+    .ov-search:hover { border-color: #2557a7; background: #f0f4fb; }
+    .ov-search .q { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ov-search .where { font-size: 12px; color: #6b7280; white-space: nowrap; }
+    .ov-search .chev { color: #9ca3af; font-size: 16px; }
+    .ov-hint { font-size: 11px; color: #9ca3af; margin: 2px 0 0; }
+
     /* ── Applied tab ──────────────────────────────────────── */
     #applied-bar {
       display: flex; align-items: center; justify-content: space-between;
@@ -520,13 +628,38 @@
   </header>
 
   <nav id="tabs">
-    <button class="tab active" data-tab="jobs">Jobs</button>
+    <button class="tab active" data-tab="overview">Overview</button>
+    <button class="tab" data-tab="jobs">Jobs</button>
     <button class="tab" data-tab="applied">Applied</button>
     <button class="tab" data-tab="profile">Profile</button>
   </nav>
 
+  <!-- ── Overview tab (dashboard.js) ─────────────────── -->
+  <div id="overview-section">
+    <div id="ov-status"></div>
+    <section class="ov-card" id="ov-progress" aria-live="polite"></section>
+    <section class="ov-block">
+      <div class="ov-head">
+        <div>
+          <h2>Keep applying</h2>
+          <div class="ov-sub" id="ov-ready-count"></div>
+        </div>
+        <div class="ov-nav" id="ov-nav" hidden>
+          <button class="ov-arrow" id="ov-prev" title="Previous" aria-label="Previous jobs">&#8249;</button>
+          <button class="ov-arrow" id="ov-next" title="Next" aria-label="More jobs">&#8250;</button>
+        </div>
+      </div>
+      <div class="ov-scroller" id="ov-scroller"></div>
+    </section>
+    <section class="ov-block">
+      <div class="ov-head"><div><h2>Scan more jobs</h2></div></div>
+      <div id="ov-searches"></div>
+      <p class="ov-hint" id="ov-search-hint" hidden>Open one, then press <strong>Scan Page</strong>.</p>
+    </section>
+  </div>
+
   <!-- ── Jobs tab ─────────────────────────────────────── -->
-  <div id="jobs-section">
+  <div id="jobs-section" hidden>
     <div id="budget-banner" hidden></div>
     <div id="suggestion-banner" hidden>
       <span>💡 Try searching:</span>
@@ -780,5 +913,6 @@
   <script src="config.js"></script>
   <script src="screening_assist.js"></script>
   <script src="sidebar.js"></script>
+  <script src="dashboard.js"></script>
 </body>
 </html>

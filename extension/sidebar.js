@@ -1,4 +1,5 @@
-// Side panel: tabbed Jobs + Profile editor.
+// Side panel: tabbed Overview / Jobs / Applied / Profile. The Overview and Applied tabs
+// live in dashboard.js (loaded after this file, sharing its globals).
 // Vanilla JS, no build step. Talks to the FastAPI backend — BACKEND comes from
 // config.js and is either the real (8000) or test (8001) environment.
 
@@ -114,6 +115,7 @@ function mk(tag, className, text) {
 // Tab switching
 // ---------------------------------------------------------------------------
 const tabBtns = document.querySelectorAll('nav#tabs .tab');
+const overviewSection = document.getElementById('overview-section');
 const jobsSection = document.getElementById('jobs-section');
 const appliedSection = document.getElementById('applied-section');
 const profileSection = document.getElementById('profile-section');
@@ -125,15 +127,33 @@ tabBtns.forEach(btn => {
     tabBtns.forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     const tab = btn.dataset.tab;
+    overviewSection.hidden = tab !== 'overview';
     jobsSection.hidden = tab !== 'jobs';
     appliedSection.hidden = tab !== 'applied';
     profileSection.hidden = tab !== 'profile';
-    hdrJobsBtns.style.display = tab === 'jobs' ? '' : 'none';
+    hdrJobsBtns.style.display = (tab === 'jobs' || tab === 'overview') ? '' : 'none';
     if (tab === 'profile' && !profileLoaded) loadProfile();
     if (tab === 'profile') loadToWorkOn(); // counts move as new ads are scanned — always refresh
+    if (tab === 'overview') loadOverview(); // always refresh: counts move as you apply
     if (tab === 'applied') loadApplied(); // always refresh — cheap query, keeps it current
   });
 });
+
+function showTab(tab) {
+  document.querySelector(`nav#tabs .tab[data-tab="${tab}"]`)?.click();
+}
+
+// Mark a job applied (stamps applied_at once, server-side). Shared by the Jobs cards and
+// the Overview's Keep Applying cards. Throws on failure; the caller says so.
+async function markApplied(jobId) {
+  const res = await fetch(`${BACKEND}/jobs/${jobId}/status?profile_id=${PROFILE_ID}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: 'applied' }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
 
 // ---------------------------------------------------------------------------
 // Jobs tab
@@ -315,12 +335,7 @@ function renderJob(job, tier) {
     if (job.status === 'applied') return;
     applyBtn.disabled = true;
     try {
-      const res = await fetch(`${BACKEND}/jobs/${job.job_id}/status?profile_id=${PROFILE_ID}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'applied' }),
-      });
-      if (!res.ok) throw new Error();
+      await markApplied(job.job_id);
       job.status = 'applied';
       applyBtn.className = 'apply-btn applied';
       applyBtn.textContent = '✓ Applied';
@@ -1395,6 +1410,7 @@ async function scanPage() {
 
     scanLog(abort ? 'Scan stopped early — refreshing matches…' : 'Scan complete — refreshing matches…');
     loadJobs();
+    refreshDashboard();
   } finally {
     scanning = false;
     scanBtn.disabled = false;
@@ -1402,7 +1418,7 @@ async function scanPage() {
 }
 
 scanBtn.addEventListener('click', scanPage);
-document.getElementById('refresh-btn').addEventListener('click', loadJobs);
+document.getElementById('refresh-btn').addEventListener('click', () => { loadJobs(); refreshDashboard(); });
 
 // ---------------------------------------------------------------------------
 // Personalise metrics — collapsible panel of user-tunable thresholds
@@ -2641,19 +2657,25 @@ async function refreshBudgetBanner() {
 // ---------------------------------------------------------------------------
 let _eventsEverOpened = false;
 
-// Reload the job list after a letter event, debounced. Never while the user is typing
-// in the list (an answer to a question, a letter edit): a reload would wipe it, so it
-// tries again a few seconds later.
+// True while the user is typing inside `el` (an answer, a letter edit, the start date):
+// a reload would wipe what they typed.
+function typingIn(el) {
+  const active = document.activeElement;
+  return !!(active && el.contains(active) && ['TEXTAREA', 'INPUT', 'SELECT'].includes(active.tagName));
+}
+
+// Reload the job list (and the visible Overview / Applied tab) after a letter event,
+// debounced. Never while the user is typing in them: it tries again a few seconds later.
 let reloadTimer = null;
 function scheduleReload(delay = 400) {
   clearTimeout(reloadTimer);
   reloadTimer = setTimeout(function tryReload() {
-    const active = document.activeElement;
-    if (active && jobListEl.contains(active) && ['TEXTAREA', 'INPUT', 'SELECT'].includes(active.tagName)) {
+    if (typingIn(jobListEl) || typingIn(overviewSection) || typingIn(appliedSection)) {
       reloadTimer = setTimeout(tryReload, 5000);
       return;
     }
     loadJobs();
+    refreshDashboard();
   }, delay);
 }
 
@@ -2666,13 +2688,14 @@ function connectEvents() {
   }
 
   source.onopen = () => {
-    if (_eventsEverOpened) loadJobs(); // reconnect — reload to catch up on missed events
+    if (_eventsEverOpened) { loadJobs(); refreshDashboard(); } // reconnect — catch up on missed events
     _eventsEverOpened = true;
   };
 
   // New job scored → reload the jobs list so it appears
   source.addEventListener('job_processed', () => {
     loadJobs();
+    refreshDashboard();
   });
 
   // Cover letter ready → update the badge and, if expanded, the editor in place.
@@ -2770,7 +2793,7 @@ applyZoom(1);
 
 backendReady.then(() => {
   renderEnvPill();
-  loadPreferences().then(loadJobs);
+  loadPreferences().then(() => { loadJobs(); loadOverview(); }); // Overview is the opening tab
   refreshBudgetBanner();
   connectEvents();
 });
