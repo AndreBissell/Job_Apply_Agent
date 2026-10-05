@@ -506,7 +506,7 @@ def cmd_drafts(args) -> int:
             usage = db.scalars(select(LlmUsage).where(LlmUsage.created_at >= before,
                                                       LlmUsage.task == drafts.TASK)).all()
             res.update(view)
-            res["cost_usd"] = round(sum(u.cost_usd or 0 for u in usage), 5)
+            res["cost_usd"] = round(float(sum(u.cost_usd or 0 for u in usage)), 5)
             res["years_flag"] = any("more than your profile's dates support" in i for i in view["issues"])
             if res["use"] == "planted":
                 res["planted_problems"] = _planted_verdict(view["answer"] or "", view["covered"], res["skill"])
@@ -565,7 +565,7 @@ def cmd_report(args) -> int:
         done = [r for r in rs if "covered" in r]
         d = [r for r in done if r["use"] == "draft"]
         p = [r for r in done if r["use"] == "planted"]
-        cost = sum(r.get("cost_usd", 0) for r in done)
+        cost = sum(float(r.get("cost_usd") or 0) for r in done)
         lines += ["## Drafts (mid tier)", "",
                   f"- drafted: {len(d)} questions; skipped/errors: {len(rs) - len(done)}",
                   f"- verified (passed every code check): {_pct(sum(r['verified'] for r in d), len(d))}",
@@ -576,6 +576,19 @@ def cmd_report(args) -> int:
                   f"- planted (no trace of the skill): {_pct(sum(not r['planted_problems'] for r in p), len(p))} "
                   "made no claim of it, no duration, not covered 'yes'",
                   f"- spend: ${cost:.4f} (${cost / max(len(done), 1):.4f} per draft)", ""]
+        # The stored answers re-checked with TODAY's code checks (no model): a check added
+        # after the run shows up here without paying for a new one.
+        _point_app_at(_scratch_db(args.run), spend=False)
+        from app.screening import drafts as drafts_mod
+
+        rescored = [r for r in d if r["answer"] and drafts_mod.code_issues(
+            r["answer"], [], ceiling_months=r["years_months"], skill=r["skill"], missing_labels=[])]
+        meta = [r["id"] for r in d if r["answer"] and any(
+            i.startswith("talks to you") for i in drafts_mod.code_issues(
+                r["answer"], [], ceiling_months=None, skill=r["skill"], missing_labels=[]))]
+        lines += [f"- re-checked with today's code checks (no model): {len(rescored)} of "
+                  f"{sum(bool(r['answer']) for r in d)} answers would now be flagged; a note for the candidate "
+                  f"inside the answer: {len(meta)}" + (f" ({', '.join(meta)})" if meta else ""), ""]
         kinds: dict[str, int] = {}
         for r in d:
             for i in r["issues"]:

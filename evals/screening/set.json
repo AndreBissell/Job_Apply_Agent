@@ -1,6 +1,6 @@
 {
- "_note": "Phase 9c eval set. `expected` is the TRUE label (kind, strategy, parameters) whatever layer sorts it. Adjudicate: fix any wrong label, then set `adjudicated` to true. Items with `unsure: true` need a look most. `use`: sort / draft / planted. job_id = an evals/eval.db job. No answers are stored here.",
- "adjudicated": false,
+ "_note": "Phase 9c eval set. `expected` is the TRUE label (kind, strategy, parameters) whatever layer sorts it. Adjudicate: fix any wrong label, then set `adjudicated` to true. Items with `unsure: true` need a look most. `use`: sort / draft / planted. job_id = an evals/eval.db job. No answers are stored here. Adjudicated by the user 2026-10-05 (all labels accepted as drafted).",
+ "adjudicated": true,
  "items": [
   {
    "id": "S1-q1",

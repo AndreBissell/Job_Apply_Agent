@@ -181,6 +181,7 @@ job-app-assistant/
     run_cover_letters.py  # batch cover-letter generation (dev/testing only)
     letter_lab.py      # cover-letter eval harness (evals/rubric.md); analyze = Phase 3 hand-check pack; loop-report = revisions
     grading_panel.py   # blind Opus grading panel: pack / disagreements / merge (evals/grading-panel.md)
+    screening_eval.py  # Quick Apply question-help eval: build-set / sort / labels / drafts / report (Phase 9c)
     check_matching.py  # scoring diagnostic report vs expected bands
     check_llm.py       # validate the LLM key before a batch
     smoke_test.py
@@ -432,7 +433,22 @@ settled from the samples; anything else still needs a live check the user drives
 fast-follow 1 below; don't guess selectors). The "Polish" button is
 already Regenerate (Phase 8). Vertex batch inference was checked (plan §10.2): possible on the
 trial and our models, but ~$0.001/job saved and scores a day late, so NOT built.
-Next: whatever the user names; Phase 9 when the user can do the live session. Known follow-ups (plan
+9c is DONE (2026-10-05, branch `centerlink-preperation`; plan §10.1 + Decision log). Toggle
+`screening_question_help_enabled` (default on; USER: off covers ALL assisted questions, help
+`off` before any gating, no model call). Drafts: `app/screening/drafts.py` + `POST
+/jobs/{id}/screening-drafts {bank_id}`, ONE question per click (mid, task `quick_apply_draft`),
+only assisted free-text `years_skill_text` / `free_text_describe` on a full-pipeline job, refused
+in code first; the GET view never drafts. Writer = `answer_screening.draft_answers` (run-less
+core; the letter-run tool is unchanged). Per-part evidence/years for compound skills; code checks
+flag a duration above the dates, a missing part named, a listed skill as experience, and a note
+for the candidate inside the answer. Stored on `job_screening_questions.draft` (migration
+`a9e3c5d7f142`) with a fingerprint: profile / question sorting / letter run changed -> "redraft".
+Overlay + sidebar: Draft / Redraft / Copy only. Eval `scripts/screening_eval.py` (scratch copy of
+eval.db; `evals/screening/set.json` adjudicated) -> `evals/results/screening-v1.md` ($0.196).
+1465 tests; e2e 120/120. The test suite no longer makes a paid call (one leaking test fixed).
+NOT verified live on Seek. Follow-ups: future_work/quick-apply-user-keywords.md,
+future_work/quick-apply-draft-followups.md.
+Next: whatever the user names; the live Quick Apply check (TEST backend) is still owed. Known follow-ups (plan
 Decision log 2026-10-04): check_claims passes "I have included a link to a video"
 (invented attachment), "daily" frequency claims and "apply my skills in X" on a listing;
 style_lint's gap-led pattern misses "While my X rather than Y"; Gemini implicit caching

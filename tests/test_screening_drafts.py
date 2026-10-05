@@ -275,6 +275,23 @@ class TestCodeChecks:
         writer.says("I have skills in React Native.", claims=[("skills in React Native", f"skill:{skill_id}")])
         assert draft(db, bank_id)["draft"]["issues"] == []
 
+    @pytest.mark.parametrize("meta", [
+        "My profile does not detail direct experience with Expo.",
+        "Because this project is undated in my profile, I cannot state a number of years.",
+    ])
+    def test_a_note_for_the_candidate_inside_the_answer_is_flagged(self, db, writer, meta):
+        bank_id, p = setup_full(db)
+        writer.says(f"I built a booking app in React Native. {meta}",
+                    claims=[("built a booking app in React Native", pointer(p))])
+        d = draft(db, bank_id)["draft"]
+        assert d["verified"] is False
+        assert any(i.startswith("talks to you, not the employer") for i in d["issues"])
+
+    def test_the_prompt_keeps_explanations_in_the_note(self, db, writer):
+        bank_id, _ = setup_full(db)
+        draft(db, bank_id)
+        assert "pasted to the employer exactly as written" in writer.calls[0]["system"]
+
     def test_verify_issues_are_kept(self, db, writer):
         bank_id, _ = setup_full(db)
         writer.says("I built a booking app in React Native.",

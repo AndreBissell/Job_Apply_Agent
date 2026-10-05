@@ -22,7 +22,9 @@ the profile has no trace of. On top of ``verify``, code checks the draft:
 * a sentence naming a skill part the profile lacks, without saying the candidate hasn't
   used it, is an issue;
 * a claim resting only on a listed skill (``skill:<id>``) that speaks of experience is
-  an issue (the ``listing_only`` rule: a listing backs "skills in", not "experience").
+  an issue (the ``listing_only`` rule: a listing backs "skills in", not "experience");
+* a sentence that talks about "my profile" / "the app" is an issue: it is a note for the
+  candidate that leaked into the text they paste to the employer.
 
 A draft with any issue is shown with its issues, never as verified.
 
@@ -71,7 +73,11 @@ Set covered to "partly" (or "no" when nothing else is left to answer) and name t
 the note.
 - EVIDENCE: the pointers where the profile backs the skill. Cite these. Evidence marked \
 "listed skill" backs "skills in" or "knowledge of" only, never "experience with".
-- THE JOB WANTS: what the ad asks for, for relevance only; never a source for claims."""
+- THE JOB WANTS: what the ad asks for, for relevance only; never a source for claims.
+
+The answer is pasted to the employer exactly as written. Never mention the profile, the \
+app or these facts in it, and never explain in it what you left out or why: that goes in \
+the note, which only the candidate reads."""
 
 SYSTEM_PROMPT = writer._SYSTEM_PROMPT + _ADDENDUM
 
@@ -211,6 +217,9 @@ _NEGATED = re.compile(
     r"yet to|lack|new to|keen to learn|eager to learn|would like to learn|haven’t|don’t|didn’t)\b",
     re.IGNORECASE,
 )
+# Words meant for the candidate, not the employer: the eval (screening-v1) found 4 of 8
+# answers explaining "my profile does not..." inside the text to paste.
+_META = re.compile(r"\b(?:my|your|the) profile\b|\bthe app\b|\bfacts computed\b", re.IGNORECASE)
 _EXPERIENCE_WORDS = re.compile(
     r"\b(?:experience[ds]?|worked|work with|used|using|built|developed|delivered|years?|months?)\b",
     re.IGNORECASE,
@@ -236,6 +245,9 @@ def code_issues(answer: str, claims: list[dict], *, ceiling_months: int | None, 
             if assist.find_in(part, assist.norm_skill(sentence)) and not _NEGATED.search(sentence):
                 issues.append(f"mentions {label}, which isn't in your profile: {sentence!r}")
                 break
+    for sentence in split_sentences(answer):
+        if _META.search(sentence):
+            issues.append(f"talks to you, not the employer (edit it out before pasting): {sentence!r}")
     for c in claims:
         source = (c.get("source") or "").strip().strip("[]`'\" ").strip()
         if source.startswith("skill:") and _EXPERIENCE_WORDS.search(c.get("quote") or ""):
