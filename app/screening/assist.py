@@ -611,9 +611,15 @@ def assist_question(q: dict, state: LetterState, profile: Profile, index: Profil
 # --------------------------------------------------------------------------------------
 def help_for_job(db: Session, job_id: int, profile_id: int) -> tuple[str, LetterState | None]:
     """Which help this job gets, and the full-pipeline run's state when it is ``full``."""
+    status, _, state = full_run(db, job_id, profile_id)
+    return status, state
+
+
+def full_run(db: Session, job_id: int, profile_id: int) -> tuple[str, LetterRun | None, LetterState | None]:
+    """``help_for_job`` plus the run itself (its id fingerprints a 9c draft)."""
     match = db.scalar(select(Match).where(Match.user_id == profile_id, Match.job_id == job_id))
     if match is None:
-        return NO_LETTER, None
+        return NO_LETTER, None, None
     letter = db.scalar(select(CoverLetter.generated_content).where(CoverLetter.match_id == match.id))
     runs = db.scalars(
         select(LetterRun)
@@ -622,14 +628,14 @@ def help_for_job(db: Session, job_id: int, profile_id: int) -> tuple[str, Letter
     ).all()
     live = bool(runs) and runs[0].status in LIVE_RUN
     if not letter:
-        return (PENDING if live else NO_LETTER), None
+        return (PENDING if live else NO_LETTER), None, None
     found = view.letter_run(runs, letter)
     if found is None:
-        return (PENDING if live else ONE_SHOT), None
-    state = found[1]
+        return (PENDING if live else ONE_SHOT), None, None
+    run, state = found[0], found[1]
     if not any(r.status != "unknown" for r in state.requirements):
-        return ONE_SHOT, None  # no evidence to work from
-    return FULL, state
+        return ONE_SHOT, None, None  # no evidence to work from
+    return FULL, run, state
 
 
 def _load_profile(db: Session, profile_id: int) -> Profile | None:
@@ -644,13 +650,15 @@ def _load_profile(db: Session, profile_id: int) -> Profile | None:
 def assist_job(db: Session, job_id: int, profile_id: int, *, today: datetime.date | None = None) -> dict:
     """GET /jobs/{id}/screening-assist: the job's questions in form order, each with its
     kind and, for a ``full`` job, the help for an assisted one. Sorts an ``unknown``
-    question with the small model only for a ``full`` job (once per bank row)."""
+    question with the small model only for a ``full`` job (once per bank row). Never
+    drafts: an open-ended assisted question is marked ``draftable`` and carries its
+    stored draft (with ``stale`` reasons) if the user asked for one before."""
     today = today or datetime.date.today()
     job = db.get(JobListing, job_id)
     if preferences.question_help_enabled(db, profile_id):
-        status, state = help_for_job(db, job_id, profile_id)
+        status, run, state = full_run(db, job_id, profile_id)
     else:
-        status, state = OFF, None
+        status, run, state = OFF, None, None
     questions = bank.job_questions(db, job_id)
     out = {
         "job_id": job_id, "job_title": job.title if job else None, "help": status,
@@ -659,9 +667,12 @@ def assist_job(db: Session, job_id: int, profile_id: int, *, today: datetime.dat
     }
     for q in questions:
         q["assist"] = None
+        q["draftable"], q["draft"] = False, None
     profile = _load_profile(db, profile_id) if status == FULL else None
     if status != FULL or profile is None:
         return out
+
+    from app.screening import drafts  # drafts imports this module
 
     index = ProfileIndex(profile)
     gap_box = _Gaps(gaps.active_decisions(db, profile_id))
@@ -671,6 +682,7 @@ def assist_job(db: Session, job_id: int, profile_id: int, *, today: datetime.dat
             if row is not None and classify.classify(db, row, job_id=job_id):
                 q.update(bank.question_view(row))
         q["assist"] = assist_question(q, state, profile, index, gap_box, today)
+    drafts.attach(db, job_id, profile_id, questions, profile, index, run)
 
     # A remembered "no" the job asks for again: count the ad (once per ad), as a run does.
     by_id = {d.id: d for d in gap_box.decisions}

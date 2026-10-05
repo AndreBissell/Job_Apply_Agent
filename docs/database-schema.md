@@ -892,6 +892,24 @@ form order: option values repeat across questions (`generated_indirect_<uuid>_0`
 two questions of one form), so they are only meaningful scoped to this question.
 These are ids, never the user's answer.
 
+`draft` (Phase 9c, nullable JSON TEXT) is the app's own draft answer to an open-ended
+`assisted` question, made only when the user clicks "Draft an answer" (one mid-tier
+call, `llm_usage.task = 'quick_apply_draft'`). It is a suggestion the user copies, not
+what they typed on Seek. Shape:
+`{"profile_id", "answer", "covered": "yes"|"partly"|"no", "note", "evidence": [pointer],
+"issues": [str], "verified": bool, "years_months": int|null, "fingerprint":
+{"profile", "question", "run_id"}, "drafted_at"}`. `verified` is true only when the
+answer passed every code check (pointers resolve, quotes are in the answer, no invented
+link, no duration above the code-computed years, no claim on a skill part the profile
+lacks, no "experience" backed only by a listed skill). The fingerprint is a hash of the
+profile text and dates the draft was built from, a hash of the bank row's text /
+strategy / parameters, and the letter run whose checklist it used: when any differs
+from now, the assist view shows the draft as stale ("redraft") instead of serving it as
+current. A new draft overwrites the old one. Kept on the job link rather than in
+`letter_runs.state` so Regenerate (a new run) doesn't lose it. Single-user for now (the
+JSON carries `profile_id` and is only served to that profile); multi-user would move it
+to a per-match table.
+
 ```sql
 CREATE TABLE job_screening_questions (
     job_id            BIGINT      NOT NULL REFERENCES job_listings(id) ON DELETE CASCADE,
@@ -900,6 +918,7 @@ CREATE TABLE job_screening_questions (
     seek_question_id  TEXT        NOT NULL,
     field_name        TEXT        NOT NULL,
     option_values     TEXT,                   -- JSON [{"value": ..., "label": ...}]
+    draft             TEXT,                   -- JSON: the app's draft answer (9c), see above
     first_seen_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_seen_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (job_id, question_id)

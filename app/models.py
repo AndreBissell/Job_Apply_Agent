@@ -729,6 +729,8 @@ class JobScreeningQuestion(Base):
     seek_question_id: Mapped[str] = mapped_column(Text, nullable=False)
     field_name: Mapped[str] = mapped_column(Text, nullable=False)
     option_values: Mapped[str | None] = mapped_column(Text)  # JSON [{"value", "label"}]
+    # JSON: the app's draft answer to an open-ended question (Phase 9c, app/screening/drafts.py)
+    draft: Mapped[str | None] = mapped_column(Text)
     first_seen_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
