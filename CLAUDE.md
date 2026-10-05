@@ -101,8 +101,9 @@ docs/cover-letter-loop-plan.md); see that file for the model-choice reasoning.
 Callers name a **tier**, never a model:
   small  (GEMINI_MODEL_SMALL,  default gemini-3.1-flash-lite) — quick-screen,
          extract, match, search_refine. `complete_json` defaults to this.
-  mid    (GEMINI_MODEL_MID,    default gemini-3.8-flash) — orchestration/analysis
-         (not used yet; the cover-letter agent will).
+  mid    (GEMINI_MODEL_MID,    default gemini-3.8-flash) — letter analysis and
+         checking: analyze_job, match_profile, check_claims (moved up from small
+         2026-10-03: small passed real overclaims); the orchestrator later.
   strong (GEMINI_MODEL_STRONG, default gemini-3.1-pro-preview) — cover letters.
          `complete_text` defaults to this. A *preview* model: may change; falling
          back is one env var.
@@ -178,7 +179,8 @@ job-app-assistant/
     run_extraction.py  # batch LLM extraction
     run_matching.py    # batch LLM matching/scoring
     run_cover_letters.py  # batch cover-letter generation (dev/testing only)
-    letter_lab.py      # cover-letter eval harness (evals/rubric.md); analyze = Phase 3 hand-check pack
+    letter_lab.py      # cover-letter eval harness (evals/rubric.md); analyze = Phase 3 hand-check pack; loop-report = revisions
+    grading_panel.py   # blind Opus grading panel: pack / disagreements / merge (evals/grading-panel.md)
     check_matching.py  # scoring diagnostic report vs expected bands
     check_llm.py       # validate the LLM key before a batch
     smoke_test.py
@@ -278,12 +280,168 @@ check; rubric.py now imports its helpers; one em dash allowed, same as the eval)
 `cover_letter.py` got an eval-only `styled=True` path (`letter_lab.py run --engine
 oneshot-styled`); production letters are unchanged. Early result in
 evals/results/styled-oneshot.md; grading it is deferred to future_work/voice-toggle-and-comparison.md (voice on/off, compared on the finished agent).
-The real profile's writing_sample is set (921 words, 3 samples). Next up is Phase 5
-(draft + check tools). Grow the eval set (only 9 ads, none at 75-84) before Phase 6
-compares engines.
+The real profile's writing_sample is set (921 words, 3 samples).
+Phase 5 is DONE (2026-10-03; details in the plan's Decision log): `app/llm/letter/
+guardrails.py` (THE one definition of must_cover / may_use / do_not_claim, plus the
+gates: no drafting with an undecided must-have gap, generate = draft 1 only, revise
+needs all 3 checks run and one failed, draft cap, can_finish), tools `generate.py`,
+`revise.py`, `check_claims.py` (stage 1 code pointer check + stage 2 judge on MID;
+undeclared-but-backed claims only warn), `check_requirements.py` (small; partial-aware,
+quotes verified in code). Eval: `letter_lab.py run --engine tools` (run `tools-v1`:
+$0.165/letter, 6/9 pass all checks within 2 drafts) and `letter_lab.py plant`
+(planted-claim test: small 35/36, mid 36/36; mid chosen because small missed real
+overclaims; evals/results/plant-tools-v1.md). Both commands save per job and
+`--resume`. Production letters are still the one-shot `cover_letter.py`.
+Phase 6 is DONE (2026-10-03; details in the plan's Decision log): `app/llm/letter/
+workflow.py` `run_workflow(db, job_id, profile_id, gap_policy=leave_out_gaps)`:
+analyze -> match -> gap policy -> generate -> 3 checks -> revise the LATEST draft <=2
+times -> finish. Never crashes on a limit: returns `guardrails.best_draft` (claims
+passed > fewest missing must-covers > style passed > later) with `open_issues`, and
+`clean` only if all 3 checks passed on it; `letter_runs.final_draft_version` is the
+draft handed back. `account_limit` is set when the USD guard / daily quota stopped it
+(stop the batch). The gap policy is the Phase 7 hook for `ask_user` (open questions ->
+`waiting_user`). Eval set: 15 ads (8 at 85+, 4 at 75,
+3 below; eval.db scores, which moved up to 50 points from real.db's), and NONE of them
+triggers a pending must-have gap, so ask_user never fires on it.
+Follow-up done the same day (commit 907fe81): a must-have backed only by listed
+skills (`guardrails.listing_only`) is may_use, never must_cover; the writer and the
+claims judge treat a listing as "skills in", never experience; style_lint warns on
+gap-led sentences. check_claims stage 1 also blocks invented links/emails in code.
+THE BASELINE FOR PHASE 7 IS `workflow-v2`: $0.184/letter, 15/15 clean, 0 dropped
+must-covers, 0 gap-led sentences. Judgement items are graded by a blind Opus panel
+(evals/grading-panel.md + scripts/grading_panel.py; standard evals/grading-standard.md;
+grades in evals/runs/<run>/grades-<tag>.csv, user's own grades never overwritten).
+Panel opus-v2, v2 vs v1: claims 13 vs 6, musts 14 vs 15, detail 12 vs 13, would_send
+0 vs 1; the panel re-grades consistently (57/60) but is stricter than the user (8/15
+on held-out letters). Every v2 would_send fail: body paragraphs recite the profile
+without applying it to this employer's work, plus generic closes; that is the next
+writer lever. Eval spend 2026-10-03 is in the plan's Decision log.
+Phase 7 is split into 7a / 7b / 7c, each committed, with the user's go-ahead between.
+Phase 7a is DONE (2026-10-03): `app/llm/letter/registry.py` (tool -> function +
+model-facing ToolSpec + a guardrail gate; descriptions say when NOT to use each tool),
+`agent.py` (`run_agent`: stateless mid-tier turns on `complete_tools`; refusals cost
+no tool call and go back as the next turn's result, capped at 4; finish is code;
+orchestrator spend counts towards the run budget), and `outcome.py` (`open_run` /
+`conclude` / `LetterResult` / `GapPolicy` / `leave_out_gaps`), now shared by the
+workflow so the engines end a run in one place. `letter_lab.py run --engine agent`,
+`loop-report` (agent path/refusals/overhead) and the new `cost-report` (per-task cost,
+tokens and time). Result `agent-v1`: $0.178/letter, 182 s, 15/15 clean, the SAME tool
+path as the workflow on 15/15 jobs, 0 refusals; panel opus-v3 (re-graded workflow-v2
+at 57/60): musts 15 vs 15, claims 12 vs 13, detail 12 vs 12, would_send 0 vs 0.
+Claude recommended the workflow (agency added +$0.013 and +40 s/letter and nothing
+else); USER DECISION: `letter_engine` defaults to `agent` (agent experience for their
+next job; ~$0.26/month at 20 letters). The workflow stays as the fallback; build 7b/7c
+agent-first, with the workflow still working through the same gap-policy hook. Thinking tokens are
+71% of a letter's cost; the Pro draft call is 61% (evals/results/cost-*.md).
+Phase 7b is DONE (2026-10-03, API only): migration `f6a9c3d8e217` (`gap_decisions`,
+`gap_sightings`, an `origin` column on experiences/skills/qualifications), `app/gaps.py`
+(remembered "no"s + the to-work-on list, code only), `app/llm/letter/gap_policy.py`
+(`apply_remembered` runs at the end of `match_profile`; `ask_user_gaps` is the production
+policy, `leave_out_gaps` stays for evals), `answers.py` (No / Yes -> proposed rows on
+small -> one-click confirm, Q11; rows tagged `origin='ask_user'`, Q12), run status
+`answered`, `resume_workflow` / `resume_agent` / `engines.py` (`run_letter`,
+`resume_letter`, `answered_runs`), `analyze_job` `skill` field (ANALYSIS_VERSION 3, so
+cached checklists are rebuilt), API `app/api/letters.py` (/letter-runs/waiting, answers,
+confirm, /gaps/to-work-on, /gaps/{id}/clear), `scripts/gap_report.py` ->
+reports/to-work-on.md (gitignored). PUT /profile-ui/data carries `origin` over by natural
+key (the editors don't send it) and auto-clears matching "no"s. NOT built/verified: the
+sidebar question card and the idle loop resuming `answered` runs (both Phase 8, below).
+Writer v3 is DONE (2026-10-04): `_WRITER_RULES` in generate.py now asks the writer to
+apply each piece of evidence to the employer's work from the ad (select, don't recite; the
+connecting sentence adds no new facts), bans stock bridges and stock closes, and asks for a
+specific close; `style_lint` warns (doesn't block) on `stock_close` / `stock_bridge`.
+`workflow-v3`: $0.213/letter like for like (+16%), 15/15 clean, stock closes 13/15 -> 0/15,
+verbatim profile copying 36% -> 18%. Panel opus-v4 (57/60 consistent): musts 15 vs 15, claims
+12 vs 11, detail 13 vs 13, would_send 0 vs 0. The writer swapped the old habits for new
+formulas ("prepares me to", "exactly the kind of"). Kept. USER DECISION 2026-10-04: don't
+iterate on letter wording now; polish later. The agent was NOT re-run on v3.
+Phase 8 is DONE (2026-10-04; details in the plan's Decision
+log): `app/llm/letter/production.py` (`next_work`: answered runs resume first, then the
+best-scored match without a letter; `run_work`; `generate_for` = /regenerate; `land_letter`;
+`recover_orphaned_runs`) and `view.py` (`latest_runs`, `letter_info`). The idle loop's
+`_letters_phase` runs it on the single worker (budget guard / account limit pauses letters 10
+min as before; a `waiting_user` run is never work). Per §6: master switch `letter_loop_enabled`
+(off = one-shot for all), bar `letter_loop_min_score` 85 (scores from `auto_cover_letter_min_score`
+up to it get the one-shot; the effective bar is the HIGHER of the two), `letter_engine` agent|
+workflow. Retries: skipped while a run is live, after 2 failures, 30 min cooldown. New `letter_runs`
+status `cancelled` (no DDL). A run's best draft lands in `generated_content` (clean or flagged);
+`edited_content` is never written. SSE: `letter_run_started/_waiting/_done/_failed`. API: `/jobs`
+has `letter_run`; `GET /jobs/{id}/letter-info`. Sidebar: "Needs Your Answer" group + question card
+(Yes + text -> editable proposed rows -> confirm; No), open issues / "left out" / eligibility /
+application-instruction notes, Personalise controls, To work on + origin tags in both profile
+editors. 846 tests. Verified by driving the real sidebar page against a scratch DB with no LLM
+(35 checks), then LIVE ($0.14): the loaded extension against a scratch test DB running the real idle
+loop; ask_user fired on a real ad, Yes/confirm and No worked, the loop resumed the answered run and
+the letter landed, all over live SSE (plan Decision log 2026-10-04). CAUTION: `scripts/run_api.py` runs uvicorn with reload=True, so a running
+real server picks up code edits; with real.db's `auto_cover_letter_min_score` at 94 it starts the
+pipeline (~20-25¢ each) for matches at the bar, so keep the code importable at all times.
+Phase 7c is DONE (2026-10-04; details in the plan's Decision log): side-output tools
+`answer_screening` (mid; screening questions in the ad text only, Q10; code checks pointers/quotes/
+links, no judge), `suggest_learning` (small; only gaps the USER confirmed, ordered by the to-work-on
+rank) and `suggest_resume_tweaks` (mid; reads the FINAL draft, `guardrails.letter_final`; default
+`user_cvs` row else the profile; code drops unbacked items). Rules in `app/llm/letter/side_outputs.py`:
+each behind a toggle (`screening_answers_enabled` / `learning_suggestions_enabled` /
+`resume_advice_enabled`, default True; off = not offered, all off = the Phase 8 run), once per run,
+failures shown never fatal, NOT charged to `max_tool_calls` (`budget.side_calls`; the USD cap still
+applies), the agent's finish refused while one is due, the workflow runs them in a fixed order after
+the letter. Stored in `letter_runs.state.side_outputs` (no DDL); sidebar shows collapsed sections
+(Copy on screening answers) + 3 Personalise checkboxes. Quick-Apply overlay skipped. `view.not_claimed`
+no longer lists skill-less gaps nobody asked about. 1008 tests at 7c (1126 after the limits wiring); sidebar checked with no LLM (27 checks).
+Eval `agent-v2-side` ($3.41): $0.227/letter, 229 s, 15/15 clean, same path as the workflow 15/15,
+0 refusals; résumé notes ran 15/15 as the last tool on the final draft ($0.012/letter). The eval set
+has no screening questions, confirmed gaps or CVs, so the other two never fired: untested on a model.
+Per-run limits WIRED (2026-10-04): `letter_max_drafts` (1-5, 3), `letter_max_tool_calls` (6-40, 15),
+`llm_run_budget_usd` (0.05-5, $0.50) -> `letter_settings()["limits"]` -> `open_run` copies them into
+`state.budget` (a resumed run keeps its own); workflow revisions = max_drafts - 1; sidebar inputs in
+Personalise. Live gap run ($0.20, scratch copy of real.db, Tabcorp ad + 3 appended screening
+questions): screening found and answered honestly (all three "answer this yourself"), résumé notes
+fine, but match_profile rated React Native/Flutter *partial* (React.js), so ask_user and
+suggest_learning were still not exercised on a model. The real profile's summary is "s" and its
+visa/work status is empty. Deferred tasks live in future_work/ (one file per task, indexed in its
+README): voice toggle, check_claims leaks, Gemini prompt caching, company research, letter
+framing/addressing, learn-from-edits.
+Phase 9 (rescoped 2026-10-04, plan §10.1; evidence in docs/quick-apply-samples.md, 5 real
+questionnaires) is ONE item: help with the live Quick Apply questions. Each question is `user`
+(work rights, salary, notice, identity, how you heard, motivation: no AI help, never sent to
+the LLM) or `assisted` (relates to the ad): an answering strategy shows what the employer wants
+(checklist) beside what the profile backs (evidence); wanted-but-missing skills go through the
+gap memory. Every captured question goes into a QUESTION BANK (new tables) so repeats need no
+model call. 9a capture + bank / 9b assist / 9c drafts + evals.
+9a is DONE (2026-10-04, no LLM; plan Decision log): migration `b4d8e2f6a913` (`screening_questions`
+global bank + `job_screening_questions`), `app/screening/` (identity / sort layers 2-4 / bank),
+`app/api/screening.py`, capture + overlay in content_script.js (apply pages no longer run the
+detail-page branch, which could mark the job expired), review list in the profile editor,
+`scripts/export_question_bank.py`, `tests/e2e/quick_apply_e2e.py` (56/56, scrubbed fixtures,
+scratch DB via `run_api.py test --db`). Run `alembic upgrade head` (run_api does it) before use.
+NOT verified on a live Seek page; Chrome may ask once for local-network access on Seek.
+9b is DONE (2026-10-04, no DDL; plan §10.1 + Decision log): `app/screening/assist.py` (gating
+full/one_shot/no_letter/letter_pending via `view.letter_run`; strategies in code; labels need a
+pointer resolving in the CURRENT profile; `norm_skill` folds spellings only, NOT prefilter's broad
+HTML=CSS / MySQL=PostgreSQL aliases), `classify.py` (layer 5, small, only from the assist view for
+full jobs, never at capture, per-row lock), run-less gap path in `answers.py` (sighting source
+`quick_apply`), API `GET /jobs/{id}/screening-assist`, `POST /jobs/{id}/screening-gaps` (+`/confirm`),
+`extension/screening_assist.js` (overlay + sidebar card), test-only `LLM_PROVIDER=stub`
+(LLM_STUB_RESPONSES / LLM_STUB_LOG). 1394 tests; e2e 97/97. NOT verified live on Seek.
+9b/9c scope (user, 2026-10-04; plan §10.1): help ONLY for jobs with a full-pipeline letter
+(agent/workflow). ONE-SHOT LETTERS GET NO QUESTION ASSISTANCE (no on-demand analysis); no
+letter -> overlay offers "create a cover letter". Choice questions show what the job wants and
+what the profile has, user picks (honour system, never recommend an option). A "Yes" only offers
+to add the skill to the profile, never reopens the letter. Motivation stays `user`. 9c: a
+Personalise toggle, off = no help at all on open-ended questions. The questions-step markup is
+settled from the samples; anything else still needs a live check the user drives (parked
+fast-follow 1 below; don't guess selectors). The "Polish" button is
+already Regenerate (Phase 8). Vertex batch inference was checked (plan §10.2): possible on the
+trial and our models, but ~$0.001/job saved and scores a day late, so NOT built.
+Next: whatever the user names; Phase 9 when the user can do the live session. Known follow-ups (plan
+Decision log 2026-10-04): check_claims passes "I have included a link to a video"
+(invented attachment), "daily" frequency claims and "apply my skills in X" on a listing;
+style_lint's gap-led pattern misses "While my X rather than Y"; Gemini implicit caching
+never hits (cached_tokens 0); the writer still copies one stock line from the writing
+sample (future_work/voice-toggle-and-comparison.md).
 
 Parked fast-follows. Both need a live Seek session rather than guesswork:
-1. §5.2's apply-flow detection (see the extension-revamp entry below).
+1. §5.2's apply-flow detection (see the extension-revamp entry below). Now also
+   the prerequisite for Phase 9 (live screening questions, plan §10.1).
 2. Verify the classification capture added 2026-09-21. readJsonLdJobPosting()
    is the primary source and should work, but SELECTORS.DETAIL_CLASSIFICATION /
    DETAIL_SUBCLASSIFICATION (the fallback) are UNVERIFIED guesses. Open a real

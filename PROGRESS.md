@@ -5,6 +5,151 @@ one block per milestone.
 
 ---
 
+## 2026-10-04 — Loose ends after the 7/8 audit — DONE ✅
+
+- The three per-run limits (`letter_max_drafts`, `letter_max_tool_calls`, `llm_run_budget_usd`) are wired from preferences into every new run, with bounds, validation on read and sidebar inputs (14/14 browser checks). `python -m pytest -q`: 1126 passed (118 new, Sonnet-written to a spec, reviewed).
+- Live gap + screening run ($0.20, scratch copy of real.db): screening questions found and answered honestly; ask_user / suggest_learning not triggered (the must-have matched as partial). Real profile issues found: summary is "s", visa/work status empty.
+- future_work/: `check-claims-leaks.md`, `gemini-prompt-caching.md` added; voice note updated.
+
+---
+
+## 2026-10-04 — Cover-letter Phase 7c: side outputs — DONE ✅
+
+**Built**
+- Tools `answer_screening` (mid), `suggest_learning` (small), `suggest_resume_tweaks` (mid); rules in `app/llm/letter/side_outputs.py` (toggle, once per run, readiness, due-before-finish, fixed-order `run_due`).
+- Agent: side tools offered only when enabled, finish refused while one is due, failures non-fatal, code fallback at the letter's tool cap. Workflow: same tools after the letter. Side calls not charged to the 15-call cap.
+- Prefs `screening_answers_enabled` / `learning_suggestions_enabled` / `resume_advice_enabled` (True); sidebar sections + Personalise checkboxes; `view.not_claimed` attitude fix; `letter_lab.py --side-outputs all` + a loop-report section.
+- Schema doc first: no DDL (data in `letter_runs.state`).
+
+**Verified**
+- `python -m pytest -q`: 1008 passed (162 new). `node --check` on sidebar.js.
+- Sidebar driven in Chromium against a scratch test DB, no LLM, port 8000 blocked: 27/27 checks.
+- Eval `agent-v2-side` ($3.41): $0.227/letter, 229 s, 15/15 clean, 0 refusals; résumé notes 15/15 on the final draft, $0.012/letter.
+
+**Not verified**: Chrome's real side panel; screening answers and learning suggestions on a real model (the eval set has neither questions nor confirmed gaps).
+
+---
+
+## 2026-10-04 — Cover-letter Phase 8: the pipeline runs in the app — DONE ✅ (side-output sections wait for 7c)
+
+**Built**
+- `app/llm/letter/production.py` + `view.py`; the idle loop's `_letters_phase`; `/regenerate` on the single worker.
+- Prefs `letter_loop_enabled` / `letter_loop_min_score` / `letter_engine`; API `letter_run` on `/jobs`, `GET /jobs/{id}/letter-info`.
+- Sidebar: question card, final letter + open issues, "left out" list, eligibility/instruction notes, Personalise controls, To work on, origin tags; same To work on + tags in the standalone editor.
+- Schema doc first: no DDL; new `letter_runs.status` value `cancelled`.
+
+**Verified**
+- `python -m pytest -q`: 846 passed (147 new). `node --check` on sidebar.js.
+- The real sidebar page driven in Chromium (stubbed `chrome.*`) against a scratch copy of the test DB with the idle loop off and every LLM function raising: 35 checks (question card Yes/edit/confirm and No, run -> answered, flagged and edited letters, failed/writing cards, Personalise round-trip, To work on + clear, profile save keeps ask_user rows). No Gemini call; real.db and app.db untouched.
+- That run found and fixed a 7b bug: the editors lacked the `university_project` / `assignment` types, so a profile save retyped ask_user rows to `job`.
+
+- Live ($0.1375, approved): the loaded extension (real `chrome.*`, port 8000 blocked) against a scratch test DB with the real idle loop and one crafted ad. ask_user fired (first time on a real model analysis), a Yes was parsed and confirmed, a No remembered, the loop resumed the answered run, the letter passed all checks on draft 1 and landed; every card change arrived over live SSE.
+
+**Not verified:** Chrome's real side panel (the page ran as an extension tab), and the pipeline on a real Seek capture.
+
+**Next up:** Phase 7c (side outputs), on the user's go-ahead.
+
+## 2026-10-04 — Cover-letter writer v3: apply the evidence, no stock close — DONE ✅
+
+**Goal:** stop letters failing would_send for reciting the profile and ending on a
+stock close (panels opus-v2/v3).
+
+**Built:** writer rules in `app/llm/letter/tools/generate.py` (apply each piece of
+evidence to the employer's work from the ad, select instead of retelling, no new facts
+in the connecting sentence, no stock bridges/closes, a specific close), one line in
+`revise.py`, `SKILL.md` shape, and `style_lint` warnings `stock_close` / `stock_bridge`.
+19 new tests by a Sonnet subagent to a spec (699 total); fixed a flaky 7b test.
+
+**Result** (`workflow-v3`, 15 ads, $3.35): stock closes 13/15 -> 0/15, bridges 11 -> 0,
+verbatim profile copying 36% -> 18%; 15/15 clean; $0.213/letter like for like (+16%).
+Blind panel opus-v4 (57/60 consistent with opus-v3): musts 15 vs 15, claims 12 vs 11,
+detail 13 vs 13, **would_send 0 vs 0**: the writer swapped the old habits for new
+formulas ("prepares me to", "exactly the kind of"). Kept; wording polish deferred by
+the user. `evals/results/grading-opus-v4.md`.
+
+**Not done:** the agent on v3 (optional, not asked), and the follow-ups in the plan's
+Decision log (attachment claims in `check_claims`, "rather than" gap-led pattern,
+repeated-tail lint).
+
+---
+
+## 2026-10-03 — Cover-letter Phase 7b: ask_user, remembered "no"s, the to-work-on list — DONE ✅ (API only)
+
+**Goal:** a must-have gap asks the user once instead of being silently left out; every
+"No" is remembered and counted, so the skills ads keep asking for rise to the top.
+
+**Built:** migration `f6a9c3d8e217` (`gap_decisions`, `gap_sightings`, `origin` on
+profile rows); `app/gaps.py`; `app/llm/letter/gap_policy.py`, `answers.py` (Yes ->
+proposed rows -> confirm), `engines.py`, resume paths for both engines (run status
+`answered`); `analyze_job` `skill` field (v3); API `app/api/letters.py`;
+`scripts/gap_report.py`. Scan sightings after extraction; origin carry-over and
+auto-clear on profile save. 148 new tests (680 total), written by a Sonnet subagent to
+a spec. Live prompt smoke $0.0135.
+
+**Not verified:** the sidebar question card and the idle-loop resume (Phase 8), and an
+ask_user on a real ad (no eval ad has a pending must-have gap).
+
+---
+
+## 2026-10-03 — Cover-letter Phase 7a: the agent, compared with the workflow — DONE ✅
+
+**Goal:** answer the plan's main question: does a model choosing the steps beat the
+fixed workflow, on the same tools, guardrails and writer?
+
+**Built:** `app/llm/letter/registry.py` (tools + model-facing specs + guardrail
+gates), `agent.py` (the §5.5 orchestrator loop, stateless turns, code-enforced
+budget and finish), `outcome.py` (the run start/end shared with the workflow).
+`letter_lab.py run --engine agent`, an agent section in `loop-report`, and
+`cost-report` (where each letter's money and time go). 67 new tests (531 total),
+written by a Sonnet subagent to a spec.
+
+**Result (`agent-v1`, 15 ads):** $0.178/letter (orchestrator $0.013 of it), 182 s
+(orchestrator 47 s), 15/15 clean, 0 refusals, and the same tool path as the
+workflow on every job. Blind Opus panel opus-v3 against workflow-v2: musts 15 vs 15,
+claims 12 vs 13, detail 12 vs 12, would_send 0 vs 0; the panel re-graded workflow-v2
+at 57/60. Claude recommended the workflow; **the user chose the agent as the default
+engine** (agent experience; ~$0.26/month extra at 20 letters), with the workflow as fallback.
+`evals/results/grading-opus-v3.md`, `agent-v1-loop.md`, `cost-workflow-v2-vs-agent-v1.md`.
+
+---
+
+## 2026-10-03 — Cover-letter Phase 6: fixed workflow (the baseline) — DONE ✅
+
+**Goal:** turn Phase 5's tools into a fixed loop, the baseline the Phase 7
+agent has to beat, and measure whether revisions still regress.
+
+**Built:** `app/llm/letter/workflow.py`: `run_workflow()` does analyze → match →
+gap policy (`leave_out` until `ask_user` exists) → generate → 3 checks →
+revise the latest draft ≤2 times → finish. When it stops short, it hands back
+`guardrails.best_draft` with its open issues instead of crashing.
+`letter_lab.py run --engine workflow` and `loop-report`. The eval set grew to
+15 ads, and the one-shot baseline was extended to cover them.
+
+**Result (`workflow-v1`):** $0.194/letter and 138 s; 14/15 clean. No revision
+went over length or broke a passing check; 2/6 dropped a must-cover item.
+Per-run detail is in `evals/results/workflow-v1*.md`; the decisions are in
+docs/cover-letter-loop-plan.md's Decision log.
+
+**Graded** by a blind Opus panel (user's request): a written standard
+(`evals/grading-standard.md`), two graders plus an adjudicator, checked against
+the user's held-out grades. Workflow beat one-shot on every judgement item
+(musts 15 vs 4, claims 6 vs 2, detail 11 vs 4, would send 2 vs 0); details in
+`evals/results/grading-opus-v1.md`. Found and fixed: a revision invented a video
+link an ad asked for, so `check_claims` now blocks links and emails that aren't
+in the profile.
+
+**Follow-up (`workflow-v2`, the Phase 7 baseline):** skills the profile only
+lists no longer count as must-cover or as experience. Unsupported claims fell
+from 9 letters to 2, and gap-led sentences from 9 to 0; $0.184/letter, 15/15
+clean. `would_send` is still 0/15. Each letter recites the profile without
+applying it to the employer's work, which is the next thing to improve. The
+grading panel is now repeatable: `scripts/grading_panel.py` and
+`evals/grading-panel.md`.
+
+**Verified:** `python -m pytest` (464 passed, 59 new).
+
+---
+
 ## 2026-09-21 — Rolling retention + post-profile-update weighting — DONE ✅
 
 **Goal:** hard-deleting low scorers had been fixed with soft deletes, which

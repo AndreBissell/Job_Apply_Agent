@@ -6,6 +6,17 @@
 // profile is id 1 in both — so this constant is correct for either.
 const PROFILE_ID = 1;
 
+// Tell the background worker while this side panel is open. When the panel is
+// closed the port drops, and the worker hides the Quick Apply questions panel on
+// Seek tabs (content_script.js). Reconnects if the worker was restarted.
+function announceSidebarOpen() {
+  try {
+    const port = chrome.runtime.connect({ name: 'sidebar' });
+    port.onDisconnect.addListener(() => setTimeout(announceSidebarOpen, 1000));
+  } catch { /* extension context gone: the panel is closing anyway */ }
+}
+announceSidebarOpen();
+
 // Score tiers (docs/extension-revamp-plan.md §1) — purely visual colouring.
 const GOLD_MIN = 95;
 const BLUE_MIN = 90;
@@ -31,7 +42,12 @@ function tierOf(score) {
 // ---------------------------------------------------------------------------
 const QUAL_TYPE_LABELS   = { degree: 'Degree', certificate: 'Certificate', diploma: 'Diploma', other: 'Other' };
 const QUAL_STATUS_LABELS = { completed: 'Completed', in_progress: 'In Progress', withdrawn: 'Withdrawn' };
-const EXP_TYPE_LABELS    = { job: 'Job', internship: 'Internship', volunteer: 'Volunteer', project: 'Project' };
+const EXP_TYPE_LABELS    = {
+  job: 'Job', internship: 'Internship', volunteer: 'Volunteer', project: 'Project',
+  // The cover-letter flow (ask_user) can add these; the editor must offer them or a save
+  // would turn the row into a 'job'.
+  university_project: 'University project', assignment: 'Assignment', personal_project: 'Personal project',
+};
 
 function fmtDate(ym) {
   if (!ym) return '';
@@ -86,6 +102,14 @@ function truncate(str, n) {
   return str.slice(0, n).replace(/\s\S*$/, '') + '…';
 }
 
+// Small DOM helper: an element with a class and text (always textContent, never HTML).
+function mk(tag, className, text) {
+  const e = document.createElement(tag);
+  if (className) e.className = className;
+  if (text != null) e.textContent = text;
+  return e;
+}
+
 // ---------------------------------------------------------------------------
 // Tab switching
 // ---------------------------------------------------------------------------
@@ -106,6 +130,7 @@ tabBtns.forEach(btn => {
     profileSection.hidden = tab !== 'profile';
     hdrJobsBtns.style.display = tab === 'jobs' ? '' : 'none';
     if (tab === 'profile' && !profileLoaded) loadProfile();
+    if (tab === 'profile') loadToWorkOn(); // counts move as new ads are scanned — always refresh
     if (tab === 'applied') loadApplied(); // always refresh — cheap query, keeps it current
   });
 });
@@ -164,20 +189,28 @@ async function loadJobs() {
   }
   jobStatusEl.textContent = ''; // status line is only for loading/error/empty states
 
+  const asking = [];
   const ready = [];
   const waiting = [];
   const longTail = [];
   for (const job of jobs) {
     const tier = tierOf(job.score);
-    if (coverLetterState(job) === 'ready') {
+    const clState = coverLetterState(job);
+    if (clState === 'question') {
+      asking.push(job); // a run is paused on a question only the user can answer
+    } else if (clState === 'ready') {
       ready.push(job); // a cover letter exists regardless of score/tier — always "ready"
-    } else if (tier === 'hidden') {
+    } else if (tier === 'hidden' && clState !== 'writing') {
       longTail.push(job);
     } else {
       waiting.push(job);
     }
   }
 
+  if (asking.length) {
+    jobListEl.appendChild(renderSectionHeader(`❓ Needs Your Answer (${asking.length})`, 'question'));
+    for (const job of asking) jobListEl.appendChild(renderJob(job, tierOf(job.score)));
+  }
   if (ready.length) {
     jobListEl.appendChild(renderSectionHeader(`✅ Ready to Apply (${ready.length})`, 'ready'));
     for (const job of ready) jobListEl.appendChild(renderJob(job, tierOf(job.score)));
@@ -218,16 +251,32 @@ function renderFold(jobs) {
   return li;
 }
 
-// Cover-letter card state (docs/extension-revamp-plan.md §5.1):
-//  - 'ready'   letter generated, has_cover_letter is true
-//  - 'pending' score >= autoLetterMin, idle loop hasn't reached it yet
-//  - 'none'    below autoLetterMin and no letter — no collapsed-card affordance;
-//              a manual force-generate lives only in the expanded detail view
+// Cover-letter card state (docs/extension-revamp-plan.md §5.1; the run states are
+// Phase 8 of docs/cover-letter-loop-plan.md). job.letter_run is the newest pipeline
+// run: {run_id, status, open_questions} or null.
+//  - 'question' a run is paused on questions for the user (even if an older letter exists)
+//  - 'writing'  a run is working, or its answers are in and it resumes shortly
+//  - 'ready'    letter generated, has_cover_letter is true
+//  - 'failed'   the last run produced nothing; the idle loop retries after a cooldown
+//  - 'pending'  score >= autoLetterMin, idle loop hasn't reached it yet
+//  - 'none'     below autoLetterMin and no letter — no collapsed-card affordance;
+//               a manual force-generate lives only in the expanded detail view
 function coverLetterState(job) {
+  const run = job.letter_run;
+  if (run?.status === 'waiting_user') return 'question';
+  if (run?.status === 'running' || run?.status === 'answered') return 'writing';
   if (job.has_cover_letter) return 'ready';
+  if (run?.status === 'failed' || run?.status === 'budget_stopped') return 'failed';
   if (job.score != null && job.score >= autoLetterMin) return 'pending';
   return 'none';
 }
+
+const CL_BADGES = {
+  ready:    '✅ Ready',
+  pending:  'Cover letter pending…',
+  writing:  '✍ Writing…',
+  failed:   '⚠ Letter failed',
+};
 
 function renderJob(job, tier) {
   const li = document.createElement('li');
@@ -250,16 +299,11 @@ function renderJob(job, tier) {
   }
 
   const clState = coverLetterState(job);
-  if (clState === 'ready') {
-    const badge = document.createElement('span');
-    badge.className = 'cl-badge ready';
-    badge.textContent = '✅ Ready';
-    row.appendChild(badge);
-  } else if (clState === 'pending') {
-    const badge = document.createElement('span');
-    badge.className = 'cl-badge pending';
-    badge.textContent = 'Cover letter pending…';
-    row.appendChild(badge);
+  if (clState === 'question') {
+    const n = job.letter_run.open_questions || 1;
+    row.appendChild(mk('span', 'cl-badge question', `❓ ${n} question${n === 1 ? '' : 's'} for you`));
+  } else if (CL_BADGES[clState]) {
+    row.appendChild(mk('span', `cl-badge ${clState}`, CL_BADGES[clState]));
   }
 
   const applyBtn = document.createElement('button');
@@ -321,6 +365,16 @@ function renderJob(job, tier) {
   meta.textContent = metaParts.join(' · ') || '—';
   li.appendChild(meta);
 
+  // Admin/eligibility asks the letter never mentions (work rights, licence, clearance):
+  // a heads-up so they aren't a surprise at the application form.
+  if (job.eligibility_notes?.length) {
+    const shown = job.eligibility_notes.slice(0, 2).map(t => truncate(t, 60)).join(' · ');
+    const more = job.eligibility_notes.length > 2 ? ` (+${job.eligibility_notes.length - 2} more)` : '';
+    const note = mk('div', 'elig-note', `⚠ Check: ${shown}${more}`);
+    note.title = job.eligibility_notes.join('\n');
+    li.appendChild(note);
+  }
+
   // Gold- and blue-tier cards show a reasoning snippet + top skill chips inline, no
   // click needed — everything else stays click-to-expand as before.
   if ((tier === 'blue' || tier === 'gold') && (job.reasoning || job.top_skills?.length)) {
@@ -359,6 +413,39 @@ function renderJob(job, tier) {
   return li;
 }
 
+// The button that asks the backend for a fresh letter (POST /jobs/{id}/regenerate).
+function makeGenerateButton(job, label) {
+  const btn = document.createElement('button');
+  btn.className = 'btn btn-sm';
+  btn.style.marginTop = '6px';
+  btn.textContent = label;
+  btn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    btn.disabled = true;
+    btn.textContent = 'Generating…';
+    try {
+      const r = await fetch(`${BACKEND}/jobs/${job.job_id}/regenerate?profile_id=${PROFILE_ID}`, { method: 'POST' });
+      if (!r.ok) throw new Error();
+      btn.textContent = 'Queued — will appear when ready.';
+    } catch {
+      btn.textContent = label;
+      btn.disabled = false;
+    }
+  });
+  return btn;
+}
+
+// What the pipeline says about this job's letter (open issues, what it leaves out, a run
+// waiting on the user, a failure). null when the backend can't say; the card still works.
+async function fetchLetterInfo(jobId) {
+  try {
+    const res = await fetch(`${BACKEND}/jobs/${jobId}/letter-info?profile_id=${PROFILE_ID}`);
+    return res.ok ? await res.json() : null;
+  } catch {
+    return null;
+  }
+}
+
 async function fillDetail(detailEl, job) {
   try {
     const res = await fetch(`${BACKEND}/jobs/${job.job_id}?profile_id=${PROFILE_ID}`);
@@ -374,37 +461,451 @@ async function fillDetail(detailEl, job) {
     });
     detailEl.appendChild(link);
 
+    const info = await fetchLetterInfo(job.job_id);
+    if (info?.waiting?.status === 'waiting_user') {
+      renderQuestionCard(detailEl, info.waiting.run_id);
+    } else if (info?.waiting) {
+      detailEl.appendChild(mk('div', 'pref-note', 'Thanks — your answers are in. The letter resumes shortly.'));
+    }
+
     const cl = data.cover_letter;
+    const run = job.letter_run;
     if (cl?.generated_content) {
       renderCoverLetterEditor(detailEl, job.job_id, cl);
+      renderLetterNotes(detailEl, info, cl, data);
+    } else if (run?.status === 'running' || run?.status === 'answered') {
+      detailEl.appendChild(mk('div', 'pref-note', '✍ Writing your letter — a full run takes a few minutes.'));
+    } else if (info?.failure) {
+      const why = info.failure.error ? ` (${truncate(info.failure.error, 140)})` : '';
+      detailEl.appendChild(mk('div', 'letter-flag', `The last attempt didn't produce a letter${why}. It retries on its own after a short wait, or:`));
+      detailEl.appendChild(makeGenerateButton(job, 'Try again now'));
+    } else if (info?.waiting) {
+      // the question card above is the next step
     } else if (job.score != null && job.score >= autoLetterMin) {
       const note = document.createElement('div');
       note.style.cssText = 'margin-top:6px;color:#6b7280;';
       note.textContent = 'Cover letter pending — the idle loop will generate it shortly.';
       detailEl.appendChild(note);
     } else {
-      const forceBtn = document.createElement('button');
-      forceBtn.className = 'btn btn-sm';
-      forceBtn.style.marginTop = '6px';
-      forceBtn.textContent = 'Generate cover letter anyway';
-      forceBtn.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        forceBtn.disabled = true;
-        forceBtn.textContent = 'Generating…';
-        try {
-          const r = await fetch(`${BACKEND}/jobs/${job.job_id}/regenerate?profile_id=${PROFILE_ID}`, { method: 'POST' });
-          if (!r.ok) throw new Error();
-          forceBtn.textContent = 'Queued — will appear when ready.';
-        } catch {
-          forceBtn.textContent = 'Generate cover letter anyway';
-          forceBtn.disabled = false;
-        }
-      });
-      detailEl.appendChild(forceBtn);
+      detailEl.appendChild(makeGenerateButton(job, 'Generate cover letter anyway'));
     }
+    if (!cl?.generated_content && data.eligibility_notes?.length) {
+      renderLetterNotes(detailEl, null, null, data);
+    }
+    await renderQuickApplyQuestions(detailEl, job.job_id);
   } catch {
     detailEl.textContent = 'Could not load detail.';
   }
+}
+
+// ---------------------------------------------------------------------------
+// Quick Apply questions the user has already opened for this job (Phase 9b): the same
+// help the overlay on the apply page shows, from the question bank. Adds nothing when
+// the job has no captured questions or the request fails.
+// ---------------------------------------------------------------------------
+let screeningCssInjected = false;
+function injectScreeningAssistCss() {
+  if (screeningCssInjected) return;
+  screeningCssInjected = true;
+  const style = document.createElement('style');
+  style.textContent = SCREENING_ASSIST_CSS;
+  document.head.appendChild(style);
+}
+
+async function fetchScreeningAssist(jobId) {
+  try {
+    const res = await fetch(`${BACKEND}/jobs/${jobId}/screening-assist?profile_id=${PROFILE_ID}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    return Array.isArray(data.questions) && data.questions.length ? data : null;
+  } catch {
+    return null;
+  }
+}
+
+async function renderQuickApplyQuestions(detailEl, jobId) {
+  const data = await fetchScreeningAssist(jobId);
+  if (!data) return;
+  injectScreeningAssistCss();
+  const details = mk('details', 'letter-notes');
+  details.addEventListener('click', e => e.stopPropagation()); // don't collapse the card
+  details.appendChild(mk('summary', null, `Quick Apply questions (${data.questions.length})`));
+  const body = mk('div');
+  details.appendChild(body);
+  detailEl.appendChild(details);
+
+  async function refresh(notice) {
+    const next = await fetchScreeningAssist(jobId);
+    if (next) draw(next, notice);
+  }
+  function draw(d, notice) {
+    renderScreeningAssist(body, d, {
+      fetchJson: (url, init) => fetch(url, init), backend: BACKEND, profileId: PROFILE_ID,
+      onChanged: refresh, notice,
+    });
+  }
+  draw(data);
+}
+
+// ---------------------------------------------------------------------------
+// The letter's notes: open issues, what it leaves out, notes from the ad
+// ---------------------------------------------------------------------------
+function renderLetterNotes(container, info, cl, data) {
+  const wrap = mk('div');
+  wrap.addEventListener('click', e => e.stopPropagation()); // don't collapse the card
+  const run = info?.run;
+
+  if (run) {
+    const flag = mk('div', 'letter-flag' + (run.clean ? ' ok' : ''));
+    if (run.clean) {
+      flag.textContent = `✓ Passed every check (draft ${run.draft_version}).`;
+    } else {
+      flag.appendChild(mk('div', null, '⚠ Read this before you send it — the letter did not pass every check:'));
+      for (const issue of run.open_issues) flag.appendChild(mk('div', 'note-row', issue));
+    }
+    if (run.warnings?.length) {
+      flag.appendChild(mk('div', 'warn', 'Suggestions: ' + run.warnings.slice(0, 3).join(' · ')));
+    }
+    if (cl?.edited_content && cl.edited_content !== cl.generated_content) {
+      flag.appendChild(mk('div', null, 'These notes describe the generated draft, not your edits.'));
+    }
+    wrap.appendChild(flag);
+  }
+
+  const sections = [];
+  if (run?.not_claimed?.length) {
+    sections.push(['Left out of the letter', run.not_claimed.map(r => [r.text, r.reason])]);
+  }
+  const eligibility = data?.eligibility_notes?.length ? data.eligibility_notes : (run?.eligibility_notes || []);
+  if (eligibility.length) sections.push(['Check before you apply (never in the letter)', eligibility.map(t => [t, null])]);
+  if (run?.application_instructions?.length) {
+    sections.push(['The ad also asks you to', run.application_instructions.map(t => [t, null])]);
+  }
+  if (sections.length) {
+    const details = mk('details', 'letter-notes');
+    details.appendChild(mk('summary', null, 'What the letter leaves out, and notes from the ad'));
+    for (const [heading, rows] of sections) {
+      details.appendChild(mk('h5', null, heading));
+      // Plain rows, not <ul>/<li>: the job list's li rules would restyle them as cards.
+      for (const [text, why] of rows) {
+        const row = mk('div', 'note-row', text);
+        if (why) row.appendChild(mk('span', 'why', ` — ${why}`));
+        details.appendChild(row);
+      }
+    }
+    wrap.appendChild(details);
+  }
+  if (run?.side_outputs) renderSideOutputs(wrap, run.side_outputs);
+  if (wrap.childNodes.length) container.appendChild(wrap);
+}
+
+// ---------------------------------------------------------------------------
+// Side outputs (plan §5.6): screening answers, learning suggestions, résumé notes.
+// Each is a collapsed section beside the letter; a failed one says so.
+// ---------------------------------------------------------------------------
+function sideSection(title) {
+  const d = mk('details', 'letter-notes side-output');
+  d.appendChild(mk('summary', null, title));
+  return d;
+}
+
+function copyButton(getText) {
+  const btn = mk('button', 'btn btn-sm', 'Copy');
+  btn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(getText());
+      btn.textContent = 'Copied ✓';
+    } catch {
+      btn.textContent = 'Copy failed';
+    }
+    setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+  });
+  return btn;
+}
+
+function renderSideOutputs(wrap, so) {
+  const failed = (tool) => so.errors?.[tool]
+    ? mk('div', 'letter-flag', `This section couldn't be made on this run (${truncate(so.errors[tool], 120)}).`)
+    : null;
+
+  const answers = so.screening_answers || [];
+  if (answers.length || so.errors?.answer_screening) {
+    const d = sideSection(`Screening answers (${answers.length})`);
+    const err = failed('answer_screening');
+    if (err) d.appendChild(err);
+    if (answers.length) d.appendChild(mk('div', 'pref-note', 'Drafts from your profile, for the questions in the ad. Read each one before you paste it.'));
+    for (const a of answers) {
+      const box = mk('div', 'screening-answer');
+      box.appendChild(mk('h5', null, a.question));
+      if (a.answer) {
+        const text = mk('div', 'answer-text', a.answer);
+        box.appendChild(text);
+        box.appendChild(copyButton(() => a.answer));
+      } else {
+        box.appendChild(mk('div', 'warn', 'Your profile doesn’t answer this: answer it yourself.'));
+      }
+      if (a.covered === 'partly') box.appendChild(mk('div', 'warn', 'Only partly covered by your profile.'));
+      if (a.note) box.appendChild(mk('div', 'why', a.note));
+      for (const issue of a.issues || []) box.appendChild(mk('div', 'note-row warn', `Check: ${issue}`));
+      d.appendChild(box);
+    }
+    wrap.appendChild(d);
+  }
+
+  const learning = so.learning_suggestions || [];
+  if (learning.length || so.errors?.suggest_learning) {
+    const d = sideSection(`Ways to close your gaps (${learning.length})`);
+    const err = failed('suggest_learning');
+    if (err) d.appendChild(err);
+    for (const s of learning) {
+      const row = mk('div', 'note-row');
+      row.appendChild(mk('strong', null, s.skill));
+      row.appendChild(document.createTextNode(`: ${s.suggestion}`));
+      const meta = [s.kind, s.effort, s.recent_ads ? `asked for in ${s.recent_ads} recent ad${s.recent_ads === 1 ? '' : 's'}` : null]
+        .filter(Boolean).join(' · ');
+      if (meta) row.appendChild(mk('span', 'why', ` (${meta})`));
+      d.appendChild(row);
+    }
+    wrap.appendChild(d);
+  }
+
+  const notes = so.resume_notes;
+  if (notes || so.errors?.suggest_resume_tweaks) {
+    const d = sideSection('Résumé notes for this ad');
+    const err = failed('suggest_resume_tweaks');
+    if (err) d.appendChild(err);
+    if (notes) {
+      d.appendChild(mk('div', 'pref-note', notes.based_on === 'cv'
+        ? 'Advice on your stored CV. Nothing is changed for you.'
+        : 'No CV is stored, so this is advice on your profile entries. Nothing is changed for you.'));
+      const groups = [
+        ['Lead with', (notes.lead_with || []).map(i => [i.point, i.why])],
+        ['Use the ad’s words (where true)', (notes.keywords_to_mirror || []).map(i => [i.keyword, null])],
+        ['Consider cutting', (notes.consider_cutting || []).map(i => [i.item, i.why])],
+        ['Gaps: how to handle them honestly', (notes.gaps_to_address || []).map(i => [i.requirement, i.advice])],
+      ];
+      for (const [heading, rows] of groups) {
+        if (!rows.length) continue;
+        d.appendChild(mk('h5', null, heading));
+        for (const [text, why] of rows) {
+          const row = mk('div', 'note-row', text);
+          if (why) row.appendChild(mk('span', 'why', ` — ${why}`));
+          d.appendChild(row);
+        }
+      }
+    }
+    wrap.appendChild(d);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The question card (ask_user): a run is paused on a must-have gap
+// ---------------------------------------------------------------------------
+const EXP_TYPES = ['job', 'internship', 'university_project', 'assignment', 'personal_project', 'volunteer'];
+const QUAL_TYPES = ['degree', 'diploma', 'certificate', 'license'];
+const QUAL_STATUSES = ['completed', 'in_progress', 'expected'];
+
+function labelled(text, control) {
+  const l = mk('label', null, text);
+  l.appendChild(control);
+  return l;
+}
+function textInput(value, placeholder) {
+  const i = mk('input');
+  i.type = 'text';
+  i.value = value || '';
+  if (placeholder) i.placeholder = placeholder;
+  return i;
+}
+function selectOf(options, value) {
+  const sel = mk('select');
+  for (const o of options) {
+    const opt = mk('option', null, o.replace(/_/g, ' '));
+    opt.value = o;
+    sel.appendChild(opt);
+  }
+  sel.value = options.includes(value) ? value : options[0];
+  return sel;
+}
+const splitList = (text) => text.split(',').map(t => t.trim()).filter(Boolean);
+
+// The rows a Yes would add to the profile, as editable fields (plan Q11: the user sees
+// and confirms them before anything is saved). Returns {node, read}: read() gives the
+// ProposedRows the confirm endpoint takes.
+function proposalEditor(proposal) {
+  const root = mk('div', 'proposal');
+  const readers = { experiences: [], qualifications: [] };
+
+  for (const e of proposal.experiences || []) {
+    root.appendChild(mk('h5', null, 'Experience'));
+    const type = selectOf(EXP_TYPES, e.experience_type);
+    const title = textInput(e.title);
+    const org = textInput(e.organization, 'employer, university or client');
+    const start = textInput(e.start, 'YYYY-MM');
+    const end = textInput(e.end, 'YYYY-MM');
+    const desc = mk('textarea');
+    desc.value = e.description || '';
+    const skills = textInput((e.skills || []).join(', '), 'skills used, comma-separated');
+    root.append(labelled('Type', type), labelled('Title', title), labelled('Organisation', org));
+    const row = mk('div', 'row2');
+    row.append(labelled('Start', start), labelled('End', end));
+    root.append(row, labelled('What you did', desc), labelled('Skills', skills));
+    readers.experiences.push(() => ({
+      experience_type: type.value, title: title.value.trim(), organization: org.value.trim(),
+      start: start.value.trim(), end: end.value.trim(), description: desc.value.trim(),
+      skills: splitList(skills.value),
+    }));
+  }
+  for (const q of proposal.qualifications || []) {
+    root.appendChild(mk('h5', null, 'Qualification'));
+    const type = selectOf(QUAL_TYPES, q.qualification_type);
+    const title = textInput(q.title);
+    const inst = textInput(q.institution, 'institution');
+    const status = selectOf(QUAL_STATUSES, q.status);
+    root.append(labelled('Type', type), labelled('Title', title), labelled('Institution', inst), labelled('Status', status));
+    readers.qualifications.push(() => ({
+      qualification_type: type.value, title: title.value.trim(), institution: inst.value.trim(), status: status.value,
+    }));
+  }
+  let skillsInput = null;
+  if ((proposal.skills || []).length) {
+    root.appendChild(mk('h5', null, 'Skills'));
+    skillsInput = textInput(proposal.skills.join(', '));
+    root.appendChild(skillsInput);
+  }
+  return {
+    node: root,
+    read: () => ({
+      experiences: readers.experiences.map(r => r()),
+      qualifications: readers.qualifications.map(r => r()),
+      skills: skillsInput ? splitList(skillsInput.value) : [],
+    }),
+  };
+}
+
+// GET/POST helper for the letter-run endpoints: {ok, status, data}; data.detail is the message.
+async function runRequest(url, body) {
+  try {
+    const res = await fetch(url, {
+      method: body ? 'POST' : 'GET',
+      headers: { 'Content-Type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    let data = null;
+    try { data = await res.json(); } catch { /* no body */ }
+    return { ok: res.ok, status: res.status, data };
+  } catch {
+    return { ok: false, status: 0, data: { detail: 'Could not reach the backend — is it running?' } };
+  }
+}
+const errorText = (r) =>
+  (typeof r.data?.detail === 'string' && r.data.detail) || 'Something went wrong — check the fields and try again.';
+
+async function renderQuestionCard(container, runId) {
+  const card = mk('div', 'qcard');
+  card.addEventListener('click', e => e.stopPropagation()); // the card itself is not a toggle
+  container.appendChild(card);
+  const base = `${BACKEND}/letter-runs/${runId}`;
+  let view = null;
+
+  function questionBlock(q) {
+    const block = mk('div', 'q');
+    block.appendChild(mk('div', 'q-prompt', q.prompt));
+    const err = mk('div', 'q-err');
+
+    if (q.status === 'answered') {
+      block.appendChild(mk('div', 'q-done', q.choice === 'no'
+        ? '✓ Left out of your letter, and added to "To work on" in your profile.'
+        : '✓ Added to your profile.'));
+      return block;
+    }
+
+    if (q.status === 'needs_confirm') {
+      block.appendChild(mk('div', 'pref-note', 'Here is what we would add to your profile. Fix anything that is wrong, then confirm.'));
+      const editor = proposalEditor(q.proposal || {});
+      block.appendChild(editor.node);
+      const actions = mk('div', 'q-actions');
+      const ok = mk('button', 'btn btn-sm btn-primary', 'Add to my profile');
+      const no = mk('button', 'btn btn-sm', "That's not right");
+      ok.addEventListener('click', async () => {
+        ok.disabled = no.disabled = true;
+        ok.textContent = 'Saving…';
+        const r = await runRequest(`${base}/questions/${q.id}/confirm?profile_id=${PROFILE_ID}`, { accept: true, rows: editor.read() });
+        if (r.ok) return applyView(r.data);
+        err.textContent = errorText(r);
+        ok.disabled = no.disabled = false;
+        ok.textContent = 'Add to my profile';
+      });
+      no.addEventListener('click', async () => {
+        ok.disabled = no.disabled = true;
+        const r = await runRequest(`${base}/questions/${q.id}/confirm?profile_id=${PROFILE_ID}`, { accept: false });
+        if (r.ok) return applyView(r.data);
+        err.textContent = errorText(r);
+        ok.disabled = no.disabled = false;
+      });
+      actions.append(ok, no);
+      block.append(actions, err);
+      return block;
+    }
+
+    // open: Yes (with a text box) or No
+    const text = mk('textarea');
+    text.placeholder = view.answer_hint || 'Tell us what you did, where and roughly how long.';
+    block.appendChild(text);
+    const actions = mk('div', 'q-actions');
+    const yes = mk('button', 'btn btn-sm btn-primary', 'Yes, I have this');
+    const no = mk('button', 'btn btn-sm', 'No — leave it out');
+    yes.addEventListener('click', async () => {
+      if (!text.value.trim()) { err.textContent = 'Tell us what you did, where and roughly how long — or answer No.'; return; }
+      err.textContent = '';
+      yes.disabled = no.disabled = true;
+      yes.textContent = 'Reading your answer…';
+      const r = await runRequest(`${base}/answers?profile_id=${PROFILE_ID}`,
+        { answers: [{ question_id: q.id, choice: 'yes', text: text.value.trim() }] });
+      if (r.ok) return applyView(r.data);
+      err.textContent = errorText(r);
+      yes.disabled = no.disabled = false;
+      yes.textContent = 'Yes, I have this';
+    });
+    no.addEventListener('click', async () => {
+      yes.disabled = no.disabled = true;
+      const r = await runRequest(`${base}/answers?profile_id=${PROFILE_ID}`,
+        { answers: [{ question_id: q.id, choice: 'no' }] });
+      if (r.ok) return applyView(r.data);
+      err.textContent = errorText(r);
+      yes.disabled = no.disabled = false;
+    });
+    actions.append(yes, no);
+    block.append(actions, err);
+    return block;
+  }
+
+  function draw() {
+    card.innerHTML = '';
+    const open = view.questions.filter(q => q.status !== 'answered').length;
+    if (view.status !== 'waiting_user') {
+      card.appendChild(mk('h4', null, 'Thanks — your answers are in.'));
+      card.appendChild(mk('div', 'pref-note', 'The letter resumes shortly and will appear here when it is ready.'));
+    } else {
+      card.appendChild(mk('h4', null, `${open} question${open === 1 ? '' : 's'} before your letter`));
+    }
+    for (const q of view.questions) card.appendChild(questionBlock(q));
+  }
+
+  function applyView(next) {
+    view = next;
+    draw();
+    // Every question answered: the card moves to "Writing…" once the list reloads.
+    if (view.status !== 'waiting_user') scheduleReload(1500);
+  }
+
+  const first = await runRequest(`${base}?profile_id=${PROFILE_ID}`);
+  if (!first.ok) {
+    card.appendChild(mk('div', 'q-err', errorText(first)));
+    return;
+  }
+  applyView(first.data);
 }
 
 // Cover-letter editor: Copy + editable textarea that saves via
@@ -460,6 +961,20 @@ function renderCoverLetterEditor(container, jobId, cl) {
     }
   });
   actions.appendChild(saveBtn);
+
+  // A regenerate never overwrites the user's edits, so a newer generated draft can sit
+  // behind them. This puts it in the box to compare or use; nothing is saved until Save.
+  if (cl.edited_content && cl.generated_content && cl.edited_content !== cl.generated_content) {
+    const genBtn = document.createElement('button');
+    genBtn.className = 'btn btn-sm';
+    genBtn.textContent = 'Load generated draft';
+    genBtn.title = 'Replaces the text in the box with the latest generated draft. Nothing is saved until you click Save edits.';
+    genBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      textarea.value = cl.generated_content;
+    });
+    actions.appendChild(genBtn);
+  }
 
   wrap.appendChild(actions);
   container.appendChild(wrap);
@@ -900,6 +1415,93 @@ const scanPagesInput = document.getElementById('scan-pages');
 const scanPagesSaveBtn = document.getElementById('scan-pages-save');
 const llmSuggestCheckbox = document.getElementById('llm-suggest');
 const llmSuggestRefreshBtn = document.getElementById('llm-suggest-refresh');
+const letterLoopCheckbox = document.getElementById('letter-loop-enabled');
+const letterLoopInput = document.getElementById('letter-loop-min');
+const letterLoopSaveBtn = document.getElementById('letter-loop-save');
+const letterEngineSelect = document.getElementById('letter-engine');
+const letterLoopNote = document.getElementById('letter-loop-note');
+// Per-letter limits of the pipeline (plan §7): preference key -> [input, save button, min, max,
+// whole numbers only?]. The bounds match the API's (preferences.LIMIT_BOUNDS).
+const letterLimits = {
+  letter_max_drafts: [document.getElementById('limit-drafts'), document.getElementById('limit-drafts-save'), 1, 5, true],
+  letter_max_tool_calls: [document.getElementById('limit-tools'), document.getElementById('limit-tools-save'), 6, 40, true],
+  llm_run_budget_usd: [document.getElementById('limit-usd'), document.getElementById('limit-usd-save'), 0.05, 5, false],
+};
+const limitValues = { letter_max_drafts: 3, letter_max_tool_calls: 15, llm_run_budget_usd: 0.5 };
+const limitsNote = document.getElementById('limits-note');
+
+function showLimit(key) {
+  const [input, , , , whole] = letterLimits[key];
+  input.value = whole ? String(limitValues[key]) : limitValues[key].toFixed(2);
+}
+
+// Warn when the tool-call cap can't fit the drafts allowed (4 per draft + 2).
+function updateLimitsNote() {
+  const needed = 4 * limitValues.letter_max_drafts + 2;
+  const warn = limitsNote.querySelector('.warn') || limitsNote.appendChild(mk('span', 'warn'));
+  warn.textContent = limitValues.letter_max_tool_calls < needed
+    ? ` Note: ${limitValues.letter_max_drafts} drafts need about ${needed} tool calls, so a run may stop before its last draft.`
+    : '';
+}
+
+for (const [key, [input, btn, min, max, whole]] of Object.entries(letterLimits)) {
+  btn.addEventListener('click', async () => {
+    const value = whole ? Number(input.value) : Math.round(Number(input.value) * 100) / 100;
+    if (!Number.isFinite(value) || value < min || value > max || (whole && !Number.isInteger(value))) {
+      showLimit(key); // out of range — snap back, don't save
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = '…';
+    if (await savePref({ [key]: value })) {
+      limitValues[key] = value;
+      showLimit(key);
+      updateLimitsNote();
+      btn.textContent = 'Saved ✓';
+    } else {
+      btn.textContent = 'Error';
+    }
+    setTimeout(() => { btn.textContent = 'Save'; btn.disabled = false; }, 1500);
+  });
+}
+
+// The pipeline's side outputs (plan §6): preference key -> its checkbox. All default on.
+const sideOutputToggles = {
+  screening_answers_enabled: document.getElementById('side-screening'),
+  learning_suggestions_enabled: document.getElementById('side-learning'),
+  resume_advice_enabled: document.getElementById('side-resume'),
+};
+
+// The full cover-letter pipeline (docs/cover-letter-loop-plan.md §6). Stored server-side
+// (profiles.preferences) because the idle loop is what acts on them. Pre-load defaults only.
+let letterLoopEnabled = true;
+let letterLoopMin = 85;
+let letterEngine = 'agent';
+
+// Letters from the auto-generate score up to the bar get the one-shot writer; the bar and
+// above get the pipeline. The bar is the higher of the two settings (the backend applies
+// the same rule), so lowering this below the auto-generate score changes nothing.
+function updateLetterLoopNote() {
+  const bar = Math.max(autoLetterMin, letterLoopMin);
+  letterLoopNote.textContent = !letterLoopEnabled
+    ? 'Off: every letter is written in one quick pass (about 3¢), with no fact-check or revision.'
+    : bar > autoLetterMin
+      ? `Scores ${autoLetterMin}–${bar - 1}: one quick pass (about 3¢). From ${bar} up: fact-checks and revisions (about 20¢ and a few minutes each). The bar is the higher of this score and the auto-generate score above. The agent picks each step itself; the fixed workflow takes the same steps in a set order.`
+      : `Every automatic letter gets fact-checks and revisions (about 20¢ and a few minutes each). The agent picks each step itself; the fixed workflow takes the same steps in a set order.`;
+}
+
+async function savePref(body) {
+  try {
+    const res = await fetch(`${BACKEND}/profile/${PROFILE_ID}/preferences`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
 
 personaliseToggle.addEventListener('click', () => {
   const open = personalisePanel.hidden; // about to open
@@ -924,6 +1526,20 @@ async function loadPreferences() {
     }
     scanPagesInput.value = scanMaxPages;
     llmSuggestCheckbox.checked = prefs.llm_search_suggestions === true;
+    letterLoopEnabled = prefs.letter_loop_enabled !== false;
+    letterLoopCheckbox.checked = letterLoopEnabled;
+    if (Number.isInteger(prefs.letter_loop_min_score)) letterLoopMin = prefs.letter_loop_min_score;
+    letterLoopInput.value = letterLoopMin;
+    if (prefs.letter_engine === 'agent' || prefs.letter_engine === 'workflow') letterEngine = prefs.letter_engine;
+    letterEngineSelect.value = letterEngine;
+    for (const [key, box] of Object.entries(sideOutputToggles)) box.checked = prefs[key] !== false;
+    for (const [key, [, , min, max, whole]] of Object.entries(letterLimits)) {
+      const v = prefs[key];
+      if (typeof v === 'number' && v >= min && v <= max && (!whole || Number.isInteger(v))) limitValues[key] = v;
+      showLimit(key);
+    }
+    updateLimitsNote();
+    updateLetterLoopNote();
   } catch { /* backend down — keep defaults; loadJobs shows its own error */ }
 }
 
@@ -943,12 +1559,60 @@ autoLetterSaveBtn.addEventListener('click', async () => {
     });
     if (!res.ok) throw new Error();
     autoLetterMin = value;
+    updateLetterLoopNote();
     autoLetterSaveBtn.textContent = 'Saved ✓';
     loadJobs(); // cards move between "pending" and "no letter" states
   } catch {
     autoLetterSaveBtn.textContent = 'Error';
   }
   setTimeout(() => { autoLetterSaveBtn.textContent = 'Save'; autoLetterSaveBtn.disabled = false; }, 1500);
+});
+
+letterLoopCheckbox.addEventListener('change', async () => {
+  const enabled = letterLoopCheckbox.checked;
+  letterLoopCheckbox.disabled = true;
+  if (await savePref({ letter_loop_enabled: enabled })) {
+    letterLoopEnabled = enabled;
+    updateLetterLoopNote();
+  } else {
+    letterLoopCheckbox.checked = !enabled; // revert — the setting didn't stick
+  }
+  letterLoopCheckbox.disabled = false;
+});
+
+for (const [key, box] of Object.entries(sideOutputToggles)) {
+  box.addEventListener('change', async () => {
+    const enabled = box.checked;
+    box.disabled = true;
+    if (!(await savePref({ [key]: enabled }))) box.checked = !enabled; // revert — it didn't stick
+    box.disabled = false;
+  });
+}
+
+letterEngineSelect.addEventListener('change', async () => {
+  const engine = letterEngineSelect.value;
+  letterEngineSelect.disabled = true;
+  if (await savePref({ letter_engine: engine })) letterEngine = engine;
+  else letterEngineSelect.value = letterEngine;
+  letterEngineSelect.disabled = false;
+});
+
+letterLoopSaveBtn.addEventListener('click', async () => {
+  const value = parseInt(letterLoopInput.value, 10);
+  if (!Number.isInteger(value) || value < 0 || value > 100) {
+    letterLoopInput.value = letterLoopMin; // out of range — snap back, don't save
+    return;
+  }
+  letterLoopSaveBtn.disabled = true;
+  letterLoopSaveBtn.textContent = '…';
+  if (await savePref({ letter_loop_min_score: value })) {
+    letterLoopMin = value;
+    updateLetterLoopNote();
+    letterLoopSaveBtn.textContent = 'Saved ✓';
+  } else {
+    letterLoopSaveBtn.textContent = 'Error';
+  }
+  setTimeout(() => { letterLoopSaveBtn.textContent = 'Save'; letterLoopSaveBtn.disabled = false; }, 1500);
 });
 
 scanPagesSaveBtn.addEventListener('click', async () => {
@@ -1130,6 +1794,16 @@ new MutationObserver(refreshProfileDirty)
 profileSectionEl.addEventListener('input', refreshProfileDirty);
 profileSectionEl.addEventListener('change', refreshProfileDirty);
 
+// Rows the cover-letter flow added (ask_user, plan Q12) carry a plain tag, so you can
+// tell them from rows you entered. The server keeps the tag across profile saves.
+function addOriginBadge(summaryEl, data) {
+  if (!data?.origin_label) return;
+  const label = data.origin_label;
+  const badge = mk('div', 'origin-badge', `✦ ${label.charAt(0).toUpperCase()}${label.slice(1)}`);
+  badge.style.cssText = 'display:inline-block;margin-top:4px;';
+  summaryEl.querySelector('.summary-meta').after(badge);
+}
+
 // -- Qualification card --
 
 function makeQualCard(data = {}, isNew = false) {
@@ -1196,6 +1870,7 @@ function makeQualCard(data = {}, isNew = false) {
 
   card.appendChild(summaryEl);
   card.appendChild(formEl);
+  addOriginBadge(summaryEl, data);
 
   // Populate form
   if (data.qualification_type) formEl.querySelector('.f-type').value = data.qualification_type;
@@ -1285,6 +1960,9 @@ function makeExpCard(data = {}, isNew = false) {
         <option value="internship">Internship</option>
         <option value="volunteer">Volunteer</option>
         <option value="project">Project</option>
+        <option value="university_project">University project</option>
+        <option value="assignment">Assignment</option>
+        <option value="personal_project">Personal project</option>
       </select>
     </label>
     <label class="field"><span>Title / Role</span>
@@ -1314,6 +1992,7 @@ function makeExpCard(data = {}, isNew = false) {
 
   card.appendChild(summaryEl);
   card.appendChild(formEl);
+  addOriginBadge(summaryEl, data);
 
   const currentCb = formEl.querySelector('.f-current');
   const endLabel  = formEl.querySelector('.f-end-label');
@@ -1390,6 +2069,7 @@ function readExpCard(card) {
 // -- Skills chips --
 
 let skillsData = [];
+let skillOrigins = {}; // skill name -> origin label, for skills the cover-letter flow added
 
 function renderSkillPills() {
   const container = document.getElementById('skills-pills');
@@ -1398,6 +2078,11 @@ function renderSkillPills() {
     const chip = document.createElement('span');
     chip.className = 'skill-chip';
     chip.appendChild(document.createTextNode(skill));
+    if (skillOrigins[skill]) {
+      const dot = mk('span', 'origin-dot', '✦');
+      dot.title = skillOrigins[skill].charAt(0).toUpperCase() + skillOrigins[skill].slice(1);
+      chip.appendChild(dot);
+    }
     const rm = document.createElement('button');
     rm.className = 'rm-skill';
     rm.textContent = '×';
@@ -1475,6 +2160,7 @@ function populateForm(data) {
   for (const e of (data.experiences || [])) expsList.appendChild(makeExpCard(e, false));
 
   skillsData = data.skills || [];
+  skillOrigins = data.skill_origins || {};
   renderSkillPills();
   updateWritingStats();
   markProfileClean();
@@ -1531,6 +2217,7 @@ async function saveProfile() {
     // Baseline = exactly what was sent, so edits typed while the request was in
     // flight, and any skipped untitled cards, still show as unsaved.
     markProfileClean(bodyJson);
+    loadToWorkOn(); // saving a skill you said no to takes it off the list (auto-clear)
     if (dropped) {
       showMsg(`Saved — but ${dropped} entr${dropped === 1 ? 'y' : 'ies'} with no title ${dropped === 1 ? 'was' : 'were'} skipped. Give ${dropped === 1 ? 'it' : 'them'} a title and save again.`, 'err', 8000);
     } else {
@@ -1556,6 +2243,66 @@ document.getElementById('add-exp-btn').addEventListener('click', () =>
   document.getElementById('exps-list').appendChild(makeExpCard({}, true)));
 
 document.getElementById('save-profile-btn').addEventListener('click', saveProfile);
+
+// -- To work on (plan §5.9): skills you said no to, ranked by how often ads ask for them --
+
+async function loadToWorkOn() {
+  const list = document.getElementById('towork-list');
+  try {
+    const res = await fetch(`${BACKEND}/gaps/to-work-on?profile_id=${PROFILE_ID}`);
+    if (!res.ok) throw new Error();
+    const { window_days, items } = await res.json();
+    renderToWorkOn(list, items, window_days);
+  } catch {
+    list.textContent = 'Could not load this list — is the backend running?';
+  }
+}
+
+function renderToWorkOn(list, items, windowDays) {
+  list.innerHTML = '';
+  if (!items.length) {
+    list.appendChild(mk('div', 'towork-empty',
+      'Nothing yet. When a cover letter asks whether you have a skill and you answer No, it lands here.'));
+    return;
+  }
+  for (const it of items) {
+    const card = mk('div', 'towork-item');
+    const head = mk('div', 'towork-head');
+    head.appendChild(mk('strong', null, it.label));
+    const parts = [`${it.recent} ad${it.recent === 1 ? '' : 's'} in the last ${windowDays} days`];
+    if (it.essential) parts.push(`${it.essential} essential`);
+    head.appendChild(mk('span', 'towork-count', parts.join(', ')));
+    card.appendChild(head);
+
+    const sub = [];
+    if (it.recent_titles?.length) sub.push(`Recently: ${it.recent_titles.join('; ')}`);
+    if (it.total > it.recent) sub.push(`${it.total} ads in all`);
+    if (it.said_no_at) {
+      sub.push(`You said no on ${new Date(it.said_no_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}`);
+    }
+    if (sub.length) card.appendChild(mk('div', 'towork-sub', sub.join(' · ')));
+
+    const actions = mk('div', 'card-actions');
+    const clear = mk('button', 'btn btn-sm', "I've learned this — clear");
+    clear.title = 'Takes it off this list. A later cover letter that needs it will ask you again.';
+    clear.addEventListener('click', async () => {
+      clear.disabled = true;
+      try {
+        const res = await fetch(`${BACKEND}/gaps/${it.id}/clear?profile_id=${PROFILE_ID}`, { method: 'POST' });
+        if (!res.ok) throw new Error();
+        loadToWorkOn();
+      } catch {
+        clear.disabled = false;
+        clear.textContent = 'Could not clear — try again';
+      }
+    });
+    actions.appendChild(clear);
+    card.appendChild(actions);
+    list.appendChild(card);
+  }
+}
+
+document.getElementById('towork-refresh').addEventListener('click', loadToWorkOn);
 
 // Skill add UI
 function confirmSkill() {
@@ -1892,6 +2639,22 @@ async function refreshBudgetBanner() {
 // ---------------------------------------------------------------------------
 let _eventsEverOpened = false;
 
+// Reload the job list after a letter event, debounced. Never while the user is typing
+// in the list (an answer to a question, a letter edit): a reload would wipe it, so it
+// tries again a few seconds later.
+let reloadTimer = null;
+function scheduleReload(delay = 400) {
+  clearTimeout(reloadTimer);
+  reloadTimer = setTimeout(function tryReload() {
+    const active = document.activeElement;
+    if (active && jobListEl.contains(active) && ['TEXTAREA', 'INPUT', 'SELECT'].includes(active.tagName)) {
+      reloadTimer = setTimeout(tryReload, 5000);
+      return;
+    }
+    loadJobs();
+  }, delay);
+}
+
 function connectEvents() {
   let source;
   try {
@@ -1913,9 +2676,13 @@ function connectEvents() {
   // Cover letter ready → update the badge and, if expanded, the editor in place.
   // A full reload is the simplest way to move the card between the "pending"
   // and "ready" badge states, and jobs lists are small enough that it's cheap.
-  source.addEventListener('cover_letter_ready', () => {
-    loadJobs();
-  });
+  source.addEventListener('cover_letter_ready', () => scheduleReload());
+
+  // A cover-letter run started, is waiting on a question, finished or failed: move the
+  // card between "Writing…", "Needs your answer" and "Ready".
+  for (const name of ['letter_run_started', 'letter_run_waiting', 'letter_run_done', 'letter_run_failed']) {
+    source.addEventListener(name, () => scheduleReload());
+  }
 
   // The idle loop hit the daily/total LLM budget cap and paused cover letters.
   source.addEventListener('llm_budget_blocked', () => {
@@ -1945,6 +2712,59 @@ envPill.addEventListener('click', async () => {
   await chrome.storage.local.set({ backendEnv: next });
   location.reload();
 });
+
+// ---------------------------------------------------------------------------
+// Zoom + width classes
+// ---------------------------------------------------------------------------
+// CSS `zoom` doesn't change the viewport width, so the layout breakpoints
+// can't be @media queries — they're body classes computed from the width the
+// content actually has once zoom is applied (window.innerWidth / currentZoom).
+const ZOOM_STEPS = [0.8, 0.9, 1, 1.1, 1.25, 1.4, 1.5];
+let currentZoom = 1;
+const zoomInBtn = document.getElementById('zoom-in');
+const zoomOutBtn = document.getElementById('zoom-out');
+
+function updateWidthClasses() {
+  const w = window.innerWidth / currentZoom;
+  document.body.classList.toggle('w-wide', w >= 640);
+  document.body.classList.toggle('w-mid', w >= 420);
+}
+
+function applyZoom(z) {
+  currentZoom = z;
+  document.documentElement.style.zoom = z;
+  const idx = ZOOM_STEPS.indexOf(z);
+  zoomOutBtn.disabled = idx <= 0;
+  zoomInBtn.disabled = idx === ZOOM_STEPS.length - 1;
+  const pct = Math.round(z * 100);
+  zoomOutBtn.title = `Smaller (now ${pct}%)`;
+  zoomInBtn.title = `Larger (now ${pct}%)`;
+  updateWidthClasses();
+}
+
+function stepZoom(dir) {
+  const idx = ZOOM_STEPS.indexOf(currentZoom);
+  const next = Math.min(ZOOM_STEPS.length - 1, Math.max(0, idx + dir));
+  if (next === idx) return;
+  applyZoom(ZOOM_STEPS[next]);
+  try {
+    chrome.storage.local.set({ sidebarZoom: ZOOM_STEPS[next] });
+  } catch (e) { /* zoom just won't persist */ }
+}
+
+zoomOutBtn.addEventListener('click', () => stepZoom(-1));
+zoomInBtn.addEventListener('click', () => stepZoom(1));
+window.addEventListener('resize', updateWidthClasses);
+
+// Apply the saved zoom straight away — deliberately not inside backendReady,
+// so it doesn't wait on (or depend on) the local backend being up.
+applyZoom(1);
+(async () => {
+  try {
+    const { sidebarZoom } = await chrome.storage.local.get('sidebarZoom');
+    if (ZOOM_STEPS.includes(sidebarZoom)) applyZoom(sidebarZoom);
+  } catch (e) { /* fall back to 1 */ }
+})();
 
 backendReady.then(() => {
   renderEnvPill();

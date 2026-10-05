@@ -18,7 +18,7 @@
   "content_scripts": [
     {
       "matches": ["https://au.seek.com/*", "https://www.seek.com.au/*"],
-      "js": ["config.js", "selectors.js", "content_script.js"],
+      "js": ["config.js", "selectors.js", "screening_assist.js", "content_script.js"],
       "run_at": "document_idle"
     }
   ],

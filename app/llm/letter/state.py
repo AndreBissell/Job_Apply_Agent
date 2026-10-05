@@ -26,6 +26,11 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from app.models import Profile
+from app.preferences import (
+    DEFAULT_LETTER_MAX_DRAFTS,
+    DEFAULT_LETTER_MAX_TOOL_CALLS,
+    DEFAULT_LLM_RUN_BUDGET_USD,
+)
 
 # ---------------------------------------------------------------------------
 # Evidence pointers
@@ -170,6 +175,9 @@ class UserDecision(BaseModel):
     answer: str | None = None
     saved_as: list[str] = Field(default_factory=list)  # pointers to the new profile rows
     remembered: bool = False  # True when a stored gap_decisions "no" answered it
+    # True when no user decided it: the evals' leave_out_gaps policy leaves every pending
+    # gap out without asking. Not a confirmed gap, so suggest_learning ignores it.
+    assumed: bool = False
 
 
 class Requirement(BaseModel):
@@ -179,6 +187,9 @@ class Requirement(BaseModel):
     letter_role: LetterRole
     theme: str = ""  # related requirements share one, so a letter makes one point per theme
     implied_by: list[str] = Field(default_factory=list)  # ids of the headline/mention items it follows from
+    # Short skill name ("Power BI"); empty for attitudes and duties. The key remembered
+    # "no"s and the to-work-on list count by (plan §5.9). Added in ANALYSIS_VERSION 3.
+    skill: str = ""
     evidence: list[str] = Field(default_factory=list)  # pointers
     status: RequirementStatus = "unknown"
     note: str | None = None  # match_profile's one-line reason (e.g. "Tableau, not Power BI")
@@ -195,6 +206,30 @@ class Requirement(BaseModel):
             and self.status == "gap"
             and self.user_decision is None
         )
+
+
+class UserQuestion(BaseModel):
+    """One ask_user question about a must-have gap (plan §5.5). Questions for a run
+    are asked together; the run waits until every one is ``answered``.
+
+    open           sent to the user, no answer yet
+    needs_confirm  the user said Yes; ``proposal`` holds the parsed profile rows,
+                   waiting for the user's one-click confirm (plan Q11)
+    answered       a No (the requirement is left out and remembered), or a
+                   confirmed Yes (the rows are saved; ``saved_as`` points at them)
+    """
+
+    id: str  # "Q1", "Q2", ... stable within a run
+    requirement_id: str
+    requirement_text: str  # the employer's words, shown to the user
+    skill: str = ""
+    skill_key: str  # gaps.skill_key(): what a "No" is remembered under
+    prompt: str
+    status: Literal["open", "needs_confirm", "answered"] = "open"
+    choice: Literal["yes", "no"] | None = None
+    answer: str | None = None  # the user's text for a Yes
+    proposal: dict | None = None  # ProposedRows awaiting confirm
+    saved_as: list[str] = Field(default_factory=list)
 
 
 class Claim(BaseModel):
@@ -232,25 +267,45 @@ class JobInfo(BaseModel):
     company_facts: list[str] = Field(default_factory=list)
 
 
+# The side-output tools (plan §5.6): extras beside the letter, each behind its own
+# preference toggle. They never change the letter, run at most once per run, and are not
+# charged to the letter's tool-call cap (``Budget.side_calls`` counts them instead).
+SIDE_OUTPUT_TOOLS = ("answer_screening", "suggest_learning", "suggest_resume_tweaks")
+
+
 class SideOutputs(BaseModel):
+    # Which side-output tools this run may call, fixed when the run opens (from the
+    # toggles), so a resumed run keeps the settings it started with. Empty = none: the
+    # letter-only behaviour from before Phase 7c.
+    enabled: list[str] = Field(default_factory=list)
+    ran: list[str] = Field(default_factory=list)  # tools that have run, ok or not (once each)
+    errors: dict[str, str] = Field(default_factory=dict)  # tool -> why it failed
     screening_answers: list[dict] = Field(default_factory=list)
     learning_suggestions: list[dict] = Field(default_factory=list)
     resume_notes: dict | None = None
 
 
 class Budget(BaseModel):
+    # The three limits open at the user's preferences (``open_run(limits=...)``); these
+    # defaults are the same constants, for states built without them (the evals, old runs).
     drafts_used: int = 0
-    max_drafts: int = 3
-    tool_calls: int = 0
-    max_tool_calls: int = 15
-    cost_usd: float = 0.0
-    max_cost_usd: float = 0.50
+    max_drafts: int = DEFAULT_LETTER_MAX_DRAFTS
+    tool_calls: int = 0  # the letter's tools: what max_tool_calls caps
+    max_tool_calls: int = DEFAULT_LETTER_MAX_TOOL_CALLS
+    # Side-output tool calls, counted apart: each runs at most once, so they are bounded
+    # without the cap, and charging them to it would let them crowd out a revision.
+    side_calls: int = 0
+    cost_usd: float = 0.0  # every call of the run, side outputs and orchestrator included
+    max_cost_usd: float = DEFAULT_LLM_RUN_BUDGET_USD
+
+    def over_cost(self) -> bool:
+        return self.cost_usd >= self.max_cost_usd
 
     def exceeded(self) -> str | None:
         """Why the run must stop, or None."""
         if self.tool_calls >= self.max_tool_calls:
             return f"tool-call limit reached ({self.tool_calls}/{self.max_tool_calls})"
-        if self.cost_usd >= self.max_cost_usd:
+        if self.over_cost():
             return f"run budget reached (${self.cost_usd:.2f}/${self.max_cost_usd:.2f})"
         return None
 
@@ -263,7 +318,7 @@ class LetterState(BaseModel):
     job: JobInfo
     requirements: list[Requirement] = Field(default_factory=list)
     drafts: list[Draft] = Field(default_factory=list)
-    user_questions: list[dict] = Field(default_factory=list)
+    user_questions: list[UserQuestion] = Field(default_factory=list)
     side_outputs: SideOutputs = Field(default_factory=SideOutputs)
     budget: Budget = Field(default_factory=Budget)
 
@@ -302,7 +357,10 @@ class LetterState(BaseModel):
 
     def waiting_on_user(self) -> bool:
         """Questions are out and unanswered (``ask_user`` pauses the run)."""
-        return any(q.get("status") == "open" for q in self.user_questions)
+        return any(q.status != "answered" for q in self.user_questions)
+
+    def question(self, question_id: str) -> UserQuestion | None:
+        return next((q for q in self.user_questions if q.id == question_id), None)
 
     # -- budget -------------------------------------------------------------
     def budget_exceeded(self) -> str | None:
@@ -319,7 +377,10 @@ class LetterState(BaseModel):
         else:
             lines.append("REQUIREMENTS:")
             for r in self.requirements:
-                decision = f", user: {r.user_decision.choice}" if r.user_decision else ""
+                decision = ""
+                if r.user_decision:
+                    remembered = " (remembered)" if r.user_decision.remembered else ""
+                    decision = f", user: {r.user_decision.choice}{remembered}"
                 flag = "  <- needs a user decision" if r.needs_user else ""
                 lines.append(
                     f"  {r.id} [{r.importance}/{r.letter_role}] {r.status}{decision} "

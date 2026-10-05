@@ -17,6 +17,7 @@ from app.llm.letter.state import (
     ProfileIndex,
     Requirement,
     UserDecision,
+    UserQuestion,
     is_valid_pointer,
     split_sentences,
 )
@@ -203,10 +204,10 @@ def test_budget_limits():
 def test_waiting_on_user():
     s = _state()
     assert not s.waiting_on_user()
-    s.user_questions.append({"requirement_id": "R1", "status": "open"})
+    s.user_questions.append(UserQuestion(id="Q1", requirement_id="R1", requirement_text="x", skill_key="x", prompt="?", status="open"))
     assert s.waiting_on_user()
     assert "WAITING" in s.summary_for_orchestrator()
-    s.user_questions[0]["status"] = "answered"
+    s.user_questions[0].status = "answered"
     assert not s.waiting_on_user()
 
 

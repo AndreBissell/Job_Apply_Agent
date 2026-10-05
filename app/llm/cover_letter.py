@@ -244,7 +244,8 @@ def generate_cover_letter(
         existing = match.cover_letter
         if existing is not None:
             existing.generated_content = content
-            existing.status = "draft"
+            if not existing.edited_content:  # the user's edits stay what they see (and 'edited')
+                existing.status = "draft"
             cl = existing
         else:
             cl = CoverLetter(

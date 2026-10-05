@@ -27,9 +27,9 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, Literal
 
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -38,18 +38,20 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app import retention, search_suggest
+from app.api.letters import router as letters_router
 from app.api.profile_ui import router as profile_ui_router
+from app.api.screening import router as screening_router
 from app.db import SessionLocal, app_env
 from app.llm import search_refine
 from app.llm import usage as llm_usage
-from app.llm.client import BudgetExceededError, DailyQuotaError
+from app.llm.client import DailyQuotaError
 from app.llm.cover_letter import THRESHOLD as COVER_LETTER_THRESHOLD
-from app.llm.cover_letter import generate_cover_letter
 from app.llm.extract import extract_job
+from app.llm.letter import production as letter_production
+from app.llm.letter import view as letter_view
 from app.llm.match import match_job
 from app.llm.quickscreen import quick_screen
 from app.models import (
-    CoverLetter,
     Experience,
     JobListing,
     Match,
@@ -59,7 +61,7 @@ from app.models import (
     Skill,
     UserCv,
 )
-from app.preferences import get_auto_letter_min_score, get_preferences, set_preferences
+from app.preferences import LIMIT_BOUNDS, get_preferences, set_preferences
 from app.screenshots import downscale_png, unlink_screenshot
 
 logger = logging.getLogger(__name__)
@@ -115,6 +117,52 @@ def _retention_tick() -> None:
         logger.exception("Retention sweep failed")
 
 
+def _recover_orphaned_runs() -> None:
+    """Runs the previous server process left ``running`` can never finish: mark them
+    failed so they stop blocking their matches (letter_production.recover_orphaned_runs)."""
+    try:
+        with SessionLocal() as db:
+            letter_production.recover_orphaned_runs(db)
+    except Exception:
+        logger.exception("Recovering orphaned letter runs failed")
+
+
+async def _letters_phase() -> bool:
+    """One pass of the cover-letter phase. True when it did letter work (so the loop
+    re-checks the backlog after a pause); False when there was none, or letters are
+    paused by the budget guard.
+
+    What runs is decided in app/llm/letter/production.py (``next_work``): a run the user
+    has finished answering resumes first, then the best-scored match without a letter
+    gets the full pipeline (score at or above the bar) or the one-shot. A run waiting on
+    the user is NOT work, so it never blocks the loop. The work itself runs on the single
+    worker, and reports progress as SSE events (letter_run_started / _waiting / _done /
+    _failed, plus cover_letter_ready when a letter lands).
+    """
+    global _letters_paused_until
+    if time.monotonic() < _letters_paused_until:
+        return False
+    loop = asyncio.get_running_loop()
+    with SessionLocal() as db:
+        work = letter_production.next_work(db, 1)
+    if work is None:
+        return False
+
+    logger.info("Idle: cover letter (%s) for job %s", work.kind, work.job_id)
+    landed = await loop.run_in_executor(
+        _bg_executor,
+        functools.partial(letter_production.run_work, work, 1, broadcast_from_thread),
+    )
+    if landed.account_limit:
+        # The USD guard (or the provider's daily quota) is hit: every later run would be
+        # too, so pause letters. Scanning and scoring (`small`) keep flowing.
+        _letters_paused_until = time.monotonic() + _BUDGET_PAUSE_S
+        logger.warning("Idle: %s Pausing cover letters for %ds.", landed.account_limit, _BUDGET_PAUSE_S)
+        await _broadcast("llm_budget_blocked", {"reason": landed.account_limit})
+    await asyncio.sleep(_IDLE_INTERVAL_S)
+    return True
+
+
 async def _processing_idle_loop() -> None:
     """Single idle loop handling all LLM work, serialised through _bg_executor.
 
@@ -134,8 +182,8 @@ async def _processing_idle_loop() -> None:
     Only one LLM call chain runs at a time; the client's RPM throttle adds
     per-call spacing on top, so we never burst the free-tier limit.
     """
-    global _letters_paused_until
     await asyncio.sleep(15)  # let startup settle before first query
+    await asyncio.get_running_loop().run_in_executor(_bg_executor, _recover_orphaned_runs)
     while True:
         try:
             loop = asyncio.get_running_loop()
@@ -149,47 +197,8 @@ async def _processing_idle_loop() -> None:
             await loop.run_in_executor(_bg_executor, _retention_tick)
 
             # ── Phase 2: cover letters (checked first — see docstring) ────────
-            cl_job_id: int | None = None
-            cl_user_id: int | None = None
-            letters_paused = time.monotonic() < _letters_paused_until
-            with SessionLocal() as db:
-                # Same per-profile threshold generate_cover_letter() gates on —
-                # they must agree, or this would pick a match the gate then refuses.
-                auto_min = get_auto_letter_min_score(db, 1)
-                row = db.execute(
-                    select(Match, JobListing)
-                    .join(JobListing, Match.job_id == JobListing.id)
-                    .outerjoin(CoverLetter, CoverLetter.match_id == Match.id)
-                    .where(CoverLetter.id.is_(None))
-                    .where(Match.user_id == 1)
-                    .where(Match.hidden_at.is_(None))  # never write a letter for a hidden job
-                    .where(Match.score >= auto_min)
-                    .where(JobListing.extracted_at.isnot(None))
-                    .order_by(Match.score.desc())
-                    .limit(1)
-                ).first()
-                if row and not letters_paused:
-                    match, job = row
-                    cl_job_id, cl_user_id = job.id, match.user_id
-
-            if cl_job_id is not None:
-                logger.info("Idle: cover letter for job %s", cl_job_id)
-                try:
-                    cl = await loop.run_in_executor(
-                        _bg_executor,
-                        functools.partial(generate_cover_letter, cl_job_id, cl_user_id),
-                    )
-                except BudgetExceededError as exc:
-                    _letters_paused_until = time.monotonic() + _BUDGET_PAUSE_S
-                    logger.warning("Idle: %s Pausing cover letters for %ds.", exc, _BUDGET_PAUSE_S)
-                    await _broadcast("llm_budget_blocked", {"reason": str(exc)})
-                    cl = None
-                    cl_job_id = None
-                if cl:
-                    await _broadcast("cover_letter_ready", {"job_id": cl_job_id, "content": cl.generated_content})
-                if cl_job_id is not None:
-                    await asyncio.sleep(_IDLE_INTERVAL_S)
-                    continue  # re-check the cover-letter backlog before extraction/matching
+            if await _letters_phase():
+                continue  # re-check the cover-letter backlog before extraction/matching
 
             # ── Phase 0: pre-extraction quick screen ───────────────────────────
             # Oldest job with a description that hasn't been screened yet. Cheap
@@ -331,6 +340,8 @@ app.add_middleware(
 )
 
 app.include_router(profile_ui_router)
+app.include_router(letters_router)
+app.include_router(screening_router)
 
 _static_dir = Path(__file__).parent.parent / "static"
 app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
@@ -384,6 +395,24 @@ class ProfileUpdate(BaseModel):
 
 class PreferencesUpdate(BaseModel):
     auto_cover_letter_min_score: int | None = Field(default=None, ge=0, le=100)
+    # The full cover-letter pipeline (plan §6): master switch, the score bar for it
+    # (the one-shot still covers auto_cover_letter_min_score up to this), and which
+    # engine runs it.
+    letter_loop_enabled: bool | None = None
+    letter_loop_min_score: int | None = Field(default=None, ge=0, le=100)
+    letter_engine: Literal["agent", "workflow"] | None = None
+    # The pipeline's side outputs (plan §6): each off = that model call is never made.
+    resume_advice_enabled: bool | None = None
+    learning_suggestions_enabled: bool | None = None
+    screening_answers_enabled: bool | None = None
+    # Per-run limits of the pipeline (plan 7); bounds in preferences.LIMIT_BOUNDS. A run
+    # that reaches one stops with its best draft and the open issues flagged.
+    letter_max_drafts: int | None = Field(default=None, ge=LIMIT_BOUNDS["letter_max_drafts"][0],
+                                          le=LIMIT_BOUNDS["letter_max_drafts"][1])
+    letter_max_tool_calls: int | None = Field(default=None, ge=LIMIT_BOUNDS["letter_max_tool_calls"][0],
+                                              le=LIMIT_BOUNDS["letter_max_tool_calls"][1])
+    llm_run_budget_usd: float | None = Field(default=None, ge=LIMIT_BOUNDS["llm_run_budget_usd"][0],
+                                             le=LIMIT_BOUNDS["llm_run_budget_usd"][1])
     llm_search_suggestions: bool | None = None
     # Job pages opened per Scan Page. The upper bound is the Seek access policy's
     # standing cap (CLAUDE.md) — raise it deliberately, don't remove it.
@@ -492,11 +521,14 @@ def _process_listing(
             logger.exception("match_job failed for job %s", job_id)
         if with_cover_letter:
             try:
-                cl = generate_cover_letter(job_id, profile_id, force=True, bypass_threshold=bypass_threshold)
-                if cl:
-                    broadcast_from_thread("cover_letter_ready", {"job_id": job_id, "content": cl.generated_content})
+                with SessionLocal() as db:
+                    landed = letter_production.generate_for(
+                        db, job_id, profile_id, broadcast_from_thread, bypass_threshold=bypass_threshold,
+                    )
+                if landed is not None and landed.account_limit:
+                    broadcast_from_thread("llm_budget_blocked", {"reason": landed.account_limit})
             except Exception:  # noqa: BLE001
-                logger.exception("generate_cover_letter failed for job %s", job_id)
+                logger.exception("cover letter failed for job %s", job_id)
     else:
         logger.info(
             "Job %s stored as card only (no description) — deferring extraction/"
@@ -732,6 +764,7 @@ def list_jobs(
         query = query.order_by(Match.score.desc())
     rows = db.execute(query.limit(limit).offset(offset)).all()
     ttl = timedelta(days=retention.screenshot_ttl_days(get_preferences(db, profile_id)))
+    runs = letter_view.latest_runs(db, [match.id for match, _ in rows])
 
     return [
         {
@@ -764,6 +797,9 @@ def list_jobs(
                 js.name for js in job.job_skills if js.skill_type == "hard"
             ][:3],
             "eligibility_notes": _eligibility_notes(job),
+            # The newest cover-letter pipeline run: {run_id, status, open_questions}, or
+            # null when none has run. Drives the card's "writing / needs your answer".
+            "letter_run": runs.get(match.id),
         }
         for match, job in rows
     ]
@@ -1337,7 +1373,6 @@ def upload_screenshot(
 @app.post("/jobs/{job_id}/regenerate")
 def regenerate(
     job_id: int,
-    background_tasks: BackgroundTasks,
     profile_id: int = 1,
     db: Session = Depends(get_db),
 ) -> dict:
@@ -1350,7 +1385,9 @@ def regenerate(
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    background_tasks.add_task(
+    # On the single worker, behind whatever the idle loop is running: a full letter run
+    # takes minutes, and two LLM jobs must not write the DB or hit the rate limit together.
+    _bg_executor.submit(
         _process_listing,
         job_id,
         profile_id,

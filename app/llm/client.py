@@ -17,6 +17,11 @@ Supported providers (set LLM_PROVIDER in .env):
   * "openai" — dormant fallback. small -> OPENAI_MODEL_SMALL; mid and strong ->
     OPENAI_MODEL_LETTER.
   * "groq"   — dormant fallback (JSON + text only, no tool calling).
+  * "stub"   — tests and the Playwright e2e only: no network, nothing spent.
+    ``complete_json`` answers from the JSON file at LLM_STUB_RESPONSES
+    (``{task: response}``) and appends each call to the JSONL file at
+    LLM_STUB_LOG, so a harness can check what reached "the model". A task with
+    no canned response, and every other call, raises LLMError.
 
 Cross-cutting behaviour that lives here so callers don't reimplement it:
   * an in-process throttle keeps us under ``LLM_RPM`` requests/minute;
@@ -306,10 +311,22 @@ def _is_quota_429(exc: Exception) -> bool:
     return code == 429 or "429" in low or "resource_exhausted" in low or "resourceexhausted" in low
 
 
+# A dropped connection carries no status code (httpx RemoteProtocolError /
+# ConnectError / ReadError). Seen live 2026-10-03: "Server disconnected without
+# sending a response" mid-eval, which crashed the run instead of retrying.
+_TRANSIENT_NETWORK_ERRORS = ("RemoteProtocolError", "ConnectError", "ReadError", "ReadTimeout",
+                             "ConnectTimeout", "ConnectionResetError", "ConnectionAbortedError")
+_TRANSIENT_NETWORK_TEXT = ("server disconnected", "connection reset", "connection aborted",
+                           "remote end closed connection")
+
+
 def _is_transient_5xx(exc: Exception) -> bool:
+    """A 5xx, or a dropped connection: worth retrying with backoff."""
     code = getattr(exc, "status_code", None) or getattr(exc, "code", None)
     low = (str(getattr(exc, "message", "") or "") + " " + str(exc)).lower()
     if code in (500, 502, 503, 504):
+        return True
+    if type(exc).__name__ in _TRANSIENT_NETWORK_ERRORS or any(s in low for s in _TRANSIENT_NETWORK_TEXT):
         return True
     return any(s in low for s in ("unavailable", "overloaded", "internal error", "503", "500"))
 
@@ -667,6 +684,8 @@ def complete_json(
 
     ``task`` / ``job_id`` / ``match_id`` / ``run_id`` only label the ``llm_usage`` row.
     """
+    if LLM_PROVIDER == "stub":
+        return _stub_json(task, tier, user_content, job_id)
     model = model_for(tier)
     ids = dict(tier=tier, task=task, job_id=job_id, match_id=match_id, run_id=run_id)
 
@@ -722,6 +741,25 @@ def complete_json(
             raise LLMError(f"Groq returned non-JSON: {exc}: {text[:200]!r}") from exc
 
     raise LLMError(f"Unknown LLM_PROVIDER={LLM_PROVIDER!r}")
+
+
+_stub_lock = threading.Lock()
+
+
+def _stub_json(task: str, tier: str, user_content: str, job_id: int | None) -> dict[str, Any]:
+    """LLM_PROVIDER=stub: log the call, answer from the canned file. Test-only."""
+    log_path = os.environ.get("LLM_STUB_LOG")
+    if log_path:
+        entry = {"task": task, "tier": tier, "job_id": job_id, "user_content": user_content}
+        with _stub_lock, open(log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+    responses_path = os.environ.get("LLM_STUB_RESPONSES")
+    if responses_path:
+        with open(responses_path, encoding="utf-8") as f:
+            responses = json.load(f)
+        if task in responses:
+            return responses[task]
+    raise LLMError(f"LLM_PROVIDER=stub has no canned response for task {task!r}")
 
 
 def complete_text(

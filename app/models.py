@@ -174,6 +174,8 @@ class Qualification(Base):
     expiry_date: Mapped[datetime.date | None] = mapped_column(Date)
     status: Mapped[str | None] = mapped_column(Text)
     notes: Mapped[str | None] = mapped_column(Text)
+    # NULL = typed in an editor; 'ask_user' = created from a confirmed gap answer (plan Q12)
+    origin: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -209,6 +211,7 @@ class Experience(Base):
     start_date: Mapped[datetime.date | None] = mapped_column(Date)
     end_date: Mapped[datetime.date | None] = mapped_column(Date)
     description: Mapped[str | None] = mapped_column(Text)
+    origin: Mapped[str | None] = mapped_column(Text)  # NULL or 'ask_user' (see Qualification)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -243,6 +246,7 @@ class Skill(Base):
     )
     name: Mapped[str] = mapped_column(Text, nullable=False)
     category: Mapped[str | None] = mapped_column(Text)
+    origin: Mapped[str | None] = mapped_column(Text)  # NULL or 'ask_user' (see Qualification)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -564,10 +568,11 @@ class LetterRun(Base):
     match_id: Mapped[int] = mapped_column(
         BIG_INT_FK, ForeignKey("matches.id", ondelete="CASCADE"), nullable=False
     )
-    engine: Mapped[str] = mapped_column(Text, nullable=False)  # 'workflow' | 'agent'
+    engine: Mapped[str] = mapped_column(Text, nullable=False)  # 'workflow' | 'agent' (evals: 'tools', 'eval-analyze', 'eval-plant')
+    # running | waiting_user | answered | done | budget_stopped | failed | cancelled
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="running")
     state: Mapped[str | None] = mapped_column(Text)  # JSON LetterState
-    final_draft_version: Mapped[int | None] = mapped_column(Integer)
+    final_draft_version: Mapped[int | None] = mapped_column(Integer)  # the draft handed back (best if not clean)
     tool_calls: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     cost_usd: Mapped[Decimal] = mapped_column(Numeric(12, 6), nullable=False, server_default="0")
     started_at: Mapped[datetime.datetime] = mapped_column(
@@ -579,7 +584,10 @@ class LetterRun(Base):
         back_populates="run", passive_deletes=True, order_by="LetterRunStep.seq"
     )
 
-    __table_args__ = (Index("idx_letter_runs_match", "match_id"),)
+    __table_args__ = (
+        Index("idx_letter_runs_match", "match_id"),
+        Index("idx_letter_runs_status", "status"),  # waiting_user / answered runs
+    )
 
 
 class LetterRunStep(Base):
@@ -604,6 +612,135 @@ class LetterRunStep(Base):
     run: Mapped["LetterRun"] = relationship(back_populates="steps")
 
     __table_args__ = (UniqueConstraint("run_id", "seq", name="uq_letter_run_steps_seq"),)
+
+
+# ---------------------------------------------------------------------------
+# Remembered "no" answers + the to-work-on list (plan §5.9)
+# ---------------------------------------------------------------------------
+class GapDecision(Base):
+    """A skill the user said they don't have (an ask_user "No"). Each gap is asked
+    once, and the active rows are the to-work-on list. ``skill_key`` is
+    ``normalise_skill()`` output and NOT an FK to ``skills``."""
+
+    __tablename__ = "gap_decisions"
+
+    id: Mapped[int] = mapped_column(BIG_INT_PK, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        BIG_INT_FK, ForeignKey("profiles.id", ondelete="CASCADE"), nullable=False
+    )
+    skill_key: Mapped[str] = mapped_column(Text, nullable=False)
+    label: Mapped[str] = mapped_column(Text, nullable=False)
+    requirement_text: Mapped[str | None] = mapped_column(Text)
+    # The most recent "No": a new "No" to a cleared item reopens the row and resets it.
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    cleared_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))
+
+    sightings: Mapped[list["GapSighting"]] = relationship(
+        back_populates="gap", passive_deletes=True
+    )
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "skill_key", name="uq_gap_decisions_user_key"),
+    )
+
+
+class GapSighting(Base):
+    """One ad that asked for a remembered "no" skill. ``job_id`` is a label, not an
+    FK, and the title is copied in, so retention purges of job rows keep the count."""
+
+    __tablename__ = "gap_sightings"
+
+    id: Mapped[int] = mapped_column(BIG_INT_PK, primary_key=True)
+    gap_id: Mapped[int] = mapped_column(
+        BIG_INT_FK, ForeignKey("gap_decisions.id", ondelete="CASCADE"), nullable=False
+    )
+    job_id: Mapped[int] = mapped_column(BIG_INT_FK, nullable=False)
+    job_title: Mapped[str | None] = mapped_column(Text)
+    importance: Mapped[str | None] = mapped_column(Text)  # essential | important | nice_to_have | NULL
+    source: Mapped[str] = mapped_column(Text, nullable=False)  # scan | letter_run | seed
+    seen_at: Mapped[datetime.datetime] = mapped_column(  # when the ad was seen (job's date_scraped)
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    gap: Mapped["GapDecision"] = relationship(back_populates="sightings")
+
+    __table_args__ = (
+        UniqueConstraint("gap_id", "job_id", name="uq_gap_sightings_gap_job"),
+        Index("idx_gap_sightings_seen", "seen_at"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Quick Apply question bank (plan §10.1, Phase 9)
+# ---------------------------------------------------------------------------
+class ScreeningQuestion(Base):
+    """One employer question from a Seek Quick Apply form, shared across jobs (and
+    users). Identity is ``lib:AU_Q_<n>`` for Seek library questions, else a
+    fingerprint of the normalised text, type and options (app/screening/identity.py).
+    Never holds an answer: Seek pre-fills those, and the extension never reads them."""
+
+    __tablename__ = "screening_questions"
+
+    id: Mapped[int] = mapped_column(BIG_INT_PK, primary_key=True)
+    identity_key: Mapped[str] = mapped_column(Text, nullable=False)
+    library_id: Mapped[str | None] = mapped_column(Text)       # "AU_Q_6"
+    library_version: Mapped[str | None] = mapped_column(Text)  # "10", latest seen
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    normalised_text: Mapped[str] = mapped_column(Text, nullable=False)
+    input_type: Mapped[str] = mapped_column(Text, nullable=False)  # single | multi | dropdown | text
+    options: Mapped[str | None] = mapped_column(Text)  # JSON array of labels
+    kind: Mapped[str] = mapped_column(Text, nullable=False, server_default="unknown")
+    strategy: Mapped[str | None] = mapped_column(Text)
+    parameters: Mapped[str | None] = mapped_column(Text)  # JSON object
+    classified_by: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="new")
+    times_seen: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    first_seen_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    last_seen_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("identity_key", name="uq_screening_questions_identity_key"),
+        Index("idx_screening_questions_status", "status"),
+    )
+
+
+class JobScreeningQuestion(Base):
+    """A bank question on one job's form, in order, with Seek's per-form ids. No
+    relationship on JobListing on purpose: job deletes rely on the DB cascade."""
+
+    __tablename__ = "job_screening_questions"
+
+    job_id: Mapped[int] = mapped_column(
+        BIG_INT_FK, ForeignKey("job_listings.id", ondelete="CASCADE"), primary_key=True
+    )
+    question_id: Mapped[int] = mapped_column(
+        BIG_INT_FK, ForeignKey("screening_questions.id", ondelete="CASCADE"), primary_key=True
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    seek_question_id: Mapped[str] = mapped_column(Text, nullable=False)
+    field_name: Mapped[str] = mapped_column(Text, nullable=False)
+    option_values: Mapped[str | None] = mapped_column(Text)  # JSON [{"value", "label"}]
+    first_seen_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    last_seen_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    question: Mapped["ScreeningQuestion"] = relationship()
+
+    __table_args__ = (
+        Index("idx_job_screening_questions_question", "question_id"),
+    )
 
 
 # ---------------------------------------------------------------------------

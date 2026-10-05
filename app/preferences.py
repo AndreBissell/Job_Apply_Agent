@@ -19,8 +19,51 @@ from app.models import Profile
 # LLM call — the user can move it, but 75 is the sensible default.
 DEFAULT_AUTO_LETTER_MIN_SCORE = 75
 
+# The full cover-letter pipeline (checks + revisions, docs/cover-letter-loop-plan.md §6)
+# costs ~$0.20 a letter against ~$0.03 for the one-shot, so it runs only on the best
+# matches; the 75-84 band keeps the one-shot.
+DEFAULT_LETTER_LOOP_MIN_SCORE = 85
+LETTER_ENGINES = ("agent", "workflow")  # which pipeline; the agent is the default (2026-10-03)
+DEFAULT_LETTER_ENGINE = "agent"
+
+# Per-run limits of the cover-letter pipeline (plan 5.5/5.7/7), each stopped in code:
+# at a limit a run hands back the best draft so far with its open issues, never a crash.
+# A full run with N drafts is 4N+2 letter tool calls (analyze, match, generate, 3 checks,
+# then revise + 3 checks per extra draft); the side outputs are not counted (they have their
+# own once-each bound). The bounds keep a typo from making every run stop at once.
+DEFAULT_LETTER_MAX_DRAFTS = 3
+DEFAULT_LETTER_MAX_TOOL_CALLS = 15
+DEFAULT_LLM_RUN_BUDGET_USD = 0.50
+LIMIT_BOUNDS = {
+    "letter_max_drafts": (1, 5),
+    "letter_max_tool_calls": (6, 40),
+    "llm_run_budget_usd": (0.05, 5.0),
+}
+# Side-output tool -> the preference that switches it on (app/llm/letter/side_outputs.py
+# reads it from here, so this module needs no LLM imports).
+SIDE_OUTPUT_TOGGLES = {
+    "answer_screening": "screening_answers_enabled",
+    "suggest_learning": "learning_suggestions_enabled",
+    "suggest_resume_tweaks": "resume_advice_enabled",
+}
+
 DEFAULTS: dict = {
     "auto_cover_letter_min_score": DEFAULT_AUTO_LETTER_MIN_SCORE,
+    # Master switch for the full pipeline. Off = every letter is the one-shot writer
+    # (app/llm/cover_letter.py) and no tool or agent runs.
+    "letter_loop_enabled": True,
+    # Matches at or above this get the pipeline; matches between auto_cover_letter_min_score
+    # and this get the one-shot. The effective bar is the higher of the two (see
+    # letter_settings), so lowering this below the auto-letter score changes nothing.
+    "letter_loop_min_score": DEFAULT_LETTER_LOOP_MIN_SCORE,
+    "letter_engine": DEFAULT_LETTER_ENGINE,
+    # The pipeline's side outputs (plan §5.6, §6), each one extra model call per full run
+    # when it has something to work on: résumé notes (mid), learning suggestions for gaps
+    # you confirmed (small), answers to screening questions in the ad (mid). Off = no call.
+    # The one-shot writer never makes them.
+    "resume_advice_enabled": True,
+    "learning_suggestions_enabled": True,
+    "screening_answers_enabled": True,
     # Layer 4 of the search-suggestion pipeline. OFF by default and opt-in from
     # the sidebar: every other layer is pure Python and free, and this is the
     # one that spends an LLM call, so it should never switch itself on. See
@@ -46,10 +89,14 @@ DEFAULTS: dict = {
     # LLM spend caps (USD), enforced in app/llm/client.py before any mid/strong
     # call; `small` calls are never blocked. Placeholders until llm_usage shows
     # real costs (docs/cover-letter-loop-plan.md Q8). llm_run_budget_usd is the
-    # per-letter-run cap, used by the cover-letter agent (not built yet).
+    # per-letter-run cap: every call of one pipeline run (side outputs and the agent's
+    # orchestrator included) counts towards it.
     "llm_daily_budget_usd": 5.0,
     "llm_total_budget_usd": 200.0,
-    "llm_run_budget_usd": 0.5,
+    "llm_run_budget_usd": DEFAULT_LLM_RUN_BUDGET_USD,
+    # Max drafts (draft 1 + revisions) and max tool calls of one pipeline run. See LIMIT_BOUNDS.
+    "letter_max_drafts": DEFAULT_LETTER_MAX_DRAFTS,
+    "letter_max_tool_calls": DEFAULT_LETTER_MAX_TOOL_CALLS,
 }
 
 
@@ -83,3 +130,47 @@ def set_preferences(db: Session, profile_id: int, updates: dict) -> dict:
 def get_auto_letter_min_score(db: Session, profile_id: int) -> int:
     value = get_preferences(db, profile_id)["auto_cover_letter_min_score"]
     return value if isinstance(value, int) and 0 <= value <= 100 else DEFAULT_AUTO_LETTER_MIN_SCORE
+
+
+def _bounded(value, key: str, default, kind: type):
+    """A stored limit if it is a real number of the right kind inside LIMIT_BOUNDS, else
+    the default (a bad value must not stop every run, or lift its cap)."""
+    lo, hi = LIMIT_BOUNDS[key]
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return default
+    if kind is int and not (isinstance(value, int) or float(value).is_integer()):
+        return default
+    value = kind(value)
+    return value if lo <= value <= hi else default
+
+
+def letter_settings(db: Session, profile_id: int) -> dict:
+    """The cover-letter pipeline's settings, each validated: a bad stored value falls
+    back to its default instead of breaking the idle loop (the same stance as
+    app/retention.py). ``pipeline_min_score`` is the effective bar for the pipeline."""
+    prefs = get_preferences(db, profile_id)
+    auto_min = prefs["auto_cover_letter_min_score"]
+    if not (isinstance(auto_min, int) and not isinstance(auto_min, bool) and 0 <= auto_min <= 100):
+        auto_min = DEFAULT_AUTO_LETTER_MIN_SCORE
+    loop_min = prefs["letter_loop_min_score"]
+    if not (isinstance(loop_min, int) and not isinstance(loop_min, bool) and 0 <= loop_min <= 100):
+        loop_min = DEFAULT_LETTER_LOOP_MIN_SCORE
+    enabled = prefs["letter_loop_enabled"]
+    engine = prefs["letter_engine"]
+    # tool -> its toggle; a non-bool stored value reads as the default (on)
+    side = [tool for tool, key in SIDE_OUTPUT_TOGGLES.items() if prefs.get(key) is not False]
+    limits = {
+        "max_drafts": _bounded(prefs["letter_max_drafts"], "letter_max_drafts", DEFAULT_LETTER_MAX_DRAFTS, int),
+        "max_tool_calls": _bounded(
+            prefs["letter_max_tool_calls"], "letter_max_tool_calls", DEFAULT_LETTER_MAX_TOOL_CALLS, int),
+        "max_cost_usd": _bounded(prefs["llm_run_budget_usd"], "llm_run_budget_usd", DEFAULT_LLM_RUN_BUDGET_USD, float),
+    }
+    return {
+        "auto_min_score": auto_min,
+        "enabled": enabled if isinstance(enabled, bool) else True,
+        "loop_min_score": loop_min,
+        "pipeline_min_score": max(auto_min, loop_min),
+        "engine": engine if engine in LETTER_ENGINES else DEFAULT_LETTER_ENGINE,
+        "side_outputs": tuple(side),  # the side-output tools a new pipeline run may call
+        "limits": limits,  # the Budget fields a new pipeline run opens with
+    }

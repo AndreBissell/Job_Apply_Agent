@@ -24,7 +24,8 @@ from pydantic import BaseModel
 
 from app.llm.client import complete_json
 from app.llm.letter.runner import ToolContext, ToolError
-from app.llm.letter.state import LetterState
+from app.llm.letter.gap_policy import apply_remembered
+from app.llm.letter.state import LetterState, Requirement
 
 logger = logging.getLogger(__name__)
 
@@ -95,9 +96,17 @@ supported.
 """
 
 
-def _build_prompt(state: LetterState, ctx: ToolContext) -> str:
+def _targets(state: LetterState) -> list[Requirement]:
+    """The requirements to judge: all of them on the first pass; afterwards only the
+    ones reset to ``unknown`` (a "Yes" answer added profile rows for them). Re-judging
+    the rest would let a noisy verdict flip and raise a new question mid-run."""
+    unknown = [r for r in state.requirements if r.status == "unknown"]
+    return unknown or list(state.requirements)
+
+
+def _build_prompt(state: LetterState, ctx: ToolContext, targets: list[Requirement]) -> str:
     req_lines = []
-    for r in state.requirements:
+    for r in targets:
         implied = f" (follows from {', '.join(r.implied_by)})" if r.implied_by else ""
         req_lines.append(f"{r.id} [{r.importance} / {r.letter_role}] {r.text}{implied}")
     facts = "\n".join(f"- {k}: {v}" for k, v in ctx.index.facts.items()) or "- (none on file)"
@@ -108,12 +117,14 @@ def _build_prompt(state: LetterState, ctx: ToolContext) -> str:
     )
 
 
-def _validate(state: LetterState, ctx: ToolContext, proposed: ProfileMatch) -> dict[str, Any]:
+def _validate(
+    state: LetterState, ctx: ToolContext, proposed: ProfileMatch, targets: list[Requirement] | None = None,
+) -> dict[str, Any]:
     """Apply the model's matches to the state, correcting what code can check."""
     by_id = {m.id.strip(): m for m in proposed.matches}
     corrections: list[str] = []
 
-    for req in state.requirements:
+    for req in state.requirements if targets is None else targets:
         m = by_id.get(req.id)
         if m is None:
             req.status, req.evidence = "gap", []
@@ -158,26 +169,42 @@ def _validate(state: LetterState, ctx: ToolContext, proposed: ProfileMatch) -> d
     }
 
 
+def _summary_status(state: LetterState, summary: dict[str, Any]) -> dict[str, Any]:
+    """Refresh the counts after remembered decisions were applied."""
+    summary["pending_gaps"] = [r.id for r in state.pending_gaps()]
+    return summary
+
+
 def match_profile(state: LetterState, ctx: ToolContext) -> dict[str, Any]:
     """Map every requirement to profile evidence and mark it supported/partial/gap.
 
-    Use after ``analyze_job`` and before drafting. Re-run for a single requirement's
-    worth of new evidence after the user adds profile rows (it re-judges all of them;
-    user decisions are kept).
+    Use after ``analyze_job`` and before drafting. After the user adds profile rows
+    for some requirements (an ask_user "Yes" resets them to ``unknown``), run again:
+    only those are re-judged, and user decisions are kept.
+
+    A gap the user already said "No" to on an earlier ad is left out here without
+    asking, and counted as a sighting for the to-work-on list (plan §5.9).
     """
     if not state.requirements:
         raise ToolError("no requirements yet: run analyze_job first")
 
+    targets = _targets(state)
     data = complete_json(
         _SYSTEM_PROMPT,
-        _build_prompt(state, ctx),
+        _build_prompt(state, ctx, targets),
         schema=ProfileMatch,
         tier="mid",
         task="match_profile",
         job_id=state.job.job_id,
         run_id=ctx.run.id,
     )
-    summary = _validate(state, ctx, ProfileMatch.model_validate(data))
+    summary = _validate(state, ctx, ProfileMatch.model_validate(data), targets)
+    if len(targets) < len(state.requirements):
+        summary["rematched"] = [r.id for r in targets]
+    remembered = apply_remembered(state, ctx)
+    if remembered:
+        summary["remembered_no"] = remembered
+        _summary_status(state, summary)
     if summary["corrections"]:
         logger.info("match_profile corrected %d item(s): %s", len(summary["corrections"]), summary["corrections"])
     return summary

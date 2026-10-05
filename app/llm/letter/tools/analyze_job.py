@@ -43,7 +43,11 @@ logger = logging.getLogger(__name__)
 # Bump when the prompt or schema changes meaning, so stale cached analyses are redone.
 # v2 (2026-10-03): fixes from the analysis-2 hand-check (attitudes, cap, implied, intro
 # duties, application instructions).
-ANALYSIS_VERSION = 2
+# v3 (2026-10-03, Phase 7b): a short ``skill`` name per requirement, the key the
+# to-work-on list counts by (plan §5.9).
+ANALYSIS_VERSION = 3
+# A skill name longer than this is a sentence, not a name; it is dropped.
+MAX_SKILL_LEN = 40
 
 # Was 16, which dropped real must-haves on long ads while nice-to-haves kept their
 # slots. Over the cap, the least important items go first (_postprocess).
@@ -63,6 +67,7 @@ class AnalyzedRequirement(BaseModel):
     letter_role: LetterRole
     theme: str
     implied_by: list[int]
+    skill: str
 
 
 class JobAnalysis(BaseModel):
@@ -146,6 +151,15 @@ integrations", "Production operations", "AI-assisted development". Related items
 share the same theme string, so the letter makes one strong point per theme instead of \
 ticking off every item.
 
+skill: the short name of the one skill, tool, technology, method or credential the \
+requirement asks for, as it is commonly written (1-4 words): "Power BI", "SQL", \
+"Stakeholder management", "Agile", "AWS", "Driver's licence". Two ads asking for the \
+same thing in different words should get the same name ("Experience building Power \
+BI dashboards" and "Proficiency in PowerBI" are both "Power BI"). Use the most \
+specific name the ad supports. Empty string for attitudes, general duties and \
+anything that names no particular skill ("deliver high-quality work", "eager to \
+learn").
+
 tone: how the employer writes (formal_corporate, professional_friendly, startup_casual, \
 technical, other); the letter should roughly match it.
 
@@ -209,7 +223,8 @@ def _postprocess(analysis: JobAnalysis) -> list[dict[str, Any]]:
         if not text or key in seen:
             continue
         seen.add(key)
-        update: dict[str, Any] = {"text": text}
+        skill = " ".join((r.skill or "").split()).strip(" .")
+        update: dict[str, Any] = {"text": text, "skill": skill if len(skill) <= MAX_SKILL_LEN else ""}
         if _ATTITUDE_RE.search(text):
             if r.importance == "essential":
                 update["importance"] = "important"
@@ -239,6 +254,7 @@ def _postprocess(analysis: JobAnalysis) -> list[dict[str, Any]]:
                 "importance": importance,
                 "letter_role": role,
                 "theme": " ".join((r.theme or "").split()) or "General",
+                "skill": r.skill,
                 "implied_by": [id_for_n[n] for n in r.implied_by if n in id_for_n and id_for_n[n] != f"R{pos}"],
             }
         )

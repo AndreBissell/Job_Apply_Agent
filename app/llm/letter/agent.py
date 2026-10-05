@@ -1,0 +1,277 @@
+"""The cover-letter agent: a model decides the order of steps (plan §5.5, Phase 7).
+
+The same tools, guardrails and run-ending as the fixed workflow (workflow.py); only
+who picks the next step differs. Each turn is one ``complete_tools`` call on the mid
+tier, and it is stateless: the orchestrator gets the state summary, the steps taken
+so far and the result of its last call (or why it was refused), never the
+conversation so far. So no thought signatures are replayed, and a run can resume
+from the persisted state alone.
+
+Code enforces, the model chooses:
+- every call goes through a gate first (``registry``); a refused call runs nothing,
+  costs no tool call, is logged as a ``refused:`` step, and its reason is the next
+  turn's "last result";
+- every tool runs through ``runner.execute_tool`` (timed, logged, costed, persisted);
+- ``finish`` is code: accepted when ``guardrails.can_finish`` passes, or when the
+  draft limit is reached with every check run (the best draft goes back, flagged);
+- the budget is checked before every turn, and orchestrator calls count towards the
+  run's USD budget (they log ``llm_usage`` with the run id). Refusals and text
+  replies have their own cap, so a confused model can't loop for free;
+- side outputs (Phase 7c, ``side_outputs.py``) are offered only when enabled; finish is
+  refused while one is due; a failed one is reported back, never fatal to the letter;
+  and if the letter's tool cap ends the run first, code runs the due ones itself.
+
+When it stops short it returns exactly what the workflow would: ``outcome.conclude``.
+"""
+
+from __future__ import annotations
+
+import json
+from typing import Any, Mapping
+
+from sqlalchemy.orm import Session
+
+from app.llm.client import BudgetExceededError, DailyQuotaError, LLMError, complete_tools
+from app.llm.letter import guardrails, side_outputs
+from sqlalchemy import select
+
+from app.llm.letter.outcome import GapPolicy, LetterResult, Stop, conclude, leave_out_gaps, open_run, reopen_run
+from app.llm.letter.registry import FINISH, build_registry, side_output_fns
+from app.llm.letter.runner import REFUSED, ToolContext, execute_tool, finish_run, persist, record_step
+from app.llm.letter.state import LetterState
+from app.models import LetterRunStep
+
+ENGINE = "agent"
+ORCHESTRATOR_TIER = "mid"
+# Refused calls and text replies allowed per run before it stops. They run no tool,
+# but each costs an orchestrator call.
+MAX_REFUSALS = 4
+
+SYSTEM_PROMPT = """\
+You run a cover-letter job for a job seeker. Each turn you choose ONE tool to call \
+next. The tools do the work; you never see the letter itself, only the run's state.
+
+Goal: a cover letter that addresses every must-have requirement the candidate's \
+profile supports, with no unsupported claim.
+Done: on the LATEST draft, check_claims and check_requirements have passed and \
+style_lint has no blocking issue. Then call finish.
+Budget: the state shows tool calls and drafts used against their limits. Code stops \
+the run at a limit and hands the user the best draft so far.
+
+How to work:
+- Start with analyze_job, then match_profile.
+- If any requirement shows "needs a user decision", call ask_user before drafting. \
+Never resolve a gap by writing around it. ask_user pauses the run until the user \
+answers. When it resumes, requirements the user added experience for show as \
+"unknown": call match_profile again (it judges only those), then draft.
+- generate_letter writes draft 1 only. After every draft, run check_claims, \
+check_requirements and style_lint on it. Checks belong to one draft.
+- If a check failed, call revise_letter: it fixes only the failed checks' issues. \
+Warnings never block finish, so never revise for warnings alone.
+- If every check passed on the latest draft, call finish. If the draft limit is \
+reached and a check still fails, call finish too: the user gets the best draft with \
+its open issues flagged.
+- A refused call comes back with the reason, and nothing ran. Read the reason and \
+choose a different tool; never repeat a refused call unchanged."""
+
+# Added to the system prompt only when a side output is enabled, so a letter-only run
+# sees the same prompt as before Phase 7c.
+SIDE_OUTPUTS_PROMPT = """\
+Side outputs: the state's SIDE OUTPUTS section lists the extra tools switched on for \
+this run (answer_screening, suggest_learning, suggest_resume_tweaks) and whether each is \
+due. Call each one once, when it shows as due; they never change the letter and don't \
+use its tool-call budget. answer_screening and suggest_learning can run any time after \
+the gaps are settled; suggest_resume_tweaks only once the letter is final. One marked \
+"not needed" has nothing to work on: skip it. finish is refused while one is due."""
+
+
+def system_prompt(state: LetterState) -> str:
+    return SYSTEM_PROMPT + ("\n\n" + SIDE_OUTPUTS_PROMPT if side_outputs.enabled(state) else "")
+
+
+def turn_prompt(state: LetterState, steps: list[str], last: str) -> str:
+    """The whole of what the orchestrator sees on one turn."""
+    return "\n".join([
+        "STATE",
+        state.summary_for_orchestrator(),
+        *side_outputs.status_lines(state),
+        "",
+        f"STEPS SO FAR: {', '.join(steps) if steps else 'none'}",
+        f"LAST RESULT: {last}",
+        "",
+        "Call the next tool.",
+    ])
+
+
+def _brief(summary: dict[str, Any] | None) -> str:
+    text = json.dumps(summary or {}, ensure_ascii=False)
+    return text if len(text) <= 800 else text[:800] + "…"
+
+
+def run_agent(
+    db: Session,
+    job_id: int,
+    profile_id: int,
+    *,
+    gap_policy: GapPolicy = leave_out_gaps,
+    engine: str = ENGINE,
+    tier: str = ORCHESTRATOR_TIER,
+    max_refusals: int = MAX_REFUSALS,
+    side_outputs_enabled: tuple[str, ...] = (),
+    limits: Mapping[str, float] | None = None,
+) -> LetterResult:
+    """Write one cover letter for a scored job, with a model choosing each step.
+
+    Same contract as ``workflow.run_workflow``: raises ``ValueError`` only when there
+    is no job/match to run on; every other ending is a ``LetterResult``.
+    ``side_outputs_enabled`` names the side-output tools offered (none by default); ``limits`` the
+    run's max drafts / tool calls / USD (see ``outcome.open_run``).
+    """
+    state, ctx = open_run(db, job_id, profile_id, engine, side_outputs_enabled, limits)
+    return _drive(state, ctx, gap_policy, tier, max_refusals, [], "none yet: this is the first turn")
+
+
+def resume_agent(
+    db: Session,
+    run_id: int,
+    *,
+    gap_policy: GapPolicy = leave_out_gaps,
+    tier: str = ORCHESTRATOR_TIER,
+    max_refusals: int = MAX_REFUSALS,
+) -> LetterResult:
+    """Continue a run the user has answered every ask_user question for. Still
+    stateless: the orchestrator gets the steps taken so far (from letter_run_steps)
+    and, as its last result, what the user decided."""
+    state, ctx = reopen_run(db, run_id)
+    return _drive(state, ctx, gap_policy, tier, max_refusals, _past_steps(ctx), _resume_note(state))
+
+
+def _past_steps(ctx: ToolContext) -> list[str]:
+    """The run's earlier tool calls, as the turn prompt lists them. User answers and
+    confirms are not tool calls, so they are left out."""
+    rows = ctx.db.execute(
+        select(LetterRunStep.tool, LetterRunStep.error)
+        .where(LetterRunStep.run_id == ctx.run.id)
+        .order_by(LetterRunStep.seq)
+    )
+    return [
+        f"{tool}(refused)" if (error or "").startswith(REFUSED) else tool
+        for tool, error in rows
+        if not tool.startswith("user_")
+    ]
+
+
+def _resume_note(state: LetterState) -> str:
+    decided = [
+        f"{r.id} {r.user_decision.choice}" for r in state.requirements
+        if r.user_decision is not None and not r.user_decision.remembered
+    ]
+    rematch = [r.id for r in state.requirements if r.status == "unknown"]
+    note = f"the run resumed after the user answered ask_user ({', '.join(decided) or 'no decisions'})"
+    if rematch:
+        note += f"; {', '.join(rematch)} have new profile rows and are unmatched: call match_profile"
+    return note
+
+
+def _drive(
+    state: LetterState,
+    ctx: ToolContext,
+    gap_policy: GapPolicy,
+    tier: str,
+    max_refusals: int,
+    steps: list[str],
+    last: str,
+) -> LetterResult:
+    tools = build_registry(gap_policy, side_outputs.enabled(state))
+    specs = [t.spec for t in tools.values()]
+    refusals = 0
+
+    def refuse(name: str, args: dict[str, Any], reason: str) -> str:
+        nonlocal refusals
+        refusals += 1
+        record_step(ctx, state, name, args, refused=reason)
+        steps.append(f"{name}(refused)")
+        if refusals > max_refusals:
+            raise Stop("budget_stopped", f"too many refused calls ({refusals}); last: {name}: {reason}")
+        return f"{name} was REFUSED and nothing ran: {reason}"
+
+    status, reason, account = "done", None, None
+    try:
+        while True:
+            persist(ctx, state)  # refresh the run's cost: orchestrator calls count too
+            limit = state.budget_exceeded()
+            if limit:
+                if guardrails.can_finish(state) is None:
+                    # The letter's tool cap ended the run with a clean letter: side outputs
+                    # aren't charged to it, so code runs the due ones (not past the USD cap).
+                    side_outputs.run_due(ctx, state, side_output_fns())
+                    record_step(ctx, state, FINISH, summary={"by": "code", "reason": limit})
+                    break
+                raise Stop("budget_stopped", limit)
+
+            try:
+                step = complete_tools(
+                    system_prompt(state),
+                    [{"role": "user", "content": turn_prompt(state, steps, last)}],
+                    specs,
+                    tier=tier,
+                    task="orchestrate",
+                    job_id=state.job.job_id,
+                    match_id=ctx.run.match_id,
+                    run_id=ctx.run.id,
+                )
+            except (BudgetExceededError, DailyQuotaError):
+                raise
+            except LLMError as exc:
+                raise Stop("failed", f"orchestrator call failed: {exc}") from exc
+
+            name, args = step.tool, step.args or {}
+            tool = tools.get(name) if name else None
+            if tool is None:
+                what = f"unknown tool {name!r}" if name else "a text reply instead of a tool call"
+                last = refuse(name or "(text)", args, f"{what}; call one of: {', '.join(tools)}")
+                continue
+
+            if name == FINISH:
+                why = guardrails.can_finish(state)
+                if why is None or guardrails.out_of_drafts(state):
+                    pending = side_outputs.finish_blocked(state)
+                    if pending:
+                        last = refuse(name, args, pending)
+                        continue
+                if why is None:
+                    record_step(ctx, state, FINISH, args, summary={"accepted": True})
+                    steps.append(FINISH)
+                    break
+                if guardrails.out_of_drafts(state):
+                    record_step(ctx, state, FINISH, args, summary={"accepted": True, "out_of_drafts": True})
+                    steps.append(FINISH)
+                    failed = ", ".join(guardrails.failed_checks(state))
+                    raise Stop("budget_stopped", f"draft limit reached; still failing: {failed}")
+                last = refuse(name, args, why)
+                continue
+
+            why = tool.gate(state)
+            if why:
+                last = refuse(name, args, why)
+                continue
+
+            result = execute_tool(ctx, state, name, tool.fn)
+            steps.append(name)
+            if not result.ok and name in side_outputs.enabled(state):
+                # An extra failed: the user loses that section, never the letter.
+                last = f"{name} FAILED and will not be retried ({result.error}); carry on"
+                continue
+            if not result.ok:
+                raise Stop("failed", f"{name} failed: {result.error}")
+            last = f"{name} -> {_brief(result.summary)}"
+            if state.waiting_on_user():
+                raise Stop("waiting_user", "questions sent to the user")
+    except Stop as stop:
+        status, reason = stop.status, stop.reason
+    except (BudgetExceededError, DailyQuotaError) as exc:
+        status, reason, account = "budget_stopped", f"{type(exc).__name__}: {exc}", str(exc)
+    except Exception:
+        finish_run(ctx, state, "failed")
+        raise
+    return conclude(ctx, state, status, reason, account)

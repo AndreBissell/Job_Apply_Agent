@@ -91,6 +91,34 @@
     .checkbox-row { display: flex; align-items: center; gap: 7px; }
     .checkbox-row input[type=checkbox] { width: auto; margin: 0; }
     .checkbox-row label { margin: 0; font-size: 13px; color: #374151; cursor: pointer; }
+    /* Rows the cover-letter flow added (plan Q12), and the to-work-on list (plan §5.9) */
+    .origin-tag {
+      display: inline-block; margin-bottom: 8px; font-size: 11px; color: #6d28d9;
+      background: #f5f3ff; border: 1px solid #ddd6fe; border-radius: 10px; padding: 1px 8px;
+    }
+    .pill .origin-dot { color: #6d28d9; font-size: 10px; cursor: help; }
+    .towork-hint { font-size: 12px; color: #6b7280; margin: 0 0 8px; }
+    .towork-item { display: flex; align-items: center; gap: 12px; justify-content: space-between; }
+    .towork-item .head { font-weight: 600; }
+    .towork-item .count { font-size: 12px; color: #b45309; font-weight: 600; margin-left: 8px; }
+    .towork-item .sub { font-size: 12px; color: #6b7280; margin-top: 2px; }
+    /* Quick Apply questions to review (plan §10.1, Phase 9a) */
+    .qa-hint { font-size: 12px; color: #6b7280; margin: 0 0 8px; }
+    .qa-item .qtext { font-weight: 600; margin-bottom: 4px; }
+    .qa-item .meta { font-size: 12px; color: #6b7280; margin-bottom: 8px; }
+    .qa-badge {
+      display: inline-block; font-size: 11px; font-weight: 600; border-radius: 10px;
+      padding: 1px 8px; margin-bottom: 6px; border: 1px solid transparent;
+    }
+    .qa-badge.user { color: #065f46; background: #d1fae5; border-color: #a7f3d0; }
+    .qa-badge.assisted { color: #1e3a8a; background: #dbeafe; border-color: #bfdbfe; }
+    .qa-badge.unknown { color: #b45309; background: #fef3c7; border-color: #fde68a; }
+    .qa-controls { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; }
+    .qa-controls > div { flex: 1 1 200px; min-width: 0; }
+    .qa-controls .qa-confirm { flex: 0 0 auto; }
+    .qa-msg { font-size: 12px; margin-top: 6px; }
+    .qa-msg.ok { color: #065f46; }
+    .qa-msg.err { color: #991b1b; }
     .subsection-label {
       font-size: 11px; font-weight: 600; color: #6b7280;
       text-transform: uppercase; letter-spacing: 0.05em;
@@ -186,12 +214,33 @@
       </div>
     </div>
   </section>
+
+  <!-- To work on: skills you said you don't have to a cover-letter question -->
+  <section>
+    <div class="section-header">
+      <h2>To work on</h2>
+      <button class="add-btn" onclick="loadToWorkOn()">Refresh</button>
+    </div>
+    <p class="towork-hint">Skills you told a cover letter you don't have, ranked by how many recent ads ask for them. Clear one once you've learned it.</p>
+    <div id="towork-list"></div>
+  </section>
+
+  <!-- Quick Apply questions the extension captured, waiting to be confirmed or corrected -->
+  <section>
+    <div class="section-header">
+      <h2>Quick Apply questions to review</h2>
+      <button class="add-btn" onclick="loadQuickApplyQuestions()">Refresh</button>
+    </div>
+    <p class="qa-hint">These are employer questions seen on Seek's Quick Apply step. Confirm or correct how each is sorted. "Yours to answer" questions never get AI help. Corrections apply to every later job.</p>
+    <div id="qa-list"></div>
+  </section>
 </main>
 
 <script>
 const API = location.origin; // served by the backend itself, so this is whichever env (port) you opened
 let _uid = 0;
 let globalSkills = [];
+let skillOrigins = {}; // skill name -> origin label, for skills the cover-letter flow added
 
 // ---- Utility ----
 
@@ -205,6 +254,13 @@ function esc(s) {
 }
 
 function uid() { return ++_uid; }
+
+// Plan Q12: rows the cover-letter flow added carry a plain origin tag.
+function originTag(row) {
+  if (!row || !row.origin_label) return '';
+  const label = row.origin_label.charAt(0).toUpperCase() + row.origin_label.slice(1);
+  return `<div class="origin-tag">✦ ${esc(label)}</div>`;
+}
 
 // Month fields are plain text ("YYYY-MM"), not <input type="month">: the native
 // control makes you scroll or click through segments to change a year, where a
@@ -253,7 +309,10 @@ function renderGlobalSkills() {
     const pill = document.createElement('span');
     pill.className = 'pill';
     pill.dataset.skill = s;
-    pill.innerHTML = esc(s) + ' <button onclick="removeGlobalSkill(this.parentElement)">×</button>';
+    const origin = skillOrigins[s]
+      ? ` <span class="origin-dot" title="${esc(skillOrigins[s].charAt(0).toUpperCase() + skillOrigins[s].slice(1))}">✦</span>`
+      : '';
+    pill.innerHTML = esc(s) + origin + ' <button onclick="removeGlobalSkill(this.parentElement)">×</button>';
     c.appendChild(pill);
   });
 }
@@ -350,6 +409,7 @@ function addQual(q) {
       </div>
     </div>
   `;
+  card.insertAdjacentHTML('afterbegin', originTag(q));
   container.appendChild(card);
 }
 
@@ -365,7 +425,7 @@ function addExp(e) {
   const typeOptions = [
     ['job','Job'], ['internship','Internship'],
     ['university_project','University Project'], ['personal_project','Personal Project'],
-    ['volunteer','Volunteer']
+    ['assignment','Assignment'], ['volunteer','Volunteer']
   ].map(([v,l]) => `<option value="${v}" ${(e.experience_type||'job')===v?'selected':''}>${l}</option>`).join('');
 
   card.innerHTML = `
@@ -416,6 +476,7 @@ function addExp(e) {
       </div>
     </div>
   `;
+  card.insertAdjacentHTML('afterbegin', originTag(e));
   container.appendChild(card);
 
   if (e.skills && e.skills.length) {
@@ -447,9 +508,216 @@ async function load() {
     (data.experiences || []).forEach(e => addExp(e));
 
     globalSkills = data.skills || [];
+    skillOrigins = data.skill_origins || {};
     renderGlobalSkills();
   } catch (err) {
     showBanner('Failed to load profile: ' + err.message, 'err');
+  }
+}
+
+// ---- To work on ----
+
+async function loadToWorkOn() {
+  const list = document.getElementById('towork-list');
+  try {
+    const res = await fetch(API + '/gaps/to-work-on');
+    if (!res.ok) throw new Error(res.statusText);
+    const { window_days, items } = await res.json();
+    if (!items.length) {
+      list.innerHTML = '<div class="card">Nothing yet. When a cover letter asks whether you have a skill and you answer No, it lands here.</div>';
+      return;
+    }
+    list.innerHTML = '';
+    items.forEach(it => {
+      const card = document.createElement('div');
+      card.className = 'card towork-item';
+      const counts = [`${it.recent} ad${it.recent === 1 ? '' : 's'} in the last ${window_days} days`];
+      if (it.essential) counts.push(`${it.essential} essential`);
+      const sub = [];
+      if (it.recent_titles && it.recent_titles.length) sub.push('Recently: ' + it.recent_titles.join('; '));
+      if (it.total > it.recent) sub.push(`${it.total} ads in all`);
+      if (it.said_no_at) {
+        sub.push('You said no on ' + new Date(it.said_no_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' }));
+      }
+      card.innerHTML = `<div><span class="head">${esc(it.label)}</span><span class="count">${esc(counts.join(', '))}</span>`
+        + `<div class="sub">${esc(sub.join(' · '))}</div></div>`;
+      const btn = document.createElement('button');
+      btn.className = 'add-btn';
+      btn.textContent = "I've learned this — clear";
+      btn.title = 'Takes it off this list. A later cover letter that needs it will ask you again.';
+      btn.onclick = async () => {
+        btn.disabled = true;
+        try {
+          const r = await fetch(API + '/gaps/' + it.id + '/clear', { method: 'POST' });
+          if (!r.ok) throw new Error(r.statusText);
+          loadToWorkOn();
+        } catch (err) {
+          btn.disabled = false;
+          showBanner('Could not clear: ' + err.message, 'err');
+        }
+      };
+      card.appendChild(btn);
+      list.appendChild(card);
+    });
+  } catch (err) {
+    list.textContent = 'Could not load this list: ' + err.message;
+  }
+}
+
+// ---- Quick Apply questions to review ----
+
+const QA_STRATEGY_LABELS = {
+  years_role_bracket: 'Years in a role (bracket list)',
+  years_skill_text: 'Years with a skill (free text)',
+  skill_in_role_yes_no: 'Skill used in a role (yes/no)',
+  skill_multi_select: 'Pick the skills you have (multi-select)',
+  free_text_describe: 'Describe your experience (free text)',
+};
+const QA_SORTED_BY = {
+  library_id: 'Seek library id', keyword: 'keyword', template: 'template',
+  model: 'model', user: 'you',
+};
+const QA_INPUT_LABELS = { single: 'single choice', multi: 'multi-select', dropdown: 'dropdown', text: 'free text' };
+
+function qaBadge(kind) {
+  if (kind === 'user') return ['user', 'Yours to answer'];
+  if (kind === 'assisted') return ['assisted', "We'll help (coming in 9b)"];
+  return ['unknown', 'New, not sorted yet'];
+}
+
+function qaOption(value, label, selected) {
+  const o = document.createElement('option');
+  o.value = value;
+  o.textContent = label;
+  if (selected) o.selected = true;
+  return o;
+}
+
+function renderQuestion(q, strategies, listEl) {
+  const card = document.createElement('div');
+  card.className = 'card qa-item';
+
+  const [badgeClass, badgeText] = qaBadge(q.kind);
+  const badge = document.createElement('span');
+  badge.className = 'qa-badge ' + badgeClass;
+  badge.textContent = badgeText;
+  card.appendChild(badge);
+
+  const text = document.createElement('div');
+  text.className = 'qtext';
+  text.textContent = q.text;
+  card.appendChild(text);
+
+  const opts = q.options || [];
+  const meta = [QA_INPUT_LABELS[q.input_type] || q.input_type];
+  if (opts.length) {
+    meta.push('options: ' + opts.slice(0, 6).join(', ') + (opts.length > 6 ? `, +${opts.length - 6} more` : ''));
+  }
+  meta.push(`seen ${q.times_seen} time${q.times_seen === 1 ? '' : 's'}`);
+  meta.push('sorted by: ' + (q.classified_by ? (QA_SORTED_BY[q.classified_by] || q.classified_by) : 'not sorted yet'));
+  const metaEl = document.createElement('div');
+  metaEl.className = 'meta';
+  metaEl.textContent = meta.join(' · ');
+  card.appendChild(metaEl);
+
+  const controls = document.createElement('div');
+  controls.className = 'qa-controls';
+
+  const kindWrap = document.createElement('div');
+  const kindLabel = document.createElement('label');
+  kindLabel.textContent = 'Sorted as';
+  const kindSel = document.createElement('select');
+  if (q.kind !== 'user' && q.kind !== 'assisted') kindSel.appendChild(qaOption('', 'Choose how to sort this…', true));
+  kindSel.appendChild(qaOption('user', 'Yours to answer', q.kind === 'user'));
+  kindSel.appendChild(qaOption('assisted', "We'll help", q.kind === 'assisted'));
+  kindWrap.appendChild(kindLabel);
+  kindWrap.appendChild(kindSel);
+  controls.appendChild(kindWrap);
+
+  const stratWrap = document.createElement('div');
+  const stratLabel = document.createElement('label');
+  stratLabel.textContent = 'How we help';
+  const stratSel = document.createElement('select');
+  if (!strategies.includes(q.strategy)) stratSel.appendChild(qaOption('', 'Choose a strategy…', true));
+  strategies.forEach(st => stratSel.appendChild(qaOption(st, QA_STRATEGY_LABELS[st] || st, q.strategy === st)));
+  stratWrap.appendChild(stratLabel);
+  stratWrap.appendChild(stratSel);
+  controls.appendChild(stratWrap);
+
+  const confirmWrap = document.createElement('div');
+  confirmWrap.className = 'qa-confirm';
+  const btn = document.createElement('button');
+  btn.className = 'add-btn';
+  btn.textContent = 'Confirm';
+  confirmWrap.appendChild(btn);
+  controls.appendChild(confirmWrap);
+  card.appendChild(controls);
+
+  const msg = document.createElement('div');
+  msg.className = 'qa-msg';
+  card.appendChild(msg);
+
+  const sync = () => {
+    stratWrap.style.display = kindSel.value === 'assisted' ? '' : 'none';
+    btn.disabled = !kindSel.value || (kindSel.value === 'assisted' && !stratSel.value);
+  };
+  kindSel.onchange = sync;
+  stratSel.onchange = sync;
+  sync();
+
+  btn.onclick = async () => {
+    btn.disabled = true;
+    msg.className = 'qa-msg';
+    msg.textContent = '';
+    try {
+      const body = { kind: kindSel.value, strategy: kindSel.value === 'assisted' ? stratSel.value : null };
+      const r = await fetch(API + '/screening-questions/' + q.bank_id, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({ detail: r.statusText }));
+        const d = err.detail;
+        throw new Error(typeof d === 'string' ? d : (d ? JSON.stringify(d) : r.statusText));
+      }
+      // No longer status "new": swap the controls for a brief note, then drop the row.
+      controls.remove();
+      msg.className = 'qa-msg ok';
+      msg.textContent = 'Saved';
+      setTimeout(() => {
+        card.remove();
+        if (!listEl.querySelector('.qa-item')) showQuickApplyEmpty(listEl);
+      }, 1200);
+    } catch (err) {
+      msg.className = 'qa-msg err';
+      msg.textContent = 'Could not save: ' + err.message;
+      sync();
+    }
+  };
+  return card;
+}
+
+function showQuickApplyEmpty(listEl) {
+  listEl.innerHTML = '<div class="card">No new questions. They appear here after you open a Seek Quick Apply questions step with the extension on.</div>';
+}
+
+async function loadQuickApplyQuestions() {
+  const list = document.getElementById('qa-list');
+  try {
+    const res = await fetch(API + '/screening-questions?status=new');
+    if (!res.ok) throw new Error(res.statusText);
+    const data = await res.json();
+    const questions = data.questions || [];
+    if (!questions.length) {
+      showQuickApplyEmpty(list);
+      return;
+    }
+    const strategies = data.assisted_strategies || Object.keys(QA_STRATEGY_LABELS);
+    list.innerHTML = '';
+    questions.forEach(q => list.appendChild(renderQuestion(q, strategies, list)));
+  } catch (err) {
+    list.textContent = 'Could not load this list: ' + err.message;
   }
 }
 
@@ -517,6 +785,7 @@ async function saveAll() {
       throw new Error(err.detail || res.statusText);
     }
     showBanner('Profile saved successfully.', 'ok');
+    loadToWorkOn(); // saving a skill you said no to takes it off the list (auto-clear)
   } catch (err) {
     showBanner('Save failed: ' + err.message, 'err');
   } finally {
@@ -526,6 +795,8 @@ async function saveAll() {
 }
 
 load();
+loadToWorkOn();
+loadQuickApplyQuestions();
 </script>
 </body>
 </html>

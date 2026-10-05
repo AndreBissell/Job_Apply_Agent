@@ -20,6 +20,7 @@ from pydantic import BaseModel
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, selectinload
 
+from app import gaps
 from app.db import SessionLocal, app_env
 from app.models import Experience, Profile, Qualification, Skill
 
@@ -103,6 +104,26 @@ def _fmt_month(d: datetime.date | None) -> str | None:
     return d.strftime("%Y-%m") if d else None
 
 
+# Q12: a row's origin tag is shown as this in the editors.
+ORIGIN_LABELS = {"ask_user": "added while applying to a job"}
+
+
+def _origin(row) -> dict:
+    return {"origin": row.origin, "origin_label": ORIGIN_LABELS.get(row.origin or "")}
+
+
+def _norm(s: str | None) -> str:
+    return " ".join((s or "").lower().split())
+
+
+def _exp_key(experience_type, title, organization) -> tuple:
+    return ("exp", _norm(experience_type), _norm(title), _norm(organization))
+
+
+def _qual_key(qualification_type, title, institution) -> tuple:
+    return ("qual", _norm(qualification_type), _norm(title), _norm(institution))
+
+
 def _get_profile(db: Session) -> Profile | None:
     return db.scalars(
         select(Profile)
@@ -152,6 +173,7 @@ def get_profile_data(db: Session = Depends(get_db)) -> dict:
                 "start_date": _fmt_month(q.start_date),
                 "end_date": _fmt_month(q.end_date),
                 "status": q.status,
+                **_origin(q),
             }
             for q in profile.qualifications
         ],
@@ -166,10 +188,13 @@ def get_profile_data(db: Session = Depends(get_db)) -> dict:
                 "is_current": e.end_date is None,
                 "description": e.description,
                 "skills": [s.name for s in e.skills],
+                **_origin(e),
             }
             for e in profile.experiences
         ],
         "skills": [s.name for s in profile.skills],
+        # Origin tags for skills, by name (the skills list itself stays plain names).
+        "skill_origins": {s.name: ORIGIN_LABELS[s.origin] for s in profile.skills if s.origin in ORIGIN_LABELS},
     }
 
 
@@ -200,7 +225,16 @@ def put_profile_data(body: ProfileData, db: Session = Depends(get_db)) -> dict:
         profile.writing_sample = body.profile.writing_sample or None
     db.flush()
 
-    # 2. Delete experiences first (experience_skills cascade on experience_id)
+    # 2. Remember origin tags (plan Q12) before the replace: the editors don't send
+    #    them back, so they are carried over by natural key. Skills keep their rows.
+    origins: dict[tuple, str] = {}
+    for e in db.scalars(select(Experience).where(Experience.user_id == profile.id, Experience.origin.is_not(None))):
+        origins[_exp_key(e.experience_type, e.title, e.organization)] = e.origin
+    for q in db.scalars(select(Qualification).where(Qualification.user_id == profile.id,
+                                                     Qualification.origin.is_not(None))):
+        origins[_qual_key(q.qualification_type, q.title, q.institution)] = q.origin
+
+    # Delete experiences first (experience_skills cascade on experience_id)
     db.execute(delete(Experience).where(Experience.user_id == profile.id))
     db.execute(delete(Qualification).where(Qualification.user_id == profile.id))
     db.flush()
@@ -249,6 +283,7 @@ def put_profile_data(body: ProfileData, db: Session = Depends(get_db)) -> dict:
             start_date=_parse_month(q.start_date),
             end_date=_parse_month(q.end_date),
             status=q.status or "completed",
+            origin=origins.get(_qual_key(q.qualification_type or "degree", q.title.strip(), q.institution or None)),
         ))
 
     # 7. Re-insert experiences + link experience_skills
@@ -263,6 +298,8 @@ def put_profile_data(body: ProfileData, db: Session = Depends(get_db)) -> dict:
             start_date=_parse_month(exp_in.start_date),
             end_date=None if exp_in.is_current else _parse_month(exp_in.end_date),
             description=exp_in.description or None,
+            origin=origins.get(_exp_key(exp_in.experience_type or "job", exp_in.title.strip(),
+                                        exp_in.organization or None)),
         )
         db.add(exp)
         db.flush()
@@ -272,7 +309,9 @@ def put_profile_data(body: ProfileData, db: Session = Depends(get_db)) -> dict:
                 exp.skills.append(skill_map[sname])
 
     db.commit()
-    return {"ok": True, "profile_id": profile.id}
+    # A remembered "no" the profile now has a skill for leaves the to-work-on list.
+    cleared = gaps.auto_clear(db, profile.id)
+    return {"ok": True, "profile_id": profile.id, "cleared_to_work_on": cleared}
 
 
 @router.delete("/profile-ui/data")

@@ -2,6 +2,7 @@
 
     python scripts/run_api.py real     # your real profile  -> real.db,  port 8000
     python scripts/run_api.py test     # the fake profile   -> app.db,   port 8001
+    python scripts/run_api.py test --db path/to/scratch.db   # test env on a scratch DB
 
 The two environments are fully isolated: separate database file, separate
 screenshots folder, separate port. The extension's REAL/TEST switch (sidebar
@@ -31,8 +32,14 @@ ENVIRONMENTS = {
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run the local backend for one environment.")
     parser.add_argument("env", choices=sorted(ENVIRONMENTS))
+    parser.add_argument("--db", help="test env only: run on this SQLite file instead of app.db "
+                                     "(scratch DBs for end-to-end checks)")
     args = parser.parse_args()
-    cfg = ENVIRONMENTS[args.env]
+    cfg = dict(ENVIRONMENTS[args.env])
+    if args.db:
+        if args.env != "test":
+            parser.error("--db is for the test environment only; real always uses real.db")
+        cfg["database_url"] = "sqlite:///" + Path(args.db).resolve().as_posix()
 
     # Set BEFORE importing anything from app/: db.py reads DATABASE_URL at import,
     # and load_dotenv() never overrides a variable that is already set — so this

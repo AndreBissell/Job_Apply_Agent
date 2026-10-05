@@ -11,7 +11,10 @@ them). Warnings are passed to ``revise_letter`` but don't block.
                (> MAX_WORDS words or > MAX_BODY_PARAGRAPHS body paragraphs);
                placeholders like ``[Company]``; no sign-off
     warnings   under MIN_WORDS; low sentence-length variance; 3+ paragraphs
-               opening with "I"; American spellings from ``us_to_au.txt``
+               opening with "I"; American spellings from ``us_to_au.txt``; a
+               sentence that leads with a gap ("Although I have not ..."); a
+               stock close in the last paragraph or a stock bridge anywhere
+               ("translates well", "carries over directly")
 
 The word counter, banned-phrase list and placeholder pattern live here and the
 eval rubric (``app/llm/letter/rubric.py``) imports them, so the writer's check
@@ -52,6 +55,33 @@ SIGN_OFF_RE = re.compile(r"^\s*(sincerely|kind regards|regards|yours sincerely)\
 _DASH_RE = re.compile(r"—|(?<=\s)–(?=\s)")
 _GREETING_RE = re.compile(r"^\s*(dear|to whom|hi|hello)\b", re.I)
 _STARTS_WITH_I_RE = re.compile(r"^\s*I\b")
+# A sentence that opens on what the candidate hasn't done. The blind grading panel
+# failed would_send on 10 of 13 letters for this (decision log 2026-10-03). A warning,
+# not a block: the writer prompt prevents it, and blocking would spend revisions.
+_GAP_LED_RE = re.compile(
+    r"^\s*(?:(?:although|while|whilst|though|even though)\b[^,.;]{0,80}?"
+    r"\b(?:not|never|new to|lack|yet to|limited|no direct|no commercial)\b"
+    r"|i (?:have not|haven't|have never|do not have|don't have|am new to|lack|have yet to)\b)",
+    re.I,
+)
+
+# Stock closes and bridges: every workflow-v2 letter failed would_send partly for a
+# generic close or "translates directly" in place of the actual link (panels opus-v2
+# and opus-v3). Warnings, not blocks, for the same reason as gap-led sentences.
+_STOCK_CLOSE_RE = re.compile(
+    r"\b(?:thank you for (?:considering|your consideration|your time)"
+    r"|i look forward to (?:discussing|hearing|the (?:opportunity|chance))"
+    r"|how i (?:can|could|might) contribute"
+    r"|i would (?:value|welcome|love|appreciate) the (?:chance|opportunity) to (?:contribute|discuss|join)"
+    r"|i hope to (?:hear|discuss))",
+    re.I,
+)
+_STOCK_BRIDGE_RE = re.compile(
+    r"\b(?:translates?|translated|translating) (?:well|directly|seamlessly)"
+    r"|\b(?:carries|carry|carried) over (?:directly|well)"
+    r"|\bmaps? directly",
+    re.I,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -110,6 +140,23 @@ def sentence_stdev(text: str) -> float | None:
     return statistics.pstdev(lengths)
 
 
+def gap_led_sentences(text: str) -> list[str]:
+    return [s for s in split_sentences("\n".join(body_paragraphs(text))) if _GAP_LED_RE.match(s)]
+
+
+def stock_close_sentences(text: str) -> list[str]:
+    """Sentences in the last body paragraph that are a stock close."""
+    paras = body_paragraphs(text)
+    if not paras:
+        return []
+    return [s for s in split_sentences(paras[-1]) if _STOCK_CLOSE_RE.search(s)]
+
+
+def stock_bridges(text: str) -> list[str]:
+    """Every stock bridge phrase in the body, lower-cased (one per occurrence)."""
+    return [m.group(0).lower() for m in _STOCK_BRIDGE_RE.finditer("\n".join(body_paragraphs(text)))]
+
+
 def find_us_spellings(text: str) -> list[str]:
     table = us_to_au()
     return [w.lower() for w in re.findall(r"\b[A-Za-z]+\b", text) if w.lower() in table]
@@ -126,6 +173,9 @@ def lint(text: str) -> dict[str, Any]:
     stdev = sentence_stdev(text)
     starts_with_i = sum(1 for p in paras if _STARTS_WITH_I_RE.match(p))
     us = find_us_spellings(text)
+    gaps = gap_led_sentences(text)
+    closes = stock_close_sentences(text)
+    bridges = stock_bridges(text)
 
     issues: list[str] = []
     if dashes > MAX_EM_DASHES:
@@ -151,6 +201,15 @@ def lint(text: str) -> dict[str, Any]:
     if us:
         fixes = sorted({f"{w} -> {us_to_au()[w]}" for w in us})
         warnings.append(f"us_spelling: {', '.join(fixes)}")
+    for s in gaps:
+        warnings.append(f"gap_led: {s[:90]!r} leads with what the candidate hasn't done; say what they "
+                        "have done and how it carries over, or cut it")
+    for s in closes:
+        warnings.append(f"stock_close: {s[:90]!r} is a generic close; end on a specific thing in this "
+                        "role the candidate wants to work on, and why")
+    if bridges:
+        warnings.append(f"stock_bridge: {', '.join(repr(b) for b in bridges)}; say how the evidence "
+                        "applies to this employer's work instead")
 
     return {
         "passed": not issues,
@@ -165,6 +224,9 @@ def lint(text: str) -> dict[str, Any]:
         "sentence_stdev": None if stdev is None else round(stdev, 2),
         "paragraphs_starting_with_i": starts_with_i,
         "us_spellings_found": us,
+        "gap_led_sentences": gaps,
+        "stock_close_sentences": closes,
+        "stock_bridges": bridges,
     }
 
 

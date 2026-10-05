@@ -13,12 +13,14 @@
     /* Header */
     header {
       padding: 10px 14px; background: #fff; border-bottom: 1px solid #e5e7eb;
-      display: flex; align-items: center; justify-content: space-between;
+      display: flex; align-items: center; justify-content: space-between; flex-wrap: nowrap;
       position: sticky; top: 0; z-index: 10;
     }
-    header h1 { font-size: 14px; margin: 0; }
+    header h1 { font-size: 14px; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
     #hdr-jobs-btns { display: flex; gap: 6px; }
-    .hdr-title { display: flex; align-items: center; gap: 8px; }
+    .hdr-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+    .hdr-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .hdr-title #env-pill { flex-shrink: 0; }
 
     /* Environment switch (real.db vs the fake test profile). Deliberately loud
        in TEST mode — the header turns orange so it's never mistaken for real. */
@@ -29,6 +31,19 @@
     }
     body.env-test header { background: #fff7ed; border-bottom-color: #fb923c; }
     body.env-test #env-pill { color: #c2410c; background: #ffedd5; border-color: #fb923c; }
+
+    /* Zoom controls: live in the header (not #hdr-jobs-btns, which is hidden on the
+       Applied/Profile tabs) so they stay reachable everywhere. */
+    #zoom-ctrls { display: flex; gap: 4px; }
+    #zoom-ctrls button {
+      width: 22px; height: 22px; padding: 0; border: 1px solid #d1d5db; border-radius: 4px;
+      background: #fff; font-size: 14px; font-weight: 700; line-height: 1;
+      display: flex; align-items: center; justify-content: center; cursor: pointer;
+    }
+    #zoom-ctrls button:hover:not(:disabled) { background: #f0f4fb; }
+    #zoom-ctrls button:disabled { opacity: .4; cursor: default; }
+    body.env-test #zoom-ctrls button { background: #fff; border-color: #fdba74; }
+    body.env-test #zoom-ctrls button:hover:not(:disabled) { background: #ffedd5; }
 
     /* Tabs */
     nav#tabs {
@@ -98,6 +113,65 @@
     }
     .cl-badge.ready { color: #059669; }
     .cl-badge.pending { color: #9ca3af; font-weight: 500; }
+    .cl-badge.question { color: #b45309; }
+    .cl-badge.writing { color: #2557a7; font-weight: 500; }
+    .cl-badge.failed { color: #b91c1c; }
+    .elig-note { font-size: 11px; color: #92400e; margin-top: 3px; }
+    li.section-header.question { color: #b45309; border-top: 2px solid #f59e0b; }
+    body.w-wide ul#job-list li.section-header.question { border-top: 2px solid #f59e0b; }
+
+    /* Cover-letter run UI: the question card, the letter's notes */
+    .qcard {
+      margin-top: 8px; padding: 8px 10px; border: 1px solid #fcd34d; background: #fffbeb;
+      border-radius: 8px; cursor: default;
+    }
+    .qcard h4 { margin: 0 0 6px; font-size: 12px; color: #78350f; }
+    .qcard .q { margin: 8px 0 0; padding-top: 8px; border-top: 1px solid #fde68a; }
+    .qcard .q:first-of-type { border-top: none; padding-top: 0; margin-top: 0; }
+    .qcard .q-prompt { font-size: 12px; color: #1c2330; margin-bottom: 4px; }
+    .qcard textarea { min-height: 64px; margin-top: 2px; }
+    .qcard .q-actions { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+    .qcard .q-done { font-size: 11px; color: #059669; }
+    .qcard .q-err { font-size: 11px; color: #b91c1c; margin-top: 4px; }
+    .qcard .proposal { background: #fff; border: 1px solid #e5e7eb; border-radius: 6px; padding: 6px 8px; margin-top: 4px; }
+    .qcard .proposal h5 { margin: 6px 0 2px; font-size: 11px; color: #6b7280; text-transform: uppercase; letter-spacing: .04em; }
+    .qcard .proposal label { display: block; font-size: 11px; color: #6b7280; margin-top: 4px; }
+    .qcard .proposal input, .qcard .proposal select, .qcard .proposal textarea {
+      width: 100%; padding: 4px 6px; border: 1px solid #d1d5db; border-radius: 5px;
+      font-size: 12px; font-family: inherit; color: #1c2330; background: #fff;
+    }
+    .qcard .proposal textarea { min-height: 48px; }
+    .qcard .proposal .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+    .letter-flag {
+      margin-top: 6px; padding: 6px 8px; border-radius: 6px; font-size: 11px; line-height: 1.45;
+      background: #fef2f2; border: 1px solid #fecaca; color: #7f1d1d; white-space: normal;
+    }
+    .note-row { position: relative; padding-left: 12px; margin-top: 2px; }
+    .note-row::before { content: '•'; position: absolute; left: 2px; }
+    .letter-flag.ok { background: #ecfdf5; border-color: #a7f3d0; color: #065f46; }
+    .letter-flag .warn { color: #92400e; }
+    .letter-notes { margin-top: 6px; font-size: 11px; color: #374151; white-space: normal; }
+    .letter-notes summary { cursor: pointer; font-weight: 600; color: #6b7280; }
+    .letter-notes h5 { margin: 6px 0 2px; font-size: 11px; color: #6b7280; }
+    .letter-notes .why { color: #9ca3af; }
+    .side-output .warn { color: #92400e; }
+    .side-output .pref-note { margin: 4px 0; }
+    .screening-answer { margin-top: 6px; padding-top: 4px; border-top: 1px solid #e5e7eb; }
+    .screening-answer h5 { color: #374151; }
+    .screening-answer .answer-text { white-space: pre-wrap; margin: 2px 0 4px; color: #111827; }
+
+    /* Profile: origin tag (plan Q12) and the to-work-on list */
+    .origin-badge {
+      font-size: 10px; color: #6d28d9; background: #f5f3ff; border: 1px solid #ddd6fe;
+      border-radius: 10px; padding: 1px 7px; white-space: nowrap; flex: none;
+    }
+    .skill-chip .origin-dot { color: #6d28d9; font-size: 10px; margin-left: 2px; cursor: help; }
+    .towork-item { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px 10px; margin-bottom: 6px; }
+    .towork-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+    .towork-head strong { font-size: 13px; }
+    .towork-count { font-size: 11px; color: #b45309; font-weight: 600; white-space: nowrap; }
+    .towork-sub { font-size: 11px; color: #6b7280; margin-top: 2px; line-height: 1.45; }
+    .towork-empty { font-size: 12px; color: #6b7280; }
     .apply-btn {
       background: none; border: 1px solid #cbd5e1; border-radius: 5px;
       cursor: pointer; font-size: 11px; padding: 2px 7px; flex: none; color: #374151;
@@ -198,7 +272,28 @@
       50%      { box-shadow: 0 0 0 1px rgba(245, 197, 24, 0.9),  0 2px 20px rgba(245, 180, 0, 0.7); }
     }
     @media (prefers-reduced-motion: reduce) {
-      ul#job-list li[data-tier="gold"], ul#job-list li[data-tier="gold"]::after { animation: none; }
+      ul#job-list li[data-tier="gold"], ul#job-list li[data-tier="gold"]::after,
+      ul#job-list li[data-tier="blue"]::after { animation: none; }
+    }
+
+    /* 90-94: cool blue card. A faint, slow light band. Quieter than gold:
+       no glow pulse, no star, longer pause between sweeps. */
+    ul#job-list li[data-tier="blue"] {
+      position: relative; overflow: hidden;
+      background: linear-gradient(135deg, #f0fdff 0%, #e3f8fd 55%, #d6f3fb 100%);
+      box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.35), 0 1px 8px rgba(14, 165, 233, 0.18);
+    }
+    ul#job-list li[data-tier="blue"]:hover { background: linear-gradient(135deg, #f5feff 0%, #e9fafe 55%, #ddf5fc 100%); }
+    ul#job-list li[data-tier="blue"]::after {
+      content: ""; position: absolute; inset: 0; pointer-events: none;
+      background: linear-gradient(105deg, transparent 40%, rgba(255, 255, 255, 0.5) 50%, transparent 60%);
+      transform: translateX(-120%);
+      animation: blue-sheen 7s ease-in-out infinite;
+    }
+    ul#job-list li[data-tier="blue"] .score { background: linear-gradient(135deg, #22d3ee, #0ea5e9); color: #fff; }
+    @keyframes blue-sheen {
+      0%, 70% { transform: translateX(-120%); }
+      100%    { transform: translateX(120%); }
     }
     .job-preview { font-size: 12px; color: #374151; margin-top: 5px; }
     .job-preview .chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
@@ -229,32 +324,28 @@
        grows its neighbour, which keeps the rows tidy. Only the top/right/bottom
        borders are set on cards so the tier colour's 4px border-left (above) is
        left alone. */
-    @media (min-width: 640px) {
-      ul#job-list, ul#applied-list {
-        display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 8px; padding: 8px; align-items: stretch;
-      }
-      ul#job-list li, ul#applied-list li {
-        min-width: 0; border-radius: 8px;
-        border-top: 1px solid #eef0f3; border-right: 1px solid #eef0f3;
-        border-bottom: 1px solid #eef0f3;
-      }
-      ul#job-list li.section-header, ul#job-list li.fold { grid-column: 1 / -1; border-radius: 0; }
-      /* Restore the header rules the card border above would otherwise outrank. */
-      ul#job-list li.section-header { border-right: none; border-bottom: none; border-top: none; }
-      ul#job-list li.section-header.ready { border-top: 2px solid #059669; }
-      ul#job-list li.section-header.waiting { border-top: 2px solid #d1d5db; }
-      ul#job-list li.section-header:first-child { border-top: none; }
+    body.w-wide ul#job-list, body.w-wide ul#applied-list {
+      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px; padding: 8px; align-items: stretch;
     }
+    body.w-wide ul#job-list li, body.w-wide ul#applied-list li {
+      min-width: 0; border-radius: 8px;
+      border-top: 1px solid #eef0f3; border-right: 1px solid #eef0f3;
+      border-bottom: 1px solid #eef0f3;
+    }
+    body.w-wide ul#job-list li.section-header, body.w-wide ul#job-list li.fold { grid-column: 1 / -1; border-radius: 0; }
+    /* Restore the header rules the card border above would otherwise outrank. */
+    body.w-wide ul#job-list li.section-header { border-right: none; border-bottom: none; border-top: none; }
+    body.w-wide ul#job-list li.section-header.ready { border-top: 2px solid #059669; }
+    body.w-wide ul#job-list li.section-header.waiting { border-top: 2px solid #d1d5db; }
+    body.w-wide ul#job-list li.section-header:first-child { border-top: none; }
 
     /* Wider panel (dragged out): two-column meta layout on blue cards */
-    @media (min-width: 420px) {
-      ul#job-list li[data-tier="blue"] .job-row,
-      ul#job-list li[data-tier="gold"] .job-row { flex-wrap: wrap; }
-      ul#job-list li[data-tier="blue"] .job-meta,
-      ul#job-list li[data-tier="gold"] .job-meta {
-        display: flex; gap: 10px; flex: 1 0 100%; margin-top: 4px;
-      }
+    body.w-mid ul#job-list li[data-tier="blue"] .job-row,
+    body.w-mid ul#job-list li[data-tier="gold"] .job-row { flex-wrap: wrap; }
+    body.w-mid ul#job-list li[data-tier="blue"] .job-meta,
+    body.w-mid ul#job-list li[data-tier="gold"] .job-meta {
+      display: flex; gap: 10px; flex: 1 0 100%; margin-top: 4px;
     }
 
     /* ── Applied tab ──────────────────────────────────────── */
@@ -416,9 +507,15 @@
       <h1>Seek Job Assistant</h1>
       <button id="env-pill" title="Click to switch between your real profile and the test profile"></button>
     </div>
-    <div id="hdr-jobs-btns">
-      <button class="btn" id="scan-btn">Scan Page</button>
-      <button class="btn" id="refresh-btn">Refresh</button>
+    <div class="hdr-right">
+      <div id="hdr-jobs-btns">
+        <button class="btn" id="scan-btn">Scan Page</button>
+        <button class="btn" id="refresh-btn">Refresh</button>
+      </div>
+      <div id="zoom-ctrls">
+        <button id="zoom-out" title="Smaller">&#8722;</button>
+        <button id="zoom-in" title="Larger">+</button>
+      </div>
     </div>
   </header>
 
@@ -456,6 +553,71 @@
           <input id="auto-letter-min" type="number" min="0" max="100" value="75">
           <button class="btn" id="auto-letter-save">Save</button>
         </div>
+        <div class="pref-row">
+          <label class="pref-check" for="letter-loop-enabled">
+            <input id="letter-loop-enabled" type="checkbox" checked>
+            <span>Check and revise letters for top matches</span>
+          </label>
+        </div>
+        <div class="pref-row">
+          <span>Full pipeline at or above score</span>
+          <input id="letter-loop-min" type="number" min="0" max="100" value="85">
+          <button class="btn" id="letter-loop-save">Save</button>
+        </div>
+        <div class="pref-row">
+          <span>Letter engine</span>
+          <select id="letter-engine">
+            <option value="agent">Agent (a model picks each step)</option>
+            <option value="workflow">Fixed workflow</option>
+          </select>
+        </div>
+        <p class="pref-note" id="letter-loop-note"></p>
+        <div class="pref-row">
+          <label class="pref-check" for="side-screening">
+            <input id="side-screening" type="checkbox" checked>
+            <span>Draft answers to screening questions in the ad</span>
+          </label>
+        </div>
+        <div class="pref-row">
+          <label class="pref-check" for="side-learning">
+            <input id="side-learning" type="checkbox" checked>
+            <span>Suggest ways to close gaps you said no to</span>
+          </label>
+        </div>
+        <div class="pref-row">
+          <label class="pref-check" for="side-resume">
+            <input id="side-resume" type="checkbox" checked>
+            <span>Résumé tailoring notes</span>
+          </label>
+        </div>
+        <p class="pref-note">
+          Extras beside a fact-checked letter (not the quick one-pass letters). Each adds
+          one model call to a full run when it has something to work on: résumé notes
+          about 1–2¢, screening answers about 2¢ (only when the ad asks questions), gap
+          suggestions under 1¢ (only for gaps you said no to).
+        </p>
+        <div class="pref-row">
+          <span>Max drafts per letter</span>
+          <input id="limit-drafts" type="number" min="1" max="5" step="1" value="3">
+          <button class="btn" id="limit-drafts-save">Save</button>
+        </div>
+        <div class="pref-row">
+          <span>Max tool calls per letter</span>
+          <input id="limit-tools" type="number" min="6" max="40" step="1" value="15">
+          <button class="btn" id="limit-tools-save">Save</button>
+        </div>
+        <div class="pref-row">
+          <span>Max spend per letter (US$)</span>
+          <input id="limit-usd" type="number" min="0.05" max="5" step="0.05" value="0.50">
+          <button class="btn" id="limit-usd-save">Save</button>
+        </div>
+        <p class="pref-note" id="limits-note">
+          Limits for one fact-checked letter. A letter that reaches one stops with its best
+          draft so far, and the sidebar lists what is still wrong with it. Each extra draft
+          needs 4 more tool calls (a full run with 3 drafts uses 14); the extras above don't
+          count towards the tool calls, but they do count towards the spend. Applies to
+          letters started after you save.
+        </p>
         <div class="pref-row">
           <span>Job pages opened per Scan Page</span>
           <input id="scan-pages" type="number" min="1" max="25" value="10">
@@ -573,6 +735,16 @@
         <button class="btn btn-sm" id="skill-cancel-btn">✕</button>
       </div>
     </div>
+
+    <!-- To work on: skills you said you don't have (plan §5.9) -->
+    <div class="p-section" id="towork-section">
+      <div class="p-section-hdr">
+        <h2>To work on</h2>
+        <button class="btn btn-sm" id="towork-refresh">Refresh</button>
+      </div>
+      <p class="writing-hint">Skills you told a cover letter you don't have, ranked by how many recent ads ask for them. Clear one once you've learned it.</p>
+      <div id="towork-list"></div>
+    </div>
     </div><!-- /#profile-main -->
 
     <!-- Your writing: its own view so a long sample doesn't swamp the form.
@@ -595,6 +767,7 @@
   </div>
 
   <script src="config.js"></script>
+  <script src="screening_assist.js"></script>
   <script src="sidebar.js"></script>
 </body>
 </html>

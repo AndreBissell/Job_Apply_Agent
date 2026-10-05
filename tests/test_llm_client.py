@@ -73,3 +73,24 @@ def test_client_is_cached(fake_genai, monkeypatch):
     first = client._get_gemini_client()
     assert client._get_gemini_client() is first
     assert len(fake_genai) == 1
+
+
+# ---------------------------------------------------------------------------
+# Transient errors: a dropped connection is retried like a 5xx
+# ---------------------------------------------------------------------------
+def test_dropped_connection_is_transient():
+    from app.llm import client
+
+    class RemoteProtocolError(Exception):  # stands in for httpx's, matched by name
+        pass
+
+    assert client._is_transient_5xx(RemoteProtocolError("Server disconnected without sending a response."))
+    assert client._is_transient_5xx(RuntimeError("Server disconnected without sending a response."))
+    assert client._is_transient_5xx(ConnectionResetError("reset"))
+
+
+def test_ordinary_errors_are_not_transient():
+    from app.llm import client
+
+    assert not client._is_transient_5xx(ValueError("bad schema"))
+    assert not client._is_transient_5xx(RuntimeError("400 INVALID_ARGUMENT"))
