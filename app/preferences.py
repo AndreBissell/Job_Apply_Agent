@@ -64,6 +64,12 @@ DEFAULTS: dict = {
     "resume_advice_enabled": True,
     "learning_suggestions_enabled": True,
     "screening_answers_enabled": True,
+    # Help with the Quick Apply questions (plan §10.1, 9b/9c): what the job wants / what
+    # your profile has, gap cards, layer-5 sorting and drafts on request. Not a side output:
+    # it runs outside the letter run. Off = every question is yours to answer, nothing is
+    # analysed and no model is called (decided 2026-10-05, user: off covers ALL assisted
+    # questions, choice questions included). Capture into the bank still happens.
+    "screening_question_help_enabled": True,
     # Layer 4 of the search-suggestion pipeline. OFF by default and opt-in from
     # the sidebar: every other layer is pure Python and free, and this is the
     # one that spends an LLM call, so it should never switch itself on. See
@@ -130,6 +136,11 @@ def set_preferences(db: Session, profile_id: int, updates: dict) -> dict:
 def get_auto_letter_min_score(db: Session, profile_id: int) -> int:
     value = get_preferences(db, profile_id)["auto_cover_letter_min_score"]
     return value if isinstance(value, int) and 0 <= value <= 100 else DEFAULT_AUTO_LETTER_MIN_SCORE
+
+
+def question_help_enabled(db: Session, profile_id: int) -> bool:
+    """The Quick Apply question-help toggle; a non-bool stored value reads as on."""
+    return get_preferences(db, profile_id).get("screening_question_help_enabled") is not False
 
 
 def _bounded(value, key: str, default, kind: type):

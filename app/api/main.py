@@ -405,6 +405,8 @@ class PreferencesUpdate(BaseModel):
     resume_advice_enabled: bool | None = None
     learning_suggestions_enabled: bool | None = None
     screening_answers_enabled: bool | None = None
+    # Help with the Quick Apply questions (plan §10.1); off = every question is yours to answer.
+    screening_question_help_enabled: bool | None = None
     # Per-run limits of the pipeline (plan 7); bounds in preferences.LIMIT_BOUNDS. A run
     # that reaches one stops with its best draft and the open issues flagged.
     letter_max_drafts: int | None = Field(default=None, ge=LIMIT_BOUNDS["letter_max_drafts"][0],

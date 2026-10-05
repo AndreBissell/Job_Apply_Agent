@@ -1470,6 +1470,8 @@ const sideOutputToggles = {
   screening_answers_enabled: document.getElementById('side-screening'),
   learning_suggestions_enabled: document.getElementById('side-learning'),
   resume_advice_enabled: document.getElementById('side-resume'),
+  // Not a side output (it runs outside the letter run), but the same on/off shape.
+  screening_question_help_enabled: document.getElementById('qa-question-help'),
 };
 
 // The full cover-letter pipeline (docs/cover-letter-loop-plan.md §6). Stored server-side

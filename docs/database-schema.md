@@ -97,6 +97,9 @@ Cover-letter pipeline keys (validated on read by `preferences.letter_settings`):
 `letter_engine` (`agent` | `workflow`), and the side-output toggles
 `resume_advice_enabled`, `learning_suggestions_enabled`,
 `screening_answers_enabled` (bool, all True; a non-bool reads as True).
+`screening_question_help_enabled` (bool, True; a non-bool reads as True): help with
+the Quick Apply questions (plan §10.1); off = every question is the user's to answer,
+no help, no model call (`preferences.question_help_enabled`).
 Per-run limits (validated on read against `preferences.LIMIT_BOUNDS`; a bad or
 out-of-range value reads as the default): `letter_max_drafts` (int 1-5, default 3),
 `letter_max_tool_calls` (int 6-40, default 15; side outputs don't count),

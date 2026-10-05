@@ -10,6 +10,9 @@ Who gets help (user decisions 2026-10-04):
     no_letter       no letter yet: "Create a cover letter to get help" (the existing
                     Regenerate)
     letter_pending  a letter run is writing or waiting on the user's answers
+    off             the user switched question help off (Personalise,
+                    ``screening_question_help_enabled``): every question is theirs to
+                    answer, nothing is analysed, no model is called. Checked first.
 
 For each ``assisted`` question, two views kept apart:
 
@@ -41,13 +44,13 @@ import re
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from app import gaps
+from app import gaps, preferences
 from app.llm.letter import view
 from app.llm.letter.state import LetterState, ProfileIndex, Requirement, split_sentences
 from app.models import CoverLetter, Experience, JobListing, LetterRun, Match, Profile, ScreeningQuestion
 from app.screening import bank, classify
 
-FULL, ONE_SHOT, NO_LETTER, PENDING = "full", "one_shot", "no_letter", "letter_pending"
+FULL, ONE_SHOT, NO_LETTER, PENDING, OFF = "full", "one_shot", "no_letter", "letter_pending", "off"
 PIPELINE_ENGINES = ("agent", "workflow")
 LIVE_RUN = ("running", "waiting_user", "answered")
 
@@ -58,6 +61,8 @@ MESSAGES = {
     NO_LETTER: "Create a cover letter to get help with these questions.",
     PENDING: "A cover letter is being written for this job (or is waiting on your answers). "
              "Help with these questions appears when it's done.",
+    OFF: ("Question help is switched off (Personalise), so every question here is yours to "
+          "answer."),
 }
 OPEN_PROMPT = "Do you have any experience with these?"
 
@@ -642,7 +647,10 @@ def assist_job(db: Session, job_id: int, profile_id: int, *, today: datetime.dat
     question with the small model only for a ``full`` job (once per bank row)."""
     today = today or datetime.date.today()
     job = db.get(JobListing, job_id)
-    status, state = help_for_job(db, job_id, profile_id)
+    if preferences.question_help_enabled(db, profile_id):
+        status, state = help_for_job(db, job_id, profile_id)
+    else:
+        status, state = OFF, None
     questions = bank.job_questions(db, job_id)
     out = {
         "job_id": job_id, "job_title": job.title if job else None, "help": status,

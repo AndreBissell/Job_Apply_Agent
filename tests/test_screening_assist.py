@@ -23,6 +23,7 @@ from sqlalchemy.pool import StaticPool
 
 import app.llm.client as llm_client
 from app.api.main import app
+from app.api.main import get_db as main_get_db
 from app.api.profile_ui import get_db
 from app.db import Base
 from app.llm.client import LLMError
@@ -31,6 +32,8 @@ from app.models import (
     CoverLetter, Experience, GapDecision, GapSighting, JobListing, LetterRun, Match, Profile,
     ScreeningQuestion, Skill,
 )
+from app import gaps
+from app.preferences import DEFAULTS, question_help_enabled, set_preferences
 from app.screening import assist, bank, classify
 from app.screening.bank import CapturedOption, CapturedQuestion
 
@@ -81,10 +84,14 @@ def client(engine):
         finally:
             s.close()
 
+    # Both session dependencies: the screening routes use profile_ui's, the preferences
+    # routes main's. Missing one sends that route to the default (test) app.db.
     app.dependency_overrides[get_db] = _db
+    app.dependency_overrides[main_get_db] = _db
     with TestClient(app, raise_server_exceptions=True) as c:
         yield c
     app.dependency_overrides.pop(get_db, None)
+    app.dependency_overrides.pop(main_get_db, None)
 
 
 class FakeModel:
@@ -699,6 +706,74 @@ class TestGating:
         add_letter(db, 5, engine=run_engine, status=status)
         assert assist.help_for_job(db, 5, 1)[0] == "full"
 
+    # --- the Personalise toggle (9c): off = no help on any question ----------------------
+    def _help_off(self, db):
+        set_preferences(db, 1, {"screening_question_help_enabled": False})
+
+    def test_toggle_defaults_on(self, db):
+        add_profile(db)
+        assert DEFAULTS["screening_question_help_enabled"] is True
+        assert question_help_enabled(db, 1) is True
+
+    @pytest.mark.parametrize("stored", [None, "no", 0, "false"])
+    def test_non_bool_stored_value_reads_as_on(self, db, stored):
+        add_profile(db)
+        set_preferences(db, 1, {"screening_question_help_enabled": stored})
+        assert question_help_enabled(db, 1) is True
+
+    def test_off_on_a_full_job_gives_no_help_and_no_model_call(self, db, client, model):
+        add_profile(db, skills=["C#"])
+        add_job(db, 5)
+        add_letter(db, 5, [req("R1", "C# development", skill="C#")])
+        self._help_off(db)
+        self._captured_via_api(client, 5, Q_S5(), Q_YEARS(), Q_CSHARP(), Q_LANGS(),
+                               sample_q("S2", "salary"))
+        out = self._get(client, 5)
+        assert out["help"] == "off"
+        assert out["message"] == assist.MESSAGES[assist.OFF]
+        assert out["action"] is None
+        self._all_unassisted(out)
+        assert model.calls == []  # no layer 5 for the unknown S5 question
+        assert by_text(out, "React Native with Expo")["kind"] == "unknown"
+
+    def test_off_takes_precedence_over_no_letter(self, db, client, model):
+        add_profile(db)
+        add_job(db, 5)
+        self._help_off(db)
+        self._captured_via_api(client, 5, Q_S5())
+        out = self._get(client, 5)
+        assert out["help"] == "off" and out["action"] is None  # no "Create a cover letter"
+
+    def test_off_records_no_gap_sighting(self, db, model):
+        add_profile(db)
+        add_job(db, 5)
+        add_letter(db, 5, [req("R1", "C# development", skill="C#")])
+        gaps.save_no(db, 1, label="C#", key=gaps.skill_key("C#"))
+        self._help_off(db)
+        out = assist_for(db, 5, Q_CSHARP())
+        assert out["help"] == "off"
+        assert db.scalar(select(func.count()).select_from(GapSighting)) == 0
+
+    def test_back_on_restores_help(self, db, client, model):
+        add_profile(db)
+        add_job(db, 5)
+        add_letter(db, 5)
+        self._help_off(db)
+        self._captured_via_api(client, 5, Q_YEARS())
+        assert self._get(client, 5)["help"] == "off"
+        r = client.put("/profile/1/preferences", json={"screening_question_help_enabled": True})
+        assert r.status_code == 200 and r.json()["screening_question_help_enabled"] is True
+        out = self._get(client, 5)
+        assert out["help"] == "full"
+        assert by_text(out, "full stack developer")["assist"] is not None
+
+    def test_api_accepts_the_toggle_and_rejects_a_non_bool(self, db, client):
+        add_profile(db)
+        r = client.put("/profile/1/preferences", json={"screening_question_help_enabled": False})
+        assert r.status_code == 200 and r.json()["screening_question_help_enabled"] is False
+        r = client.put("/profile/1/preferences", json={"screening_question_help_enabled": "maybe"})
+        assert r.status_code == 422
+
     def test_user_questions_get_no_assist_even_for_full(self, db):
         add_profile(db)
         add_job(db, 5)
@@ -1006,7 +1081,6 @@ class TestRunlessGaps:
         assert len(_sightings(db, 5)) == 1
 
     def test_remembered_no_is_counted_for_a_new_job_that_asks_for_it(self, db, client, answers_model):
-        from app import gaps
         _gap_setup(db)
         gaps.save_no(db, 1, label="Objective-C", key="objective c")
         assert _sightings(db) == []  # nothing yet: no job has been seen asking for it

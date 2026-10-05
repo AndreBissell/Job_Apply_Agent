@@ -435,8 +435,9 @@ function renderScreeningAssist(container, data, opts) {
 
   const counts = { user: 0, assisted: 0, unknown: 0 };
   for (const q of questions) counts[q.kind in counts ? q.kind : 'unknown'] += 1;
-  root.appendChild(saEl('div', 'sa-summary',
-    `${counts.user} yours to answer · ${counts.assisted} we'll help · ${counts.unknown} new`));
+  root.appendChild(saEl('div', 'sa-summary', data.help === 'off'
+    ? `${questions.length} yours to answer`
+    : `${counts.user} yours to answer · ${counts.assisted} we'll help · ${counts.unknown} new`));
 
   questions.forEach((q, i) => {
     const kind = q.kind in SA_KIND_LABELS ? q.kind : 'unknown';
@@ -449,7 +450,10 @@ function renderScreeningAssist(container, data, opts) {
     let label = SA_KIND_LABELS[kind];
     if (kind === 'user' && q.parameters?.topic) label += ` (${q.parameters.topic.replace(/_/g, ' ')})`;
     if (kind === 'unknown' && full) label = 'Not sorted yet';
-    block.appendChild(saEl('span', `sa-badge ${kind}`, label));
+    // Help switched off (Personalise): every question is the user's own, with no help.
+    const badgeKind = data.help === 'off' ? 'user' : kind;
+    if (data.help === 'off' && kind !== 'user') label = 'Yours to answer (help is off)';
+    block.appendChild(saEl('span', `sa-badge ${badgeKind}`, label));
 
     // `user` questions get nothing else: never any help, never sent to a model.
     if (full && kind === 'assisted' && q.assist) {
