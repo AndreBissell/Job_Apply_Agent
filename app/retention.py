@@ -107,6 +107,20 @@ def utc(dt: datetime | None) -> datetime | None:
     return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
 
 
+def screenshot_fields(match: Match, ttl: timedelta) -> dict:
+    """A match's screenshot evidence as the API shows it (Jobs, Applied periods)."""
+    return {
+        "screenshot_taken_at": match.screenshot_taken_at.isoformat() if match.screenshot_taken_at else None,
+        "screenshot_url": f"/screenshots/{Path(match.screenshot_path).name}" if match.screenshot_path else None,
+        # When the FILE will be deleted (null once it already has been:
+        # screenshot_taken_at set with no screenshot_url means "expired").
+        "screenshot_expires_at": (
+            (utc(match.screenshot_taken_at) + ttl).isoformat()
+            if match.screenshot_path and match.screenshot_taken_at else None
+        ),
+    }
+
+
 def now_utc() -> datetime:
     return datetime.now(timezone.utc)
 

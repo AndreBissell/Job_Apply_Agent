@@ -453,7 +453,13 @@ and fixed two 9b display defects (gap card "wanted" for a skill only the form as
 Seek's re-renders (content script now recaptures only when the question ids change). Drafts are
 still unseen on a live page (that form had no free-text question). 1468 tests; e2e 123/123. Follow-ups:
 future_work/quick-apply-user-keywords.md, future_work/quick-apply-draft-followups.md.
-Next: whatever the user names. Known follow-ups (plan
+IN PROGRESS (2026-10-05): the Centrelink dashboard, docs/centrelink-dashboard-plan.md (Overview
+tab: x/20 this period, letters ready, 3 searches; Applied tab: monthly periods, cost, + Interview).
+4 steps, each committed with the user's go-ahead. Step 1 (backend) DONE: prefs `obligation_target` /
+`obligation_cycle_start`, `matches.interview_at` (migration `d5f1b8c3e9a2`), `app/obligation.py`,
+`GET /obligation`, `PATCH /jobs/{id}/interview`, `GET /jobs?ready=true`. Steps 2-4 (Overview, Applied,
+docs) next.
+Known follow-ups (plan
 Decision log 2026-10-04): check_claims passes "I have included a link to a video"
 (invented attachment), "daily" frequency claims and "apply my skills in X" on a listing;
 style_lint's gap-led pattern misses "While my X rather than Y"; Gemini implicit caching

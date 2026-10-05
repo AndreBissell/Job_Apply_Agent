@@ -475,6 +475,12 @@ class Match(Base):
     applied_at: Mapped[datetime.datetime | None] = mapped_column(
         DateTime(timezone=True)
     )
+    # The user recorded an interview for this application (Applied tab's "+ Interview").
+    # Status stays 'applied': everything that reads status == 'applied' (evidence export,
+    # retention) is unaffected. NULL = none recorded.
+    interview_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
     # Soft delete for the sidebar's bulk "delete jobs below score" action.
     # NULL = visible. The row is kept rather than deleted because the
     # suggestion miner ranks phrases against the baseline of ALL scored
