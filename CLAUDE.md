@@ -453,13 +453,22 @@ and fixed two 9b display defects (gap card "wanted" for a skill only the form as
 Seek's re-renders (content script now recaptures only when the question ids change). Drafts are
 still unseen on a live page (that form had no free-text question). 1468 tests; e2e 123/123. Follow-ups:
 future_work/quick-apply-user-keywords.md, future_work/quick-apply-draft-followups.md.
-IN PROGRESS (2026-10-05): the Centrelink dashboard, docs/centrelink-dashboard-plan.md (Overview
-tab: x/20 this period, letters ready, 3 searches; Applied tab: monthly periods, cost, + Interview).
-4 steps, each committed with the user's go-ahead. Step 1 (backend) DONE: prefs `obligation_target` /
-`obligation_cycle_start`, `matches.interview_at` (migration `d5f1b8c3e9a2`), `app/obligation.py`,
-`GET /obligation`, `PATCH /jobs/{id}/interview`, `GET /jobs?ready=true`. Steps 2-4 (Overview, Applied,
-docs) next.
-Known follow-ups (plan
+Centrelink dashboard DONE (2026-10-05, docs/centrelink-dashboard-plan.md + its Decision log). The
+side panel opens on an **Overview** tab (extension/dashboard.js): x / target applied this period, the
+period and days left, letters waiting on you, a "Keep applying" row of jobs with a letter ready (Open ad
+/ copy letter / Mark applied, two clicks) and the next 3 suggested searches. The **Applied** tab is one
+`<details>` per monthly period (newest first, current open): applied/target, estimated AI cost, rows with
+date, score and **+ Interview**, per-period and full CSV. Backend: prefs `obligation_target` (20) /
+`obligation_cycle_start` ("YYYY-MM-DD"; periods run monthly from it in both directions, day clamped;
+calendar months until set), `app/obligation.py` (pure date maths), `GET /obligation` (one payload for
+both tabs), `PATCH /jobs/{id}/interview` -> `matches.interview_at` (migration `d5f1b8c3e9a2`; status
+stays 'applied'), `GET /jobs?ready=true`. "Applied" = `applied_at` set, on its LOCAL date, hidden
+matches included; cost per job = ALL `llm_usage` for that job_id (null = before logging -> "not
+costed"). What + Interview triggers is not built yet. 1497 tests; e2e `tests/e2e/dashboard_e2e.py`
+77/77 (scratch DB, stub LLM). E2E RULE: stub the panel's `chrome.tabs.create`; a real tab it opens can
+load before Playwright's routing attaches and reach Seek (it did once, ~2 page loads). Not verified in
+the user's own Chrome.
+Next: whatever the user names. Known follow-ups (plan
 Decision log 2026-10-04): check_claims passes "I have included a link to a video"
 (invented attachment), "daily" frequency claims and "apply my skills in X" on a listing;
 style_lint's gap-led pattern misses "While my X rather than Y"; Gemini implicit caching

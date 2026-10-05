@@ -199,3 +199,31 @@ is unchanged.
     exports.
   - Narrow and wide panel widths.
   - No LLM calls needed.
+
+## Decision log
+
+**2026-10-05 — built (commits `ef0c7da` backend, `c937525` Overview, `8f2f540` Applied).**
+Built as planned. Choices made while building:
+- `retention.screenshot_fields(match, ttl)` is the shared screenshot helper (`/jobs` and
+  `/obligation`); it lives in retention because that module owns `utc()` and the TTL.
+- `preferences.obligation_settings` validates on read: a bad stored target reads as 20, a
+  bad date as not set. The start date can be changed but not cleared from the sidebar
+  (the API's partial update drops nulls); nothing needs clearing it.
+- The period card shows "N days left" counting today, so the last day reads "1 day left".
+- Keep Applying shows `GET /jobs?ready=true` minus jobs whose newest letter run is
+  writing or waiting on a question (`coverLetterState(job) === 'ready'`), so the count
+  matches cards you can act on.
+- ✓ Mark applied on a mini-card takes two clicks ("Click again to confirm", 4 s): an
+  application can't be un-marked and counts as Centrelink evidence. Undoing an interview
+  asks first; recording one doesn't.
+- Pressing Scan Page on the Overview switches to Jobs: the job list and its notices are
+  the scan's progress display.
+- The Applied rows show the per-job cost in the meta line as well as the period total;
+  an all-uncosted period reads "not costed" rather than "US$0.00".
+- Export CSV keeps the old six columns, newest first, and now includes hidden
+  applications (they are evidence). The evidence zip (`GET /jobs/evidence-export`) is
+  unchanged and still reads `status = 'applied'`.
+- E2E (`tests/e2e/dashboard_e2e.py`, 77 checks) replaced the manual UI pass. The panel's
+  `chrome.tabs.create` must be stubbed there: on the first run, tabs it opened loaded
+  real Seek pages before Playwright's routing attached (about two page loads).
+

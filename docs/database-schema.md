@@ -446,7 +446,16 @@ which stamps `applied_at`); the rest of the vocabulary is free bookkeeping for
 later. `applied_at` exists specifically for Centrelink mutual-obligation
 reporting (CSV export of what was applied to and when) - it is set once, the
 first time `status` transitions to `'applied'`, and is never reset by a
-repeat "mark applied" call.
+repeat "mark applied" call. The Centrelink dashboard (`GET /obligation`,
+docs/centrelink-dashboard-plan.md) counts an application by `applied_at` (its
+local date, bucketed into the user's monthly periods), not by `status`, and
+counts hidden matches too.
+
+`interview_at` records that an application got an interview (the Applied tab's
+"+ Interview", `PATCH /jobs/{id}/interview`, only for an applied match; clicking
+again clears it). It deliberately does **not** move `status` to
+`'interviewing'`: the evidence export, the Applied CSV and retention all read
+`status = 'applied'`, and an interview must not drop a job out of them.
 
 `screenshot_path`/`screenshot_taken_at` are further Centrelink evidence: a
 screenshot of the actual applied-to page, captured client-side by the extension
@@ -544,6 +553,7 @@ CREATE TABLE matches (
     screenshot_path      TEXT,                        -- relative path under /screenshots (NULL = none captured)
     screenshot_taken_at  TIMESTAMPTZ,                 -- set on each (re)capture
     applied_at           TIMESTAMPTZ,                 -- set once, on first transition to 'applied'
+    interview_at         TIMESTAMPTZ,                 -- an interview recorded for this application; status unchanged
     scored_at            TIMESTAMPTZ,                 -- when score was last written; NULL = read as created_at
     hidden_at            TIMESTAMPTZ,                 -- soft delete; NULL = visible. Kept so the score still feeds the suggestion baseline
     cv_used_id           BIGINT      REFERENCES user_cvs(id) ON DELETE SET NULL,  -- which CV went out (optional)

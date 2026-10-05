@@ -5,6 +5,17 @@ one block per milestone.
 
 ---
 
+## 2026-10-05 — Centrelink dashboard: Overview tab + monthly Applied periods — DONE ✅
+
+- Plan `docs/centrelink-dashboard-plan.md` (decision log at the end). Branch `centerlink-preperation`, 3 code commits.
+- Backend: prefs `obligation_target` / `obligation_cycle_start`; `matches.interview_at` (migration `d5f1b8c3e9a2`); `app/obligation.py` (monthly periods from the start date, day clamped); `GET /obligation`; `PATCH /jobs/{id}/interview`; `GET /jobs?ready=true`; `retention.screenshot_fields` shared with `/jobs`. Preferences are now dumped in JSON mode so a date stores.
+- Sidebar: Overview tab first (progress, waiting letters, Keep Applying card row, Scan More Jobs); Applied tab as `<details>` periods with cost, + Interview and per-period CSV; `markApplied()` shared; live reloads refresh the visible tab.
+- `python -m pytest -q`: 1497 passed (29 new in `tests/test_obligation.py`). E2E `tests/e2e/dashboard_e2e.py`: 77/77 (scratch DB, stub LLM, no model call, nothing off the machine). Migration up/down/up on a scratch copy of app.db.
+- Incident: an early e2e run let two tabs opened by `chrome.tabs.create` load real Seek pages (an ad URL and one search) before Playwright's routing attached. Fixed by stubbing `chrome.tabs.create` in the harness and failing on any off-machine request.
+- Not verified: the user's own Chrome; what + Interview should trigger (later).
+
+---
+
 ## 2026-10-05 — Phase 9c: Quick Apply drafts, help toggle, question eval — DONE ✅
 
 - Branch `centerlink-preperation`. Toggle `screening_question_help_enabled` (Personalise; off = no help on any question, no model call). One-click drafts for open-ended assisted questions (`POST /jobs/{id}/screening-drafts`, mid), code-checked, stored on `job_screening_questions.draft` (migration `a9e3c5d7f142`) and marked "redraft" when the profile, the question's sorting or the letter changes. Draft / Redraft / Copy in the overlay and sidebar.
