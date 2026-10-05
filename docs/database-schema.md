@@ -97,6 +97,9 @@ Cover-letter pipeline keys (validated on read by `preferences.letter_settings`):
 `letter_engine` (`agent` | `workflow`), and the side-output toggles
 `resume_advice_enabled`, `learning_suggestions_enabled`,
 `screening_answers_enabled` (bool, all True; a non-bool reads as True).
+`screening_question_help_enabled` (bool, True; a non-bool reads as True): help with
+the Quick Apply questions (plan §10.1); off = every question is the user's to answer,
+no help, no model call (`preferences.question_help_enabled`).
 Per-run limits (validated on read against `preferences.LIMIT_BOUNDS`; a bad or
 out-of-range value reads as the default): `letter_max_drafts` (int 1-5, default 3),
 `letter_max_tool_calls` (int 6-40, default 15; side outputs don't count),
@@ -443,7 +446,16 @@ which stamps `applied_at`); the rest of the vocabulary is free bookkeeping for
 later. `applied_at` exists specifically for Centrelink mutual-obligation
 reporting (CSV export of what was applied to and when) - it is set once, the
 first time `status` transitions to `'applied'`, and is never reset by a
-repeat "mark applied" call.
+repeat "mark applied" call. The Centrelink dashboard (`GET /obligation`,
+docs/centrelink-dashboard-plan.md) counts an application by `applied_at` (its
+local date, bucketed into the user's monthly periods), not by `status`, and
+counts hidden matches too.
+
+`interview_at` records that an application got an interview (the Applied tab's
+"+ Interview", `PATCH /jobs/{id}/interview`, only for an applied match; clicking
+again clears it). It deliberately does **not** move `status` to
+`'interviewing'`: the evidence export, the Applied CSV and retention all read
+`status = 'applied'`, and an interview must not drop a job out of them.
 
 `screenshot_path`/`screenshot_taken_at` are further Centrelink evidence: a
 screenshot of the actual applied-to page, captured client-side by the extension
@@ -541,6 +553,7 @@ CREATE TABLE matches (
     screenshot_path      TEXT,                        -- relative path under /screenshots (NULL = none captured)
     screenshot_taken_at  TIMESTAMPTZ,                 -- set on each (re)capture
     applied_at           TIMESTAMPTZ,                 -- set once, on first transition to 'applied'
+    interview_at         TIMESTAMPTZ,                 -- an interview recorded for this application; status unchanged
     scored_at            TIMESTAMPTZ,                 -- when score was last written; NULL = read as created_at
     hidden_at            TIMESTAMPTZ,                 -- soft delete; NULL = visible. Kept so the score still feeds the suggestion baseline
     cv_used_id           BIGINT      REFERENCES user_cvs(id) ON DELETE SET NULL,  -- which CV went out (optional)
@@ -889,6 +902,24 @@ form order: option values repeat across questions (`generated_indirect_<uuid>_0`
 two questions of one form), so they are only meaningful scoped to this question.
 These are ids, never the user's answer.
 
+`draft` (Phase 9c, nullable JSON TEXT) is the app's own draft answer to an open-ended
+`assisted` question, made only when the user clicks "Draft an answer" (one mid-tier
+call, `llm_usage.task = 'quick_apply_draft'`). It is a suggestion the user copies, not
+what they typed on Seek. Shape:
+`{"profile_id", "answer", "covered": "yes"|"partly"|"no", "note", "evidence": [pointer],
+"issues": [str], "verified": bool, "years_months": int|null, "fingerprint":
+{"profile", "question", "run_id"}, "drafted_at"}`. `verified` is true only when the
+answer passed every code check (pointers resolve, quotes are in the answer, no invented
+link, no duration above the code-computed years, no claim on a skill part the profile
+lacks, no "experience" backed only by a listed skill). The fingerprint is a hash of the
+profile text and dates the draft was built from, a hash of the bank row's text /
+strategy / parameters, and the letter run whose checklist it used: when any differs
+from now, the assist view shows the draft as stale ("redraft") instead of serving it as
+current. A new draft overwrites the old one. Kept on the job link rather than in
+`letter_runs.state` so Regenerate (a new run) doesn't lose it. Single-user for now (the
+JSON carries `profile_id` and is only served to that profile); multi-user would move it
+to a per-match table.
+
 ```sql
 CREATE TABLE job_screening_questions (
     job_id            BIGINT      NOT NULL REFERENCES job_listings(id) ON DELETE CASCADE,
@@ -897,6 +928,7 @@ CREATE TABLE job_screening_questions (
     seek_question_id  TEXT        NOT NULL,
     field_name        TEXT        NOT NULL,
     option_values     TEXT,                   -- JSON [{"value": ..., "label": ...}]
+    draft             TEXT,                   -- JSON: the app's draft answer (9c), see above
     first_seen_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_seen_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (job_id, question_id)

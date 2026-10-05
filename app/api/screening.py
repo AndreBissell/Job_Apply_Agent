@@ -14,6 +14,11 @@ GET   /jobs/{job_id}/screening-assist      9b: the questions with help (what the
 POST  /jobs/{job_id}/screening-gaps        9b: answer a wanted-but-missing skill: No is
                                            remembered; Yes returns proposed profile rows
 POST  /jobs/{job_id}/screening-gaps/confirm   9b: save the (edited) rows of a Yes
+POST  /jobs/{job_id}/screening-drafts  9c: draft ONE open-ended question ({bank_id}), on the
+                                       user's click: one mid call, refused in code first for
+                                       anything but an assisted free-text question on a
+                                       full-pipeline job with help on. Stored with a
+                                       fingerprint; the assist view shows it (or "redraft")
 
 The content script posts what it read from the page the user opened: question
 text, input type, option labels and option ids. Never an answer. Capture (POST
@@ -32,10 +37,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.profile_ui import get_db
-from app.llm.client import DailyQuotaError, LLMError
+from app.llm.client import BudgetExceededError, DailyQuotaError, LLMError
 from app.llm.letter import answers
 from app.models import JobListing
-from app.screening import assist, bank
+from app.screening import assist, bank, drafts
 from app.screening.sort import ASSISTED_STRATEGIES, CLASSIFIED_BY, USER_TOPICS
 
 router = APIRouter()
@@ -181,6 +186,32 @@ def answer_screening_gap(job_id: int, body: GapAnswerIn, profile_id: int = 1,
     except LLMError as exc:
         raise HTTPException(status_code=502, detail=f"Couldn't read that answer: {exc}") from exc
     return {"skill": body.skill, "choice": "yes", "proposal": rows.model_dump()}
+
+
+class DraftIn(BaseModel):
+    bank_id: int = Field(ge=1)
+
+
+@router.post("/jobs/{job_id}/screening-drafts")
+def draft_screening_answer(job_id: int, body: DraftIn, profile_id: int = 1,
+                           db: Session = Depends(get_db)) -> dict:
+    _job_or_404(db, job_id)
+    try:
+        return drafts.draft_question(db, job_id, body.bank_id, profile_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except drafts.DraftRefused as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+    except BudgetExceededError as exc:
+        raise HTTPException(
+            status_code=429,
+            detail=f"The LLM spending cap is reached, so nothing was drafted and nothing was spent ({exc}). "
+                   "Raise the cap in Personalise or try again tomorrow.",
+        ) from exc
+    except DailyQuotaError as exc:
+        raise HTTPException(status_code=503, detail="The language model's daily quota is used up; try later.") from exc
+    except (LLMError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail=f"Couldn't draft an answer: {exc}") from exc
 
 
 @router.post("/jobs/{job_id}/screening-gaps/confirm")

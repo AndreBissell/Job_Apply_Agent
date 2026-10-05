@@ -13,7 +13,8 @@
 // Honour system (user decision): the panel shows what the job wants beside what the
 // profile has and never recommends, pre-selects, ticks or highlights an answer. There
 // are no checkboxes, radios or option inputs here; the only inputs are the text boxes
-// of a gap's "Yes" flow, and nothing in this file touches Seek's own page.
+// of a gap's "Yes" flow, and nothing in this file touches Seek's own page. A 9c draft
+// answer (open-ended questions, on the user's click) is shown as text with Copy only.
 
 const SA_KIND_LABELS = {
   user: 'Yours to answer',
@@ -92,6 +93,15 @@ const SCREENING_ASSIST_CSS = `
   .sa-proposal label { display: block; margin-top: 4px; font-size: 11px; color: #6b7280; }
   .sa-two { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
   .sa-foot { margin-top: 4px; font-size: 10px; color: #6b7280; }
+  .sa-draft { margin-top: 6px; padding: 6px 8px; border-radius: 6px; border: 1px solid #d1d5db; background: #fff; }
+  .sa-answer { margin-top: 3px; padding: 6px 8px; border-radius: 5px; background: #f9fafb; border: 1px solid #e5e7eb;
+    white-space: pre-wrap; font-size: 12px; color: #1c2330; }
+  .sa-ok { margin-top: 4px; font-size: 11px; color: #065f46; }
+  .sa-warn { margin-top: 4px; padding: 5px 7px; border-radius: 5px; font-size: 11px;
+    background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; }
+  .sa-warn ul { margin: 2px 0 0; padding-left: 16px; }
+  .sa-stale { margin-top: 4px; padding: 5px 7px; border-radius: 5px; font-size: 11px;
+    background: #fffbeb; border: 1px solid #fcd34d; color: #78350f; }
 `;
 
 function saEl(tag, className, text) {
@@ -238,7 +248,9 @@ function saGapCard(g, jobId, opts) {
 
   const card = saEl('div', 'sa-gap');
   const importance = g.importance ? ` (${(SA_IMPORTANCE[g.importance] || g.importance).toLowerCase()})` : '';
-  card.appendChild(saEl('div', 'sa-ask', `${g.skill} — wanted${importance}. Do you have it?`));
+  // Only an ad requirement makes a skill "wanted"; otherwise just the form asks about it.
+  const why = g.wanted_by_ad === false ? 'asked about on this form' : `wanted${importance}`;
+  card.appendChild(saEl('div', 'sa-ask', `${g.skill} — ${why}. Do you have it?`));
   const stage = saEl('div');
   card.appendChild(stage);
   card.appendChild(saEl('div', 'sa-note',
@@ -326,6 +338,78 @@ function saGapCard(g, jobId, opts) {
   return card;
 }
 
+// Copy into the user's clipboard. Our own text only; nothing is typed into Seek's page.
+async function saCopy(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const SA_COVERED = { yes: 'Answers the question', partly: 'Answers part of the question', no: 'Not answered' };
+
+// Phase 9c: a draft answer to an open-ended question, made only when the user clicks.
+// Shown with Copy and nothing else: the user pastes it themselves. A draft with issues
+// is never marked as checked; a stale one says why and offers a redraft.
+function saDraftBlock(q, jobId, opts) {
+  const box = saEl('div', 'sa-draft');
+  box.appendChild(saEl('div', 'sa-label', 'Draft answer'));
+  const d = q.draft;
+  const err = saEl('div', 'sa-err');
+  const actions = saEl('div', 'sa-actions');
+  const stale = !!(d && d.stale && d.stale.length);
+
+  if (d) {
+    for (const reason of d.stale || []) box.appendChild(saEl('div', 'sa-stale', reason));
+    if (d.answer) {
+      box.appendChild(saEl('div', 'sa-answer', d.answer));
+      if (d.covered && SA_COVERED[d.covered]) box.appendChild(saEl('div', 'sa-muted', SA_COVERED[d.covered]));
+      if (d.issues && d.issues.length) {
+        const warn = saEl('div', 'sa-warn', 'Check this before you use it:');
+        const ul = saEl('ul');
+        for (const i of d.issues) ul.appendChild(saEl('li', null, i));
+        warn.appendChild(ul);
+        box.appendChild(warn);
+      } else if (d.verified && !stale) {
+        box.appendChild(saEl('div', 'sa-ok', '✓ Every statement is tied to your profile.'));
+      }
+      const copy = saEl('button', 'sa-btn', 'Copy');
+      copy.type = 'button';
+      copy.addEventListener('click', async () => {
+        copy.textContent = (await saCopy(d.answer)) ? 'Copied ✓' : 'Copy failed — select the text instead';
+        setTimeout(() => { copy.textContent = 'Copy'; }, 1500);
+      });
+      actions.appendChild(copy);
+    } else {
+      box.appendChild(saEl('div', 'sa-muted', 'No draft: your profile doesn’t answer this one.'));
+    }
+    if (d.note) box.appendChild(saEl('div', 'sa-info', d.note));
+  } else {
+    box.appendChild(saEl('div', 'sa-muted',
+      'Ask for a draft built only from your profile (one model call, about 1¢).'));
+  }
+
+  const go = saEl('button', d ? 'sa-btn' : 'sa-btn primary', d ? 'Redraft' : 'Draft an answer');
+  go.type = 'button';
+  actions.appendChild(go);
+  box.append(actions, err);
+  go.addEventListener('click', async () => {
+    err.textContent = '';
+    go.disabled = true;
+    go.textContent = 'Drafting…';
+    const r = await saRequest(opts,
+      `${opts.backend}/jobs/${jobId}/screening-drafts?profile_id=${encodeURIComponent(opts.profileId)}`,
+      { bank_id: q.bank_id });
+    if (r.ok) return opts.onChanged && opts.onChanged('Drafted an answer. Read it before you paste it.');
+    err.textContent = saErrorText(r);
+    go.disabled = false;
+    go.textContent = d ? 'Redraft' : 'Draft an answer';
+  });
+  return box;
+}
+
 function saEvidenceRow(item) {
   const row = saEl('div', 'sa-row');
   row.appendChild(saEl('span', 'sa-chip', SA_BASIS[item.basis] || item.basis));
@@ -399,6 +483,7 @@ function saAssistBlocks(q, a, jobId, data, opts) {
     for (const g of a.gaps) box.appendChild(saGapCard(g, jobId, opts));
     out.push(box);
   }
+  if (q.draftable) out.push(saDraftBlock(q, jobId, opts));
   return out;
 }
 
@@ -435,8 +520,9 @@ function renderScreeningAssist(container, data, opts) {
 
   const counts = { user: 0, assisted: 0, unknown: 0 };
   for (const q of questions) counts[q.kind in counts ? q.kind : 'unknown'] += 1;
-  root.appendChild(saEl('div', 'sa-summary',
-    `${counts.user} yours to answer · ${counts.assisted} we'll help · ${counts.unknown} new`));
+  root.appendChild(saEl('div', 'sa-summary', data.help === 'off'
+    ? `${questions.length} yours to answer`
+    : `${counts.user} yours to answer · ${counts.assisted} we'll help · ${counts.unknown} new`));
 
   questions.forEach((q, i) => {
     const kind = q.kind in SA_KIND_LABELS ? q.kind : 'unknown';
@@ -449,7 +535,10 @@ function renderScreeningAssist(container, data, opts) {
     let label = SA_KIND_LABELS[kind];
     if (kind === 'user' && q.parameters?.topic) label += ` (${q.parameters.topic.replace(/_/g, ' ')})`;
     if (kind === 'unknown' && full) label = 'Not sorted yet';
-    block.appendChild(saEl('span', `sa-badge ${kind}`, label));
+    // Help switched off (Personalise): every question is the user's own, with no help.
+    const badgeKind = data.help === 'off' ? 'user' : kind;
+    if (data.help === 'off' && kind !== 'user') label = 'Yours to answer (help is off)';
+    block.appendChild(saEl('span', `sa-badge ${badgeKind}`, label));
 
     // `user` questions get nothing else: never any help, never sent to a model.
     if (full && kind === 'assisted' && q.assist) {

@@ -24,7 +24,7 @@ import zipfile
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Iterator, Literal
@@ -39,6 +39,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app import retention, search_suggest
 from app.api.letters import router as letters_router
+from app.api.obligation import router as obligation_router
 from app.api.profile_ui import router as profile_ui_router
 from app.api.screening import router as screening_router
 from app.db import SessionLocal, app_env
@@ -52,6 +53,7 @@ from app.llm.letter import view as letter_view
 from app.llm.match import match_job
 from app.llm.quickscreen import quick_screen
 from app.models import (
+    CoverLetter,
     Experience,
     JobListing,
     Match,
@@ -342,6 +344,7 @@ app.add_middleware(
 app.include_router(profile_ui_router)
 app.include_router(letters_router)
 app.include_router(screening_router)
+app.include_router(obligation_router)
 
 _static_dir = Path(__file__).parent.parent / "static"
 app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
@@ -405,6 +408,8 @@ class PreferencesUpdate(BaseModel):
     resume_advice_enabled: bool | None = None
     learning_suggestions_enabled: bool | None = None
     screening_answers_enabled: bool | None = None
+    # Help with the Quick Apply questions (plan §10.1); off = every question is yours to answer.
+    screening_question_help_enabled: bool | None = None
     # Per-run limits of the pipeline (plan 7); bounds in preferences.LIMIT_BOUNDS. A run
     # that reaches one stops with its best draft and the open issues flagged.
     letter_max_drafts: int | None = Field(default=None, ge=LIMIT_BOUNDS["letter_max_drafts"][0],
@@ -424,6 +429,10 @@ class PreferencesUpdate(BaseModel):
     retention_floor_matches: int | None = Field(default=None, ge=0, le=5000)
     screenshot_ttl_days: int | None = Field(default=None, ge=1, le=365)
     stale_profile_weight: float | None = Field(default=None, gt=0, le=1)
+    # Centrelink mutual obligation (app/obligation.py): applications per period and the
+    # date a period starts. Stored as "YYYY-MM-DD" (update_preferences dumps in JSON mode).
+    obligation_target: int | None = Field(default=None, ge=1, le=100)
+    obligation_cycle_start: date | None = None
 
 
 class StatusUpdate(BaseModel):
@@ -723,6 +732,7 @@ def list_jobs(
     min_score: int = 0,
     status: str | None = None,
     include_expired: bool = False,
+    ready: bool = False,
     limit: int = 50,
     offset: int = 0,
     db: Session = Depends(get_db),
@@ -747,6 +757,10 @@ def list_jobs(
     from every view here, including the Applied tab. They still exist, and
     still feed the suggestion baseline and the search-performance yield — see
     DELETE /jobs for why they are kept rather than deleted.
+
+    ``ready=true`` (the Overview's Keep Applying row): only jobs with a cover letter
+    that aren't applied yet, by score. Filtered here rather than in the sidebar so the
+    ``limit`` can't drop ready jobs behind letter-less ones.
     """
     query = (
         select(Match, JobListing)
@@ -756,6 +770,10 @@ def list_jobs(
         .where(Match.hidden_at.is_(None))
         .where(Match.score >= min_score)
     )
+    if ready:
+        query = query.where(Match.applied_at.is_(None)).where(
+            select(CoverLetter.id).where(CoverLetter.match_id == Match.id).exists()
+        )
     if status is not None:
         query = query.where(Match.status == status).order_by(Match.applied_at.desc())
     else:
@@ -779,19 +797,7 @@ def list_jobs(
             "status": match.status,
             "applied_at": match.applied_at.isoformat() if match.applied_at else None,
             "has_cover_letter": match.cover_letter is not None,
-            "screenshot_taken_at": (
-                match.screenshot_taken_at.isoformat() if match.screenshot_taken_at else None
-            ),
-            "screenshot_url": (
-                f"/screenshots/{Path(match.screenshot_path).name}"
-                if match.screenshot_path else None
-            ),
-            # When the FILE will be deleted (null once it already has been:
-            # screenshot_taken_at set with no screenshot_url means "expired").
-            "screenshot_expires_at": (
-                (retention.utc(match.screenshot_taken_at) + ttl).isoformat()
-                if match.screenshot_path and match.screenshot_taken_at else None
-            ),
+            **retention.screenshot_fields(match, ttl),
             "extracted_at": job.extracted_at.isoformat() if job.extracted_at else None,
             "top_skills": [
                 js.name for js in job.job_skills if js.skill_type == "hard"
@@ -1554,4 +1560,5 @@ def update_preferences(
     """Partial update: only the keys present in the body change."""
     if db.get(Profile, profile_id) is None:
         raise HTTPException(status_code=404, detail="Profile not found")
-    return set_preferences(db, profile_id, body.model_dump(exclude_none=True))
+    # mode="json": a date must reach json.dumps as its ISO string.
+    return set_preferences(db, profile_id, body.model_dump(mode="json", exclude_none=True))

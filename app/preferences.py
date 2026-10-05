@@ -8,6 +8,7 @@ default. Kept portable (plain TEXT holding JSON), like ``matches.gaps``.
 
 from __future__ import annotations
 
+import datetime
 import json
 
 from sqlalchemy.orm import Session
@@ -47,6 +48,9 @@ SIDE_OUTPUT_TOGGLES = {
     "suggest_resume_tweaks": "resume_advice_enabled",
 }
 
+# Centrelink JobSeeker: applications per monthly period. A setting, bounded in the API.
+DEFAULT_OBLIGATION_TARGET = 20
+
 DEFAULTS: dict = {
     "auto_cover_letter_min_score": DEFAULT_AUTO_LETTER_MIN_SCORE,
     # Master switch for the full pipeline. Off = every letter is the one-shot writer
@@ -64,6 +68,12 @@ DEFAULTS: dict = {
     "resume_advice_enabled": True,
     "learning_suggestions_enabled": True,
     "screening_answers_enabled": True,
+    # Help with the Quick Apply questions (plan §10.1, 9b/9c): what the job wants / what
+    # your profile has, gap cards, layer-5 sorting and drafts on request. Not a side output:
+    # it runs outside the letter run. Off = every question is yours to answer, nothing is
+    # analysed and no model is called (decided 2026-10-05, user: off covers ALL assisted
+    # questions, choice questions included). Capture into the bank still happens.
+    "screening_question_help_enabled": True,
     # Layer 4 of the search-suggestion pipeline. OFF by default and opt-in from
     # the sidebar: every other layer is pure Python and free, and this is the
     # one that spends an LLM call, so it should never switch itself on. See
@@ -97,6 +107,11 @@ DEFAULTS: dict = {
     # Max drafts (draft 1 + revisions) and max tool calls of one pipeline run. See LIMIT_BOUNDS.
     "letter_max_drafts": DEFAULT_LETTER_MAX_DRAFTS,
     "letter_max_tool_calls": DEFAULT_LETTER_MAX_TOOL_CALLS,
+    # Centrelink mutual obligation (docs/centrelink-dashboard-plan.md): applications needed
+    # per period, and the date one period starts ("YYYY-MM-DD"). Periods run monthly from
+    # it in both directions (app/obligation.py); None = not set yet, calendar months.
+    "obligation_target": DEFAULT_OBLIGATION_TARGET,
+    "obligation_cycle_start": None,
 }
 
 
@@ -130,6 +145,26 @@ def set_preferences(db: Session, profile_id: int, updates: dict) -> dict:
 def get_auto_letter_min_score(db: Session, profile_id: int) -> int:
     value = get_preferences(db, profile_id)["auto_cover_letter_min_score"]
     return value if isinstance(value, int) and 0 <= value <= 100 else DEFAULT_AUTO_LETTER_MIN_SCORE
+
+
+def question_help_enabled(db: Session, profile_id: int) -> bool:
+    """The Quick Apply question-help toggle; a non-bool stored value reads as on."""
+    return get_preferences(db, profile_id).get("screening_question_help_enabled") is not False
+
+
+def obligation_settings(db: Session, profile_id: int) -> dict:
+    """``{target, cycle_start}`` validated: a bad stored target reads as the default, and a
+    start date that isn't a real ``YYYY-MM-DD`` reads as not set."""
+    prefs = get_preferences(db, profile_id)
+    target = prefs.get("obligation_target")
+    if isinstance(target, bool) or not isinstance(target, int) or not 1 <= target <= 100:
+        target = DEFAULT_OBLIGATION_TARGET
+    start = prefs.get("obligation_cycle_start")
+    try:
+        start = datetime.date.fromisoformat(start) if isinstance(start, str) else None
+    except ValueError:
+        start = None
+    return {"target": target, "cycle_start": start}
 
 
 def _bounded(value, key: str, default, kind: type):

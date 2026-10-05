@@ -15,20 +15,27 @@ call per run wasn't worth it for v1 (decision log 2026-10-04).
 Eligibility questions ("Do you have the right to work in Australia?") are answered from
 the profile's facts (visa status, location), cited as ``fact:<name>``. A question the
 profile can't answer comes back ``covered: no`` with a note telling the user to answer it.
+
+The core (``draft_answers``) needs no letter run: it takes the questions, a
+``ProfileContext`` (or a run's ``ToolContext``, which has the same ``profile`` / ``index``),
+the ad text and, optionally, facts the app computed in code for each question. Phase 9c's
+Quick Apply drafts (app/screening/drafts.py) call it with that per-question context; the
+letter-run tool below calls it without, so its prompt and output are as before.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Literal
 
 from pydantic import BaseModel
 
 from app.llm.client import complete_json
 from app.llm.letter.runner import ToolContext, ToolError
-from app.llm.letter.state import LetterState
+from app.llm.letter.state import LetterState, ProfileIndex
 from app.llm.letter.tools.check_claims import invented_links
 from app.llm.letter.tools.check_requirements import quote_in_letter
-from app.models import JobListing
+from app.models import JobListing, Profile
 
 SCREENING_TIER = "mid"
 MAX_ANSWER_WORDS = 150
@@ -86,7 +93,17 @@ from the square brackets (for example experience:12#s3 or fact:work_rights), wit
 the brackets. Statements of interest or intent are not claims."""
 
 
-def _facts_block(ctx: ToolContext) -> str:
+@dataclass
+class ProfileContext:
+    """What the grounding checks need, without a letter run: the loaded profile (for
+    its email/phone, which ``invented_links`` allows) and its pointer index. A run's
+    ``ToolContext`` has the same two attributes and works anywhere this does."""
+
+    profile: Profile
+    index: ProfileIndex
+
+
+def _facts_block(ctx: ToolContext | ProfileContext) -> str:
     lines = [
         f"[{pointer}] {ctx.index.facts[key]}"
         for pointer, key in FACT_POINTERS.items()
@@ -95,7 +112,7 @@ def _facts_block(ctx: ToolContext) -> str:
     return "\n".join(lines) or "(none on file)"
 
 
-def resolve(ctx: ToolContext, pointer: str) -> str | None:
+def resolve(ctx: ToolContext | ProfileContext, pointer: str) -> str | None:
     """A profile pointer's text, or a profile fact's value."""
     pointer = pointer.strip().strip("[]`'\" ").strip()
     key = FACT_POINTERS.get(pointer)
@@ -104,7 +121,7 @@ def resolve(ctx: ToolContext, pointer: str) -> str | None:
     return ctx.index.resolve(pointer)
 
 
-def verify(ctx: ToolContext, drafted: DraftedAnswer) -> tuple[list[str], list[str]]:
+def verify(ctx: ToolContext | ProfileContext, drafted: DraftedAnswer) -> tuple[list[str], list[str]]:
     """Code-only grounding check of one answer (check_claims stage 1, applied to an
     answer). Returns (resolved evidence pointers, issues)."""
     issues: list[str] = []
@@ -127,27 +144,45 @@ def verify(ctx: ToolContext, drafted: DraftedAnswer) -> tuple[list[str], list[st
     return evidence, list(dict.fromkeys(issues))
 
 
-def answer_screening(state: LetterState, ctx: ToolContext, tier: str = SCREENING_TIER) -> dict[str, Any]:
-    """Draft an answer to each screening question in the ad, grounded in the profile.
+def _question_lines(questions: list[str], contexts: list[str | None] | None) -> str:
+    lines = []
+    for n, q in enumerate(questions, start=1):
+        lines.append(f"{n}. {q}")
+        context = contexts[n - 1] if contexts and n - 1 < len(contexts) else None
+        if context:
+            lines.extend(f"   {line}" for line in context.strip().splitlines())
+    return "\n".join(lines)
 
-    Use once per run, after match_profile and any ask_user decisions (so answers can use
-    what the user added). Do not use when the ad has no screening questions.
-    """
-    questions = state.job.screening_questions
-    if not questions:
-        raise ToolError("the ad has no screening questions: there is nothing to answer")
-    job = ctx.db.get(JobListing, state.job.job_id)
-    ad = (job.raw_description or "").strip() if job else ""
+
+def draft_answers(
+    questions: list[str],
+    ctx: ToolContext | ProfileContext,
+    ad: str,
+    *,
+    contexts: list[str | None] | None = None,
+    system_prompt: str = _SYSTEM_PROMPT,
+    tier: str = SCREENING_TIER,
+    task: str = "answer_screening",
+    job_id: int | None = None,
+    match_id: int | None = None,
+    run_id: int | None = None,
+) -> list[dict]:
+    """One model call drafting every question, then the code-only ``verify`` on each.
+
+    ``contexts`` (optional, one per question) is text the app computed in code, shown
+    under its question. Returns one dict per question, in the questions' order:
+    question, answer, covered, evidence, note, issues, verified. A ``covered: no``
+    answer is blanked; a question the model skipped comes back as not drafted."""
     user = (
-        "=== SCREENING QUESTIONS ===\n" + "\n".join(f"{n}. {q}" for n, q in enumerate(questions, start=1))
+        "=== SCREENING QUESTIONS ===\n" + _question_lines(questions, contexts)
         + "\n\n=== PROFILE (pointers in square brackets) ===\n" + ctx.index.prompt_catalog()
         + "\n\n=== PROFILE FACTS (cite as the pointer in square brackets) ===\n" + _facts_block(ctx)
         + "\n\n=== JOB AD (context only; never a source for claims about the candidate) ===\n"
         + (ad or "(not available)")
     )
     data = complete_json(
-        _SYSTEM_PROMPT, user, schema=ScreeningDraft, tier=tier, task="answer_screening",
-        job_id=state.job.job_id, match_id=ctx.run.match_id, run_id=ctx.run.id,
+        system_prompt, user, schema=ScreeningDraft, tier=tier, task=task,
+        job_id=job_id, match_id=match_id, run_id=run_id,
     )
     drafted = {a.number: a for a in ScreeningDraft.model_validate(data).answers}
 
@@ -164,7 +199,29 @@ def answer_screening(state: LetterState, ctx: ToolContext, tier: str = SCREENING
         out.append({
             "question": question, "answer": answer, "covered": a.covered, "evidence": evidence,
             "note": a.note.strip(), "issues": issues, "verified": bool(answer) and not issues,
+            # kept for callers that run further checks (drafts.py); not part of the run's output
+            "_claims": [c.model_dump() for c in a.claims] if a.covered != "no" else [],
         })
+    return out
+
+
+def answer_screening(state: LetterState, ctx: ToolContext, tier: str = SCREENING_TIER) -> dict[str, Any]:
+    """Draft an answer to each screening question in the ad, grounded in the profile.
+
+    Use once per run, after match_profile and any ask_user decisions (so answers can use
+    what the user added). Do not use when the ad has no screening questions.
+    """
+    questions = state.job.screening_questions
+    if not questions:
+        raise ToolError("the ad has no screening questions: there is nothing to answer")
+    job = ctx.db.get(JobListing, state.job.job_id)
+    ad = (job.raw_description or "").strip() if job else ""
+    out = draft_answers(
+        questions, ctx, ad, tier=tier, task="answer_screening",
+        job_id=state.job.job_id, match_id=ctx.run.match_id, run_id=ctx.run.id,
+    )
+    for a in out:
+        a.pop("_claims", None)
     state.side_outputs.screening_answers = out
     return {
         "questions": len(questions),

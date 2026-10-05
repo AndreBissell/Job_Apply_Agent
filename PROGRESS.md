@@ -5,6 +5,27 @@ one block per milestone.
 
 ---
 
+## 2026-10-05 — Centrelink dashboard: Overview tab + monthly Applied periods — DONE ✅
+
+- Plan `docs/centrelink-dashboard-plan.md` (decision log at the end). Branch `centerlink-preperation`, 3 code commits.
+- Backend: prefs `obligation_target` / `obligation_cycle_start`; `matches.interview_at` (migration `d5f1b8c3e9a2`); `app/obligation.py` (monthly periods from the start date, day clamped); `GET /obligation`; `PATCH /jobs/{id}/interview`; `GET /jobs?ready=true`; `retention.screenshot_fields` shared with `/jobs`. Preferences are now dumped in JSON mode so a date stores.
+- Sidebar: Overview tab first (progress, waiting letters, Keep Applying card row, Scan More Jobs); Applied tab as `<details>` periods with cost, + Interview and per-period CSV; `markApplied()` shared; live reloads refresh the visible tab.
+- `python -m pytest -q`: 1497 passed (29 new in `tests/test_obligation.py`). E2E `tests/e2e/dashboard_e2e.py`: 77/77 (scratch DB, stub LLM, no model call, nothing off the machine). Migration up/down/up on a scratch copy of app.db.
+- Incident: an early e2e run let two tabs opened by `chrome.tabs.create` load real Seek pages (an ad URL and one search) before Playwright's routing attached. Fixed by stubbing `chrome.tabs.create` in the harness and failing on any off-machine request.
+- Not verified: the user's own Chrome; what + Interview should trigger (later).
+
+---
+
+## 2026-10-05 — Phase 9c: Quick Apply drafts, help toggle, question eval — DONE ✅
+
+- Branch `centerlink-preperation`. Toggle `screening_question_help_enabled` (Personalise; off = no help on any question, no model call). One-click drafts for open-ended assisted questions (`POST /jobs/{id}/screening-drafts`, mid), code-checked, stored on `job_screening_questions.draft` (migration `a9e3c5d7f142`) and marked "redraft" when the profile, the question's sorting or the letter changes. Draft / Redraft / Copy in the overlay and sidebar.
+- `python -m pytest -q`: 1465 passed. E2E `tests/e2e/quick_apply_e2e.py`: 120/120 (stub LLM, scratch DB).
+- Eval `screening-v1` ($0.196): sorting 45/45; 3 `user` wordings would reach the model (logged); labels 0 problems over 420 pointers; drafts 7/7 answered passed, planted 4/4 clean; 4 answers talked to the candidate ("my profile...") -> code check + prompt line.
+- Fixed: a test that made a paid Gemini call on every full test run.
+- Live check passed on the TEST backend (job 57, 7 questions; layer 5 live); fixed three defects it found (gap card "wanted" for a form-only skill; duplicate evidence rows; the panel re-fetching and jumping to the top when Seek re-renders the form). 1468 tests; e2e 123/123. Drafts not yet seen on a live page.
+
+---
+
 ## 2026-10-04 — Loose ends after the 7/8 audit — DONE ✅
 
 - The three per-run limits (`letter_max_drafts`, `letter_max_tool_calls`, `llm_run_budget_usd`) are wired from preferences into every new run, with bounds, validation on read and sidebar inputs (14/14 browser checks). `python -m pytest -q`: 1126 passed (118 new, Sonnet-written to a spec, reviewed).

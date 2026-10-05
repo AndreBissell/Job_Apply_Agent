@@ -747,7 +747,10 @@ def test_a_one_shot_regenerate_of_an_unedited_letter_is_a_fresh_draft(db, monkey
 # ---------------------------------------------------------------------------
 def test_the_workflow_engine_lands_its_final_draft_through_the_production_path(db, monkeypatch):
     Script().install(monkeypatch)
-    set_preferences(db, 1, {"letter_engine": "workflow"})
+    # Side outputs off: Script doesn't script them, and on (the default) the résumé notes
+    # reached the real provider, a paid mid call on every test run (found 2026-10-05).
+    set_preferences(db, 1, {"letter_engine": "workflow", "resume_advice_enabled": False,
+                            "learning_suggestions_enabled": False, "screening_answers_enabled": False})
     add_match(db, 5, 90)
     events = Events()
 

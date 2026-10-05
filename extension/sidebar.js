@@ -1,4 +1,5 @@
-// Side panel: tabbed Jobs + Profile editor.
+// Side panel: tabbed Overview / Jobs / Applied / Profile. The Overview and Applied tabs
+// live in dashboard.js (loaded after this file, sharing its globals).
 // Vanilla JS, no build step. Talks to the FastAPI backend — BACKEND comes from
 // config.js and is either the real (8000) or test (8001) environment.
 
@@ -114,6 +115,7 @@ function mk(tag, className, text) {
 // Tab switching
 // ---------------------------------------------------------------------------
 const tabBtns = document.querySelectorAll('nav#tabs .tab');
+const overviewSection = document.getElementById('overview-section');
 const jobsSection = document.getElementById('jobs-section');
 const appliedSection = document.getElementById('applied-section');
 const profileSection = document.getElementById('profile-section');
@@ -125,15 +127,33 @@ tabBtns.forEach(btn => {
     tabBtns.forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     const tab = btn.dataset.tab;
+    overviewSection.hidden = tab !== 'overview';
     jobsSection.hidden = tab !== 'jobs';
     appliedSection.hidden = tab !== 'applied';
     profileSection.hidden = tab !== 'profile';
-    hdrJobsBtns.style.display = tab === 'jobs' ? '' : 'none';
+    hdrJobsBtns.style.display = (tab === 'jobs' || tab === 'overview') ? '' : 'none';
     if (tab === 'profile' && !profileLoaded) loadProfile();
     if (tab === 'profile') loadToWorkOn(); // counts move as new ads are scanned — always refresh
-    if (tab === 'applied') loadApplied(); // always refresh — cheap query, keeps it current
+    if (tab === 'overview') loadOverview(); // always refresh: counts move as you apply
+    if (tab === 'applied') loadAppliedPeriods(); // always refresh — cheap query, keeps it current
   });
 });
+
+function showTab(tab) {
+  document.querySelector(`nav#tabs .tab[data-tab="${tab}"]`)?.click();
+}
+
+// Mark a job applied (stamps applied_at once, server-side). Shared by the Jobs cards and
+// the Overview's Keep Applying cards. Throws on failure; the caller says so.
+async function markApplied(jobId) {
+  const res = await fetch(`${BACKEND}/jobs/${jobId}/status?profile_id=${PROFILE_ID}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: 'applied' }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
 
 // ---------------------------------------------------------------------------
 // Jobs tab
@@ -315,12 +335,7 @@ function renderJob(job, tier) {
     if (job.status === 'applied') return;
     applyBtn.disabled = true;
     try {
-      const res = await fetch(`${BACKEND}/jobs/${job.job_id}/status?profile_id=${PROFILE_ID}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'applied' }),
-      });
-      if (!res.ok) throw new Error();
+      await markApplied(job.job_id);
       job.status = 'applied';
       applyBtn.className = 'apply-btn applied';
       applyBtn.textContent = '✓ Applied';
@@ -981,61 +996,9 @@ function renderCoverLetterEditor(container, jobId, cl) {
 }
 
 // ---------------------------------------------------------------------------
-// Applied tab — Centrelink mutual-obligation reporting
+// Applied tab — Centrelink mutual-obligation reporting. The monthly periods and the CSV
+// exports live in dashboard.js; the helpers below are shared with it.
 // ---------------------------------------------------------------------------
-const appliedStatusEl = document.getElementById('applied-status');
-const appliedListEl = document.getElementById('applied-list');
-let lastAppliedJobs = [];
-
-async function loadApplied() {
-  appliedStatusEl.textContent = 'Loading…';
-  appliedListEl.innerHTML = '';
-  let jobs;
-  try {
-    const res = await fetch(`${BACKEND}/jobs?profile_id=${PROFILE_ID}&min_score=0&status=applied`);
-    jobs = await res.json();
-  } catch {
-    appliedStatusEl.textContent = 'Backend not running — start run_api.py.';
-    return;
-  }
-  lastAppliedJobs = Array.isArray(jobs) ? jobs : [];
-  if (!lastAppliedJobs.length) {
-    appliedStatusEl.textContent = 'No applications logged yet. Use "Mark Applied" on a job in the Jobs tab.';
-    return;
-  }
-  appliedStatusEl.textContent = `${lastAppliedJobs.length} application(s).`;
-  for (const job of lastAppliedJobs) appliedListEl.appendChild(renderAppliedRow(job));
-}
-
-function renderAppliedRow(job) {
-  const li = document.createElement('li');
-  const row = document.createElement('div');
-  row.className = 'job-row';
-
-  const title = document.createElement('span');
-  title.className = 'job-title';
-  title.textContent = job.title || '(untitled)';
-  row.appendChild(title);
-
-  if (job.applied_at) {
-    const date = document.createElement('span');
-    date.className = 'applied-date';
-    date.textContent = new Date(job.applied_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' });
-    row.appendChild(date);
-  }
-  li.appendChild(row);
-
-  const meta = document.createElement('div');
-  meta.className = 'job-meta';
-  meta.textContent = [job.company, job.location].filter(Boolean).join(' · ') || '—';
-  li.appendChild(meta);
-
-  const evidence = evidenceNote(job);
-  if (evidence) li.appendChild(evidence);
-
-  li.addEventListener('click', () => chrome.tabs.create({ url: job.url }));
-  return li;
-}
 
 // Screenshot files are deleted after a fixed TTL (30 days by default) while the
 // application record stays. Say so on the card rather than letting the image
@@ -1065,30 +1028,6 @@ function csvEscape(val) {
   const s = String(val ?? '');
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
-
-document.getElementById('export-applied-btn').addEventListener('click', () => {
-  const rows = [['Date Applied', 'Job Title', 'Employer', 'Location', 'Source URL', 'Screenshot Evidence']];
-  for (const job of lastAppliedJobs) {
-    rows.push([
-      job.applied_at ? job.applied_at.slice(0, 10) : '',
-      job.title || '',
-      job.company || '',
-      job.location || '',
-      job.url || '',
-      // taken_at outlives the file, so distinguish expired from never-captured.
-      job.screenshot_url ? job.screenshot_taken_at.slice(0, 10)
-        : job.screenshot_taken_at ? `${job.screenshot_taken_at.slice(0, 10)} (file expired)` : 'No',
-    ]);
-  }
-  const csv = rows.map(r => r.map(csvEscape).join(',')).join('\r\n');
-  const blob = new Blob([csv], { type: 'text/csv' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `applied-jobs-${new Date().toISOString().slice(0, 10)}.csv`;
-  a.click();
-  URL.revokeObjectURL(url);
-});
 
 document.getElementById('export-evidence-btn').addEventListener('click', async () => {
   try {
@@ -1395,6 +1334,7 @@ async function scanPage() {
 
     scanLog(abort ? 'Scan stopped early — refreshing matches…' : 'Scan complete — refreshing matches…');
     loadJobs();
+    refreshDashboard();
   } finally {
     scanning = false;
     scanBtn.disabled = false;
@@ -1402,7 +1342,7 @@ async function scanPage() {
 }
 
 scanBtn.addEventListener('click', scanPage);
-document.getElementById('refresh-btn').addEventListener('click', loadJobs);
+document.getElementById('refresh-btn').addEventListener('click', () => { loadJobs(); refreshDashboard(); });
 
 // ---------------------------------------------------------------------------
 // Personalise metrics — collapsible panel of user-tunable thresholds
@@ -1470,6 +1410,8 @@ const sideOutputToggles = {
   screening_answers_enabled: document.getElementById('side-screening'),
   learning_suggestions_enabled: document.getElementById('side-learning'),
   resume_advice_enabled: document.getElementById('side-resume'),
+  // Not a side output (it runs outside the letter run), but the same on/off shape.
+  screening_question_help_enabled: document.getElementById('qa-question-help'),
 };
 
 // The full cover-letter pipeline (docs/cover-letter-loop-plan.md §6). Stored server-side
@@ -2639,19 +2581,25 @@ async function refreshBudgetBanner() {
 // ---------------------------------------------------------------------------
 let _eventsEverOpened = false;
 
-// Reload the job list after a letter event, debounced. Never while the user is typing
-// in the list (an answer to a question, a letter edit): a reload would wipe it, so it
-// tries again a few seconds later.
+// True while the user is typing inside `el` (an answer, a letter edit, the start date):
+// a reload would wipe what they typed.
+function typingIn(el) {
+  const active = document.activeElement;
+  return !!(active && el.contains(active) && ['TEXTAREA', 'INPUT', 'SELECT'].includes(active.tagName));
+}
+
+// Reload the job list (and the visible Overview / Applied tab) after a letter event,
+// debounced. Never while the user is typing in them: it tries again a few seconds later.
 let reloadTimer = null;
 function scheduleReload(delay = 400) {
   clearTimeout(reloadTimer);
   reloadTimer = setTimeout(function tryReload() {
-    const active = document.activeElement;
-    if (active && jobListEl.contains(active) && ['TEXTAREA', 'INPUT', 'SELECT'].includes(active.tagName)) {
+    if (typingIn(jobListEl) || typingIn(overviewSection) || typingIn(appliedSection)) {
       reloadTimer = setTimeout(tryReload, 5000);
       return;
     }
     loadJobs();
+    refreshDashboard();
   }, delay);
 }
 
@@ -2664,13 +2612,14 @@ function connectEvents() {
   }
 
   source.onopen = () => {
-    if (_eventsEverOpened) loadJobs(); // reconnect — reload to catch up on missed events
+    if (_eventsEverOpened) { loadJobs(); refreshDashboard(); } // reconnect — catch up on missed events
     _eventsEverOpened = true;
   };
 
   // New job scored → reload the jobs list so it appears
   source.addEventListener('job_processed', () => {
     loadJobs();
+    refreshDashboard();
   });
 
   // Cover letter ready → update the badge and, if expanded, the editor in place.
@@ -2768,7 +2717,7 @@ applyZoom(1);
 
 backendReady.then(() => {
   renderEnvPill();
-  loadPreferences().then(loadJobs);
+  loadPreferences().then(() => { loadJobs(); loadOverview(); }); // Overview is the opening tab
   refreshBudgetBanner();
   connectEvents();
 });

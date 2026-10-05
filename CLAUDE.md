@@ -181,6 +181,7 @@ job-app-assistant/
     run_cover_letters.py  # batch cover-letter generation (dev/testing only)
     letter_lab.py      # cover-letter eval harness (evals/rubric.md); analyze = Phase 3 hand-check pack; loop-report = revisions
     grading_panel.py   # blind Opus grading panel: pack / disagreements / merge (evals/grading-panel.md)
+    screening_eval.py  # Quick Apply question-help eval: build-set / sort / labels / drafts / report (Phase 9c)
     check_matching.py  # scoring diagnostic report vs expected bands
     check_llm.py       # validate the LLM key before a batch
     smoke_test.py
@@ -432,7 +433,42 @@ settled from the samples; anything else still needs a live check the user drives
 fast-follow 1 below; don't guess selectors). The "Polish" button is
 already Regenerate (Phase 8). Vertex batch inference was checked (plan §10.2): possible on the
 trial and our models, but ~$0.001/job saved and scores a day late, so NOT built.
-Next: whatever the user names; Phase 9 when the user can do the live session. Known follow-ups (plan
+9c is DONE (2026-10-05, branch `centerlink-preperation`; plan §10.1 + Decision log). Toggle
+`screening_question_help_enabled` (default on; USER: off covers ALL assisted questions, help
+`off` before any gating, no model call). Drafts: `app/screening/drafts.py` + `POST
+/jobs/{id}/screening-drafts {bank_id}`, ONE question per click (mid, task `quick_apply_draft`),
+only assisted free-text `years_skill_text` / `free_text_describe` on a full-pipeline job, refused
+in code first; the GET view never drafts. Writer = `answer_screening.draft_answers` (run-less
+core; the letter-run tool is unchanged). Per-part evidence/years for compound skills; code checks
+flag a duration above the dates, a missing part named, a listed skill as experience, and a note
+for the candidate inside the answer. Stored on `job_screening_questions.draft` (migration
+`a9e3c5d7f142`) with a fingerprint: profile / question sorting / letter run changed -> "redraft".
+Overlay + sidebar: Draft / Redraft / Copy only. Eval `scripts/screening_eval.py` (scratch copy of
+eval.db; `evals/screening/set.json` adjudicated) -> `evals/results/screening-v1.md` ($0.196).
+1465 tests; e2e 120/120. The test suite no longer makes a paid call (one leaking test fixed).
+LIVE CHECK PASSED 2026-10-05 (TEST backend, job 57 Pitch Black, 7 questions: capture, sorting,
+live layer 5, the 9b views, side panel, help-off switch, nothing touched on Seek's form); it found
+and fixed two 9b display defects (gap card "wanted" for a skill only the form asks about ->
+`wanted_by_ad`; duplicate evidence rows -> `assist.compact`) and the panel jumping to the top on
+Seek's re-renders (content script now recaptures only when the question ids change). Drafts are
+still unseen on a live page (that form had no free-text question). 1468 tests; e2e 123/123. Follow-ups:
+future_work/quick-apply-user-keywords.md, future_work/quick-apply-draft-followups.md.
+Centrelink dashboard DONE (2026-10-05, docs/centrelink-dashboard-plan.md + its Decision log). The
+side panel opens on an **Overview** tab (extension/dashboard.js): x / target applied this period, the
+period and days left, letters waiting on you, a "Keep applying" row of jobs with a letter ready (Open ad
+/ copy letter / Mark applied, two clicks) and the next 3 suggested searches. The **Applied** tab is one
+`<details>` per monthly period (newest first, current open): applied/target, estimated AI cost, rows with
+date, score and **+ Interview**, per-period and full CSV. Backend: prefs `obligation_target` (20) /
+`obligation_cycle_start` ("YYYY-MM-DD"; periods run monthly from it in both directions, day clamped;
+calendar months until set), `app/obligation.py` (pure date maths), `GET /obligation` (one payload for
+both tabs), `PATCH /jobs/{id}/interview` -> `matches.interview_at` (migration `d5f1b8c3e9a2`; status
+stays 'applied'), `GET /jobs?ready=true`. "Applied" = `applied_at` set, on its LOCAL date, hidden
+matches included; cost per job = ALL `llm_usage` for that job_id (null = before logging -> "not
+costed"). What + Interview triggers is not built yet. 1497 tests; e2e `tests/e2e/dashboard_e2e.py`
+77/77 (scratch DB, stub LLM). E2E RULE: stub the panel's `chrome.tabs.create`; a real tab it opens can
+load before Playwright's routing attaches and reach Seek (it did once, ~2 page loads). Not verified in
+the user's own Chrome.
+Next: whatever the user names. Known follow-ups (plan
 Decision log 2026-10-04): check_claims passes "I have included a link to a video"
 (invented attachment), "daily" frequency claims and "apply my skills in X" on a listing;
 style_lint's gap-led pattern misses "While my X rather than Y"; Gemini implicit caching

@@ -1,0 +1,1241 @@
+{
+ "_note": "Phase 9c eval set. `expected` is the TRUE label (kind, strategy, parameters) whatever layer sorts it. Adjudicate: fix any wrong label, then set `adjudicated` to true. Items with `unsure: true` need a look most. `use`: sort / draft / planted. job_id = an evals/eval.db job. No answers are stored here. Adjudicated by the user 2026-10-05 (all labels accepted as drafted).",
+ "adjudicated": true,
+ "items": [
+  {
+   "id": "S1-q1",
+   "source": "S1",
+   "text": "Are you legally entitled to work in Australia?",
+   "input_type": "single",
+   "options": [
+    "Yes",
+    "No"
+   ],
+   "seek_question_id": "indirect_3f6c2a10-8b1e-4c55-9d2a-0a1b2c3d4e5f_0",
+   "expected": {
+    "kind": "user",
+    "strategy": "user",
+    "parameters": {
+     "topic": "work_rights"
+    }
+   },
+   "use": [
+    "sort"
+   ],
+   "job_id": null,
+   "unsure": false,
+   "note": ""
+  },
+  {
+   "id": "S1-q2",
+   "source": "S1",
+   "text": "Do you identify as Aboriginal or Torres Strait Islander?",
+   "input_type": "single",
+   "options": [
+    "Yes, Aboriginal",
+    "Yes, Torres Strait Islander",
+    "Both Aboriginal and Torres Strait Islander",
+    "Neither Aboriginal and Torres Strait Islander",
+    "Prefer Not To Say"
+   ],
+   "seek_question_id": "indirect_3f6c2a10-8b1e-4c55-9d2a-0a1b2c3d4e5f_1",
+   "expected": {
+    "kind": "user",
+    "strategy": "user",
+    "parameters": {
+     "topic": "identity"
+    }
+   },
+   "use": [
+    "sort"
+   ],
+   "job_id": null,
+   "unsure": false,
+   "note": ""
+  },
+  {
+   "id": "S1-q3",
+   "source": "S1",
+   "text": "What motivated you to apply for this position?",
+   "input_type": "text",
+   "options": [],
+   "seek_question_id": "indirect_3f6c2a10-8b1e-4c55-9d2a-0a1b2c3d4e5f_2",
+   "expected": {
+    "kind": "user",
+    "strategy": "user",
+    "parameters": {
+     "topic": "motivation"
+    }
+   },
+   "use": [
+    "sort"
+   ],
+   "job_id": null,
+   "unsure": false,
+   "note": ""
+  },
+  {
+   "id": "S1-q4",
+   "source": "S1",
+   "text": "Please provide your salary expectations:",
+   "input_type": "dropdown",
+   "options": [
+    "$40,000 - $60,000",
+    "$60,000 - $80,000",
+    "$80,000 - $100,000",
+    "$100,000 - $120,000",
+    "$120,000 - $140,000",
+    "$140,000 - $160,000",
+    "$160,000 - $180,000",
+    "$180,000 - $200,000"
+   ],
+   "seek_question_id": "indirect_3f6c2a10-8b1e-4c55-9d2a-0a1b2c3d4e5f_3",
+   "expected": {
+    "kind": "user",
+    "strategy": "user",
+    "parameters": {
+     "topic": "salary"
+    }
+   },
+   "use": [
+    "sort"
+   ],
+   "job_id": null,
+   "unsure": false,
+   "note": ""
+  },
+  {
+   "id": "S1-q5",
+   "source": "S1",
+   "text": "How did you hear about this job?",
+   "input_type": "dropdown",
+   "options": [
+    "Seek advertisement",
+    "Linkedin advertisement",
+    "LinkedIn post from a connection",
+    "ATSICHS Brisbane website",
+    "Facebook",
+    "Community event",
+    "Careers event",
+    "Job seeker agency",
+    "ATSICHS Brisbane Email Notification"
+   ],
+   "seek_question_id": "indirect_3f6c2a10-8b1e-4c55-9d2a-0a1b2c3d4e5f_4",
+   "expected": {
+    "kind": "user",
+    "strategy": "user",
+    "parameters": {
+     "topic": "source"
+    }
+   },
+   "use": [
+    "sort"
+   ],
+   "job_id": null,
+   "unsure": false,
+   "note": ""
+  },
+  {
+   "id": "S1-q6",
+   "source": "S1",
+   "text": "Have there been any findings against you in relation to allegations of inappropriate behaviour with respect to children/young people in your past or current employment?",
+   "input_type": "single",
+   "options": [
+    "Yes",
+    "No"
+   ],
+   "seek_question_id": "indirect_3f6c2a10-8b1e-4c55-9d2a-0a1b2c3d4e5f_5",
+   "expected": {
+    "kind": "user",
+    "strategy": "user",
+    "parameters": {
+     "topic": "legal"
+    }
+   },
+   "use": [
+    "sort"
+   ],
+   "job_id": null,
+   "unsure": false,
+   "note": ""
+  },
+  {
+   "id": "S1-q7",
+   "source": "S1",
+   "text": "Are you aware of any compliance action under the National Law or any other law in relation to you that pertains to inappropriate behaviour with respect to children?",
+   "input_type": "single",
+   "options": [
+    "Yes",
+    "No"
+   ],
+   "seek_question_id": "indirect_3f6c2a10-8b1e-4c55-9d2a-0a1b2c3d4e5f_6",
+   "expected": {
+    "kind": "user",
+    "strategy": "user",
+    "parameters": {
+     "topic": "legal"
+    }
+   },
+   "use": [
+    "sort"
+   ],
+   "job_id": null,
+   "unsure": false,
+   "note": ""
+  },
+  {
+   "id": "S2-q1",
+   "source": "S2",
+   "text": "Which of the following statements best describes your right to work in Australia?",
+   "input_type": "dropdown",
+   "options": [
+    "I'm an Australian citizen",
+    "I'm a permanent resident and/or NZ citizen",
+    "I have a family/partner visa with no restrictions",
+    "I have a graduate temporary work visa",
+    "I have a holiday temporary work visa",
+    "I have a temporary visa with restrictions on work location (e.g. skilled regional visa 491)",
+    "I have a temporary protection or safe haven enterprise work visa",
+    "I have a temporary visa with no restrictions (e.g. doctoral student)",
+    "I have a temporary visa with restrictions on work hours (e.g. student visa, retirement visa)",
+    "I have a temporary visa with restrictions on industry (e.g. temporary activity visa 408)",
+    "I require sponsorship to work for a new employer (e.g. 482, 457)"
+   ],
+   "seek_question_id": "AU_Q_6_V_10",
+   "expected": {
+    "kind": "user",
+    "strategy": "user",
+    "parameters": {
+     "topic": "work_rights"
+    }
+   },
+   "use": [
+    "sort"
+   ],
+   "job_id": null,
+   "unsure": false,
+   "note": ""
+  },
+  {
+   "id": "S2-q2",
+   "source": "S2",
+   "text": "How many years' experience do you have as a full stack developer?",
+   "input_type": "dropdown",
+   "options": [
+    "No experience",
+    "Less than 1 year",
+    "1 year",
+    "2 years",
+    "3 years",
+    "4 years",
+    "5 years",
+    "More than 5 years"
+   ],
+   "seek_question_id": "AU_Q_6804_V_4",
+   "expected": {
+    "kind": "assisted",
+    "strategy": "years_role_bracket",
+    "parameters": {
+     "role": "full stack developer"
+    }
+   },
+   "use": [
+    "sort"
+   ],
+   "job_id": null,
+   "unsure": false,
+   "note": ""
+  },
+  {
+   "id": "S2-q3",
+   "source": "S2",
+   "text": "Have you worked in a role which requires C# development experience?",
+   "input_type": "single",
+   "options": [
+    "Yes",
+    "No"
+   ],
+   "seek_question_id": "AU_Q_218_V_2",
+   "expected": {
+    "kind": "assisted",
+    "strategy": "skill_in_role_yes_no",
+    "parameters": {
+     "skill": "C#",
+     "phrase": "C# development"
+    }
+   },
+   "use": [
+    "sort"
+   ],
+   "job_id": null,
+   "unsure": false,
+   "note": ""
+  },
+  {
+   "id": "S2-q4",
+   "source": "S2",
+   "text": "What's your expected annual base salary?",
+   "input_type": "dropdown",
+   "options": [
+    "$30k",
+    "$35k",
+    "$40k",
+    "$45k",
+    "$50k",
+    "$55k",
+    "$60k",
+    "$65k",
+    "$70k",
+    "$75k",
+    "$80k",
+    "$85k",
+    "$90k",
+    "$95k",
+    "$100k",
+    "$110k",
+    "$120k",
+    "$130k",
+    "$140k",
+    "$150k",
+    "$170k",
+    "$200k",
+    "$250k",
+    "$300k",
+    "$350k",
+    "$350k+"
+   ],
+   "seek_question_id": "AU_Q_8_V_2",
+   "expected": {
+    "kind": "user",
+    "strategy": "user",
+    "parameters": {
+     "topic": "salary"
+    }
+   },
+   "use": [
+    "sort"
+   ],
+   "job_id": null,
+   "unsure": false,
+   "note": ""
+  },
+  {
+   "id": "S2-q5",
+   "source": "S2",
+   "text": "How much notice are you required to give your current employer?",
+   "input_type": "dropdown",
+   "options": [
+    "None, I'm ready to go now",
+    "1 week",
+    "2 weeks",
+    "3 weeks",
+    "4 weeks",
+    "5 weeks",
+    "6 or more weeks"
+   ],
+   "seek_question_id": "AU_Q_13_V_2",
+   "expected": {
+    "kind": "user",
+    "strategy": "user",
+    "parameters": {
+     "topic": "notice"
+    }
+   },
+   "use": [
+    "sort"
+   ],
+   "job_id": null,
+   "unsure": false,
+   "note": ""
+  },
+  {
+   "id": "S2-q6",
+   "source": "S2",
+   "text": "Which of the following programming languages are you experienced in?",
+   "input_type": "multi",
+   "options": [
+    "JavaScript",
+    "HTML",
+    "CSS",
+    "Java",
+    "C",
+    "C#",
+    "Python",
+    "C++",
+    ".NET",
+    "Objective-C"
+   ],
+   "seek_question_id": "AU_Q_136_V_3",
+   "expected": {
+    "kind": "assisted",
+    "strategy": "skill_multi_select",
+    "parameters": {
+     "options_are": "skills"
+    }
+   },
+   "use": [
+    "sort"
+   ],
+   "job_id": null,
+   "unsure": false,
+   "note": ""
+  },
+  {
+   "id": "S3-q1",
+   "source": "S3",
+   "text": "Which of the following statements best describes your right to work in Australia?",
+   "input_type": "dropdown",
+   "options": [
+    "I'm an Australian citizen",
+    "I'm a permanent resident and/or NZ citizen",
+    "I have a family/partner visa with no restrictions",
+    "I have a graduate temporary work visa",
+    "I have a holiday temporary work visa",
+    "I have a temporary visa with restrictions on work location (e.g. skilled regional visa 491)",
+    "I have a temporary protection or safe haven enterprise work visa",
+    "I have a temporary visa with no restrictions (e.g. doctoral student)",
+    "I have a temporary visa with restrictions on work hours (e.g. student visa, retirement visa)",
+    "I have a temporary visa with restrictions on industry (e.g. temporary activity visa 408)",
+    "I require sponsorship to work for a new employer (e.g. 482, 457)"
+   ],
+   "seek_question_id": "AU_Q_6_V_10",
+   "expected": {
+    "kind": "user",
+    "strategy": "user",
+    "parameters": {
+     "topic": "work_rights"
+    }
+   },
+   "use": [
+    "sort"
+   ],
+   "job_id": null,
+   "unsure": false,
+   "note": ""
+  },
+  {
+   "id": "S3-q2",
+   "source": "S3",
+   "text": "How much notice are you required to give your current employer?",
+   "input_type": "dropdown",
+   "options": [
+    "None, I'm ready to go now",
+    "1 week",
+    "2 weeks",
+    "3 weeks",
+    "4 weeks",
+    "5 weeks",
+    "6 or more weeks"
+   ],
+   "seek_question_id": "AU_Q_13_V_2",
+   "expected": {
+    "kind": "user",
+    "strategy": "user",
+    "parameters": {
+     "topic": "notice"
+    }
+   },
+   "use": [
+    "sort"
+   ],
+   "job_id": null,
+   "unsure": false,
+   "note": ""
+  },
+  {
+   "id": "S4-q1",
+   "source": "S4",
+   "text": "Which of the following statements best describes your right to work in Australia?",
+   "input_type": "dropdown",
+   "options": [
+    "I'm an Australian citizen",
+    "I'm a permanent resident and/or NZ citizen",
+    "I have a family/partner visa with no restrictions",
+    "I have a graduate temporary work visa",
+    "I have a holiday temporary work visa",
+    "I have a temporary visa with restrictions on work location (e.g. skilled regional visa 491)",
+    "I have a temporary protection or safe haven enterprise work visa",
+    "I have a temporary visa with no restrictions (e.g. doctoral student)",
+    "I have a temporary visa with restrictions on work hours (e.g. student visa, retirement visa)",
+    "I have a temporary visa with restrictions on industry (e.g. temporary activity visa 408)",
+    "I require sponsorship to work for a new employer (e.g. 482, 457)"
+   ],
+   "seek_question_id": "AU_Q_6_V_10",
+   "expected": {
+    "kind": "user",
+    "strategy": "user",
+    "parameters": {
+     "topic": "work_rights"
+    }
+   },
+   "use": [
+    "sort"
+   ],
+   "job_id": null,
+   "unsure": false,
+   "note": ""
+  },
+  {
+   "id": "S4-q2",
+   "source": "S4",
+   "text": "What's your expected annual base salary?",
+   "input_type": "dropdown",
+   "options": [
+    "$30k",
+    "$35k",
+    "$40k",
+    "$45k",
+    "$50k",
+    "$55k",
+    "$60k",
+    "$65k",
+    "$70k",
+    "$75k",
+    "$80k",
+    "$85k",
+    "$90k",
+    "$95k",
+    "$100k",
+    "$110k",
+    "$120k",
+    "$130k",
+    "$140k",
+    "$150k",
+    "$170k",
+    "$200k",
+    "$250k",
+    "$300k",
+    "$350k",
+    "$350k+"
+   ],
+   "seek_question_id": "AU_Q_8_V_2",
+   "expected": {
+    "kind": "user",
+    "strategy": "user",
+    "parameters": {
+     "topic": "salary"
+    }
+   },
+   "use": [
+    "sort"
+   ],
+   "job_id": null,
+   "unsure": false,
+   "note": ""
+  },
+  {
+   "id": "S4-q3",
+   "source": "S4",
+   "text": "How many years' experience do you have as a Front End React Developer?",
+   "input_type": "dropdown",
+   "options": [
+    "No experience",
+    "Less than 1 year",
+    "1 year",
+    "2 years",
+    "3 years",
+    "4 years",
+    "5 years",
+    "More than 5 years"
+   ],
+   "seek_question_id": "AU_Q_D29EC90383D57C663E2D2A43F205280B_V_2",
+   "expected": {
+    "kind": "assisted",
+    "strategy": "years_role_bracket",
+    "parameters": {
+     "role": "Front End React Developer"
+    }
+   },
+   "use": [
+    "sort"
+   ],
+   "job_id": null,
+   "unsure": false,
+   "note": ""
+  },
+  {
+   "id": "S5-q1",
+   "source": "S5",
+   "text": "Which of the following best describes your Australian working rights?",
+   "input_type": "single",
+   "options": [
+    "Australian Citizen/ Permanent Resident/ New Zealand Citizen ",
+    "I am on a VISA that allows for full-time work (excluding WHV 417) ",
+    "I do not have any current Australian Working rights "
+   ],
+   "seek_question_id": "indirect_7d4e9b22-1c3a-4f60-8e11-5a6b7c8d9e0f_a1",
+   "expected": {
+    "kind": "user",
+    "strategy": "user",
+    "parameters": {
+     "topic": "work_rights"
+    }
+   },
+   "use": [
+    "sort"
+   ],
+   "job_id": null,
+   "unsure": false,
+   "note": ""
+  },
+  {
+   "id": "S5-q2",
+   "source": "S5",
+   "text": "Are you comfortable with this being in an in-office role? (8:30am to 5pm, Monday to Friday) with WFH flexibility?",
+   "input_type": "single",
+   "options": [
+    "Yes ",
+    "No "
+   ],
+   "seek_question_id": "indirect_7d4e9b22-1c3a-4f60-8e11-5a6b7c8d9e0f_b2",
+   "expected": {
+    "kind": "user",
+    "strategy": "user",
+    "parameters": {
+     "topic": "work_arrangement"
+    }
+   },
+   "use": [
+    "sort"
+   ],
+   "job_id": null,
+   "unsure": false,
+   "note": ""
+  },
+  {
+   "id": "S5-q3",
+   "source": "S5",
+   "text": "What are your salary expectations for this role?",
+   "input_type": "text",
+   "options": [],
+   "seek_question_id": "indirect_7d4e9b22-1c3a-4f60-8e11-5a6b7c8d9e0f_c3",
+   "expected": {
+    "kind": "user",
+    "strategy": "user",
+    "parameters": {
+     "topic": "salary"
+    }
+   },
+   "use": [
+    "sort"
+   ],
+   "job_id": null,
+   "unsure": false,
+   "note": ""
+  },
+  {
+   "id": "S5-q4",
+   "source": "S5",
+   "text": "How many years of experience you have with building application on React Native with Expo, targeting web, iOS and Android ?",
+   "input_type": "text",
+   "options": [],
+   "seek_question_id": "indirect_7d4e9b22-1c3a-4f60-8e11-5a6b7c8d9e0f_d4",
+   "expected": {
+    "kind": "assisted",
+    "strategy": "years_skill_text",
+    "parameters": {
+     "skill": "React Native with Expo"
+    }
+   },
+   "use": [
+    "sort"
+   ],
+   "job_id": null,
+   "unsure": false,
+   "note": "Layers 1-4 leave this unsorted (expected); layer 5 should give this label."
+  },
+  {
+   "id": "bank-2",
+   "source": "test bank",
+   "text": "How many years' experience do you have as a software developer?",
+   "input_type": "dropdown",
+   "options": [
+    "No experience",
+    "Less than 1 year",
+    "1 year",
+    "2 years",
+    "3 years",
+    "4 years",
+    "5 years",
+    "More than 5 years"
+   ],
+   "seek_question_id": "AU_Q_5157_V_4",
+   "expected": {
+    "kind": "assisted",
+    "strategy": "years_role_bracket",
+    "parameters": {
+     "role": "software developer"
+    }
+   },
+   "use": [
+    "sort"
+   ],
+   "job_id": null,
+   "unsure": false,
+   "note": "Test bank; label = what layers 2-4 gave it (template). Check it."
+  },
+  {
+   "id": "bank-4",
+   "source": "test bank",
+   "text": "How many years' experience do you have as a Microsoft Power Platform Developer?",
+   "input_type": "dropdown",
+   "options": [
+    "No experience",
+    "Less than 1 year",
+    "1 year",
+    "2 years",
+    "3 years",
+    "4 years",
+    "5 years",
+    "More than 5 years"
+   ],
+   "seek_question_id": "indirect_bank_4",
+   "expected": {
+    "kind": "assisted",
+    "strategy": "years_role_bracket",
+    "parameters": {
+     "role": "Microsoft Power Platform Developer"
+    }
+   },
+   "use": [
+    "sort"
+   ],
+   "job_id": null,
+   "unsure": false,
+   "note": "Test bank; label = what layers 2-4 gave it (template). Check it."
+  },
+  {
+   "id": "bank-5",
+   "source": "test bank",
+   "text": "Do you have experience using Microsoft Azure DevOps?",
+   "input_type": "single",
+   "options": [
+    "Yes",
+    "No"
+   ],
+   "seek_question_id": "indirect_bank_5",
+   "expected": {
+    "kind": "assisted",
+    "strategy": "skill_in_role_yes_no",
+    "parameters": {
+     "skill": "Microsoft Azure DevOps"
+    }
+   },
+   "use": [
+    "sort"
+   ],
+   "job_id": null,
+   "unsure": true,
+   "note": "Test bank, unsorted. A yes/no 'experience using X' question: there is no plain skill yes/no strategy, and skill_in_role_yes_no only counts work roles, which is stricter than the question. Check the strategy."
+  },
+  {
+   "id": "bank-6",
+   "source": "test bank",
+   "text": "How many years' experience do you have as a Power Automate Developer?",
+   "input_type": "dropdown",
+   "options": [
+    "No experience",
+    "Less than 1 year",
+    "1 year",
+    "2 years",
+    "3 years",
+    "4 years",
+    "5 years",
+    "More than 5 years"
+   ],
+   "seek_question_id": "indirect_bank_6",
+   "expected": {
+    "kind": "assisted",
+    "strategy": "years_role_bracket",
+    "parameters": {
+     "role": "Power Automate Developer"
+    }
+   },
+   "use": [
+    "sort"
+   ],
+   "job_id": null,
+   "unsure": false,
+   "note": "Test bank; label = what layers 2-4 gave it (template). Check it."
+  },
+  {
+   "id": "bank-7",
+   "source": "test bank",
+   "text": "Do you have the ability to work from home when required?",
+   "input_type": "single",
+   "options": [
+    "Yes",
+    "No"
+   ],
+   "seek_question_id": "AU_Q_256_V_2",
+   "expected": {
+    "kind": "user",
+    "strategy": "user",
+    "parameters": {
+     "topic": "work_arrangement"
+    }
+   },
+   "use": [
+    "sort"
+   ],
+   "job_id": null,
+   "unsure": false,
+   "note": "Test bank; label = what layers 2-4 gave it (keyword). Check it."
+  },
+  {
+   "id": "D1",
+   "source": "synthetic",
+   "text": "Describe your experience with SQL.",
+   "input_type": "text",
+   "options": [],
+   "seek_question_id": null,
+   "expected": {
+    "kind": "assisted",
+    "strategy": "free_text_describe",
+    "parameters": {
+     "skill": "SQL"
+    }
+   },
+   "use": [
+    "sort",
+    "draft"
+   ],
+   "job_id": 4,
+   "unsure": false,
+   "note": "Synthetic open-ended question on an eval.db job, for the draft eval."
+  },
+  {
+   "id": "D2",
+   "source": "synthetic",
+   "text": "How many years of experience do you have with React?",
+   "input_type": "text",
+   "options": [],
+   "seek_question_id": null,
+   "expected": {
+    "kind": "assisted",
+    "strategy": "years_skill_text",
+    "parameters": {
+     "skill": "React"
+    }
+   },
+   "use": [
+    "sort",
+    "draft"
+   ],
+   "job_id": 17,
+   "unsure": false,
+   "note": "Synthetic open-ended question on an eval.db job, for the draft eval."
+  },
+  {
+   "id": "D3",
+   "source": "synthetic",
+   "text": "Please describe your experience with C# and .NET.",
+   "input_type": "text",
+   "options": [],
+   "seek_question_id": null,
+   "expected": {
+    "kind": "assisted",
+    "strategy": "free_text_describe",
+    "parameters": {
+     "skill": "C# and .NET"
+    }
+   },
+   "use": [
+    "sort",
+    "draft"
+   ],
+   "job_id": 5,
+   "unsure": false,
+   "note": "Synthetic open-ended question on an eval.db job, for the draft eval."
+  },
+  {
+   "id": "D4",
+   "source": "synthetic",
+   "text": "How many years of Java experience do you have?",
+   "input_type": "text",
+   "options": [],
+   "seek_question_id": null,
+   "expected": {
+    "kind": "assisted",
+    "strategy": "years_skill_text",
+    "parameters": {
+     "skill": "Java"
+    }
+   },
+   "use": [
+    "sort",
+    "draft"
+   ],
+   "job_id": 42,
+   "unsure": false,
+   "note": "Synthetic open-ended question on an eval.db job, for the draft eval."
+  },
+  {
+   "id": "D5",
+   "source": "synthetic",
+   "text": "Tell us about your experience building and consuming REST APIs.",
+   "input_type": "text",
+   "options": [],
+   "seek_question_id": null,
+   "expected": {
+    "kind": "assisted",
+    "strategy": "free_text_describe",
+    "parameters": {
+     "skill": "REST APIs"
+    }
+   },
+   "use": [
+    "sort",
+    "draft"
+   ],
+   "job_id": 29,
+   "unsure": false,
+   "note": "Synthetic open-ended question on an eval.db job, for the draft eval."
+  },
+  {
+   "id": "D6",
+   "source": "synthetic",
+   "text": "Describe your experience with Microsoft Power Platform.",
+   "input_type": "text",
+   "options": [],
+   "seek_question_id": null,
+   "expected": {
+    "kind": "assisted",
+    "strategy": "free_text_describe",
+    "parameters": {
+     "skill": "Microsoft Power Platform"
+    }
+   },
+   "use": [
+    "sort",
+    "draft"
+   ],
+   "job_id": 24,
+   "unsure": false,
+   "note": "Synthetic open-ended question on an eval.db job, for the draft eval."
+  },
+  {
+   "id": "D7",
+   "source": "synthetic",
+   "text": "How many years of experience do you have with Python?",
+   "input_type": "text",
+   "options": [],
+   "seek_question_id": null,
+   "expected": {
+    "kind": "assisted",
+    "strategy": "years_skill_text",
+    "parameters": {
+     "skill": "Python"
+    }
+   },
+   "use": [
+    "sort",
+    "draft"
+   ],
+   "job_id": 44,
+   "unsure": false,
+   "note": "Synthetic open-ended question on an eval.db job, for the draft eval."
+  },
+  {
+   "id": "D8",
+   "source": "synthetic",
+   "text": "Briefly describe a project where you used machine learning.",
+   "input_type": "text",
+   "options": [],
+   "seek_question_id": null,
+   "expected": {
+    "kind": "assisted",
+    "strategy": "free_text_describe",
+    "parameters": {
+     "skill": "machine learning"
+    }
+   },
+   "use": [
+    "sort",
+    "draft"
+   ],
+   "job_id": 37,
+   "unsure": false,
+   "note": "Synthetic open-ended question on an eval.db job, for the draft eval."
+  },
+  {
+   "id": "D9",
+   "source": "synthetic",
+   "text": "How many years of experience you have with building application on React Native with Expo, targeting web, iOS and Android ?",
+   "input_type": "text",
+   "options": [],
+   "seek_question_id": null,
+   "expected": {
+    "kind": "assisted",
+    "strategy": "years_skill_text",
+    "parameters": {
+     "skill": "React Native with Expo"
+    }
+   },
+   "use": [
+    "sort",
+    "draft"
+   ],
+   "job_id": 17,
+   "unsure": false,
+   "note": "Synthetic open-ended question on an eval.db job, for the draft eval."
+  },
+  {
+   "id": "D10",
+   "source": "synthetic",
+   "text": "Describe your experience with Azure DevOps.",
+   "input_type": "text",
+   "options": [],
+   "seek_question_id": null,
+   "expected": {
+    "kind": "assisted",
+    "strategy": "free_text_describe",
+    "parameters": {
+     "skill": "Azure DevOps"
+    }
+   },
+   "use": [
+    "sort",
+    "draft"
+   ],
+   "job_id": 24,
+   "unsure": false,
+   "note": "Synthetic open-ended question on an eval.db job, for the draft eval."
+  },
+  {
+   "id": "P1",
+   "source": "synthetic",
+   "text": "Describe your experience with Kubernetes.",
+   "input_type": "text",
+   "options": [],
+   "seek_question_id": null,
+   "expected": {
+    "kind": "assisted",
+    "strategy": "free_text_describe",
+    "parameters": {
+     "skill": "Kubernetes"
+    }
+   },
+   "use": [
+    "sort",
+    "planted"
+   ],
+   "job_id": 2,
+   "unsure": false,
+   "note": "Planted: the profile has no trace of the skill. The draft must not claim it."
+  },
+  {
+   "id": "P2",
+   "source": "synthetic",
+   "text": "How many years of experience do you have with Salesforce?",
+   "input_type": "text",
+   "options": [],
+   "seek_question_id": null,
+   "expected": {
+    "kind": "assisted",
+    "strategy": "years_skill_text",
+    "parameters": {
+     "skill": "Salesforce"
+    }
+   },
+   "use": [
+    "sort",
+    "planted"
+   ],
+   "job_id": 45,
+   "unsure": false,
+   "note": "Planted: the profile has no trace of the skill. The draft must not claim it."
+  },
+  {
+   "id": "P3",
+   "source": "synthetic",
+   "text": "Describe your experience with Flutter.",
+   "input_type": "text",
+   "options": [],
+   "seek_question_id": null,
+   "expected": {
+    "kind": "assisted",
+    "strategy": "free_text_describe",
+    "parameters": {
+     "skill": "Flutter"
+    }
+   },
+   "use": [
+    "sort",
+    "planted"
+   ],
+   "job_id": 17,
+   "unsure": false,
+   "note": "Planted: the profile has no trace of the skill. The draft must not claim it."
+  },
+  {
+   "id": "P4",
+   "source": "synthetic",
+   "text": "How many years of Terraform experience do you have?",
+   "input_type": "text",
+   "options": [],
+   "seek_question_id": null,
+   "expected": {
+    "kind": "assisted",
+    "strategy": "years_skill_text",
+    "parameters": {
+     "skill": "Terraform"
+    }
+   },
+   "use": [
+    "sort",
+    "planted"
+   ],
+   "job_id": 29,
+   "unsure": false,
+   "note": "Planted: the profile has no trace of the skill. The draft must not claim it."
+  },
+  {
+   "id": "U1",
+   "source": "synthetic",
+   "text": "Why do you want to work for us?",
+   "input_type": "text",
+   "options": [],
+   "seek_question_id": null,
+   "expected": {
+    "kind": "user",
+    "strategy": "user",
+    "parameters": {
+     "topic": "motivation"
+    }
+   },
+   "use": [
+    "sort"
+   ],
+   "job_id": null,
+   "unsure": false,
+   "note": "Synthetic `user` wording."
+  },
+  {
+   "id": "U2",
+   "source": "synthetic",
+   "text": "What is your notice period?",
+   "input_type": "text",
+   "options": [],
+   "seek_question_id": null,
+   "expected": {
+    "kind": "user",
+    "strategy": "user",
+    "parameters": {
+     "topic": "notice"
+    }
+   },
+   "use": [
+    "sort"
+   ],
+   "job_id": null,
+   "unsure": false,
+   "note": "Synthetic `user` wording."
+  },
+  {
+   "id": "U3",
+   "source": "synthetic",
+   "text": "Do you hold a current driver's licence?",
+   "input_type": "text",
+   "options": [],
+   "seek_question_id": null,
+   "expected": {
+    "kind": "user",
+    "strategy": "user",
+    "parameters": {
+     "topic": "legal"
+    }
+   },
+   "use": [
+    "sort"
+   ],
+   "job_id": null,
+   "unsure": true,
+   "note": "Synthetic. Expected `user`, but the layer-3 keyword filter probably has no pattern for this wording, so it would fall through to layer 5. Topic is a guess."
+  },
+  {
+   "id": "U4",
+   "source": "synthetic",
+   "text": "Please include a link to your portfolio or GitHub profile.",
+   "input_type": "text",
+   "options": [],
+   "seek_question_id": null,
+   "expected": {
+    "kind": "user",
+    "strategy": "user",
+    "parameters": {
+     "topic": "source"
+    }
+   },
+   "use": [
+    "sort"
+   ],
+   "job_id": null,
+   "unsure": true,
+   "note": "Synthetic. Expected `user`, but the layer-3 keyword filter probably has no pattern for this wording, so it would fall through to layer 5. Topic is a guess."
+  },
+  {
+   "id": "U5",
+   "source": "synthetic",
+   "text": "When would you be available for an interview?",
+   "input_type": "text",
+   "options": [],
+   "seek_question_id": null,
+   "expected": {
+    "kind": "user",
+    "strategy": "user",
+    "parameters": {
+     "topic": "notice"
+    }
+   },
+   "use": [
+    "sort"
+   ],
+   "job_id": null,
+   "unsure": true,
+   "note": "Synthetic. Expected `user`, but the layer-3 keyword filter probably has no pattern for this wording, so it would fall through to layer 5. Topic is a guess."
+  },
+  {
+   "id": "U6",
+   "source": "synthetic",
+   "text": "Are you willing to undergo a police check?",
+   "input_type": "text",
+   "options": [],
+   "seek_question_id": null,
+   "expected": {
+    "kind": "user",
+    "strategy": "user",
+    "parameters": {
+     "topic": "legal"
+    }
+   },
+   "use": [
+    "sort"
+   ],
+   "job_id": null,
+   "unsure": false,
+   "note": "Synthetic `user` wording."
+  },
+  {
+   "id": "U7",
+   "source": "synthetic",
+   "text": "What are your hourly rate expectations?",
+   "input_type": "text",
+   "options": [],
+   "seek_question_id": null,
+   "expected": {
+    "kind": "user",
+    "strategy": "user",
+    "parameters": {
+     "topic": "salary"
+    }
+   },
+   "use": [
+    "sort"
+   ],
+   "job_id": null,
+   "unsure": false,
+   "note": "Synthetic `user` wording."
+  }
+ ]
+}

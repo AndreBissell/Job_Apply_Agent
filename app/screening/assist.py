@@ -10,6 +10,9 @@ Who gets help (user decisions 2026-10-04):
     no_letter       no letter yet: "Create a cover letter to get help" (the existing
                     Regenerate)
     letter_pending  a letter run is writing or waiting on the user's answers
+    off             the user switched question help off (Personalise,
+                    ``screening_question_help_enabled``): every question is theirs to
+                    answer, nothing is analysed, no model is called. Checked first.
 
 For each ``assisted`` question, two views kept apart:
 
@@ -41,13 +44,13 @@ import re
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from app import gaps
+from app import gaps, preferences
 from app.llm.letter import view
 from app.llm.letter.state import LetterState, ProfileIndex, Requirement, split_sentences
 from app.models import CoverLetter, Experience, JobListing, LetterRun, Match, Profile, ScreeningQuestion
 from app.screening import bank, classify
 
-FULL, ONE_SHOT, NO_LETTER, PENDING = "full", "one_shot", "no_letter", "letter_pending"
+FULL, ONE_SHOT, NO_LETTER, PENDING, OFF = "full", "one_shot", "no_letter", "letter_pending", "off"
 PIPELINE_ENGINES = ("agent", "workflow")
 LIVE_RUN = ("running", "waiting_user", "answered")
 
@@ -58,6 +61,8 @@ MESSAGES = {
     NO_LETTER: "Create a cover letter to get help with these questions.",
     PENDING: "A cover letter is being written for this job (or is waiting on your answers). "
              "Help with these questions appears when it's done.",
+    OFF: ("Question help is switched off (Personalise), so every question here is yours to "
+          "answer."),
 }
 OPEN_PROMPT = "Do you have any experience with these?"
 
@@ -438,6 +443,9 @@ class _Gaps:
         decision = gaps.find_decision(self.decisions, label)
         card = {
             "skill": label, "skill_key": gaps.skill_key(label), "importance": importance,
+            # False = no ad requirement asks for it, only the form's question does: the card
+            # must not say "wanted" (found in the live check 2026-10-05, Azure DevOps).
+            "wanted_by_ad": bool(wanted),
             "requirement_text": requirement_text, "remembered": decision is not None,
             "gap_id": decision.id if decision else None,
         }
@@ -459,6 +467,21 @@ def _labels_for_parts(asked: str, missing: list[str]) -> list[str]:
 # --------------------------------------------------------------------------------------
 def _have_view(evidence: dict) -> list[dict]:
     return [i for b in BASIS_ORDER for i in evidence.get(b, [])]
+
+
+def compact(items: list[dict]) -> list[dict]:
+    """The evidence rows to SHOW: each pointer once, and a sentence of an experience
+    (``experience:12#s2``) dropped when the whole experience (``experience:12``, whose
+    text holds that sentence) is already listed. Labels still come from the full list."""
+    whole = {i["pointer"] for i in items if "#" not in i["pointer"]}
+    seen, out = set(), []
+    for i in items:
+        p = i["pointer"]
+        if p in seen or ("#" in p and p.split("#")[0] in whole):
+            continue
+        seen.add(p)
+        out.append(i)
+    return out
 
 
 def _empty_assist(strategy: str, subject: str | None) -> dict:
@@ -483,8 +506,8 @@ def _skill_question(q: dict, state, profile, index, gap_box: _Gaps, today, *, in
         counted, not_counted = ev["work"], ev["project"] + ev["study"] + ev["listed"]
     else:
         counted, not_counted = _have_view(ev), []
-    out["have"]["evidence"] = counted
-    out["have"]["not_counted"] = not_counted
+    out["have"]["evidence"] = compact(counted)
+    out["have"]["not_counted"] = compact(not_counted)
 
     if years:
         work_exps = [e for e in ev["experiences"] if e.experience_type in WORK_TYPES]
@@ -577,7 +600,7 @@ def _multi_select(q: dict, state, profile, index, gap_box: _Gaps) -> dict:
             if w["requirement_id"] not in seen:
                 seen.add(w["requirement_id"])
                 out["wanted"].append(w)
-    out["have"]["evidence"] = [i for o in out["options"] for i in o["evidence"]]
+    out["have"]["evidence"] = compact([i for o in out["options"] for i in o["evidence"]])
     n_have = sum(1 for o in out["options"] if o["have"])
     out["have"]["summary"] = f"Your profile backs {n_have} of {len(out['options'])} options"
     return out
@@ -606,9 +629,15 @@ def assist_question(q: dict, state: LetterState, profile: Profile, index: Profil
 # --------------------------------------------------------------------------------------
 def help_for_job(db: Session, job_id: int, profile_id: int) -> tuple[str, LetterState | None]:
     """Which help this job gets, and the full-pipeline run's state when it is ``full``."""
+    status, _, state = full_run(db, job_id, profile_id)
+    return status, state
+
+
+def full_run(db: Session, job_id: int, profile_id: int) -> tuple[str, LetterRun | None, LetterState | None]:
+    """``help_for_job`` plus the run itself (its id fingerprints a 9c draft)."""
     match = db.scalar(select(Match).where(Match.user_id == profile_id, Match.job_id == job_id))
     if match is None:
-        return NO_LETTER, None
+        return NO_LETTER, None, None
     letter = db.scalar(select(CoverLetter.generated_content).where(CoverLetter.match_id == match.id))
     runs = db.scalars(
         select(LetterRun)
@@ -617,14 +646,14 @@ def help_for_job(db: Session, job_id: int, profile_id: int) -> tuple[str, Letter
     ).all()
     live = bool(runs) and runs[0].status in LIVE_RUN
     if not letter:
-        return (PENDING if live else NO_LETTER), None
+        return (PENDING if live else NO_LETTER), None, None
     found = view.letter_run(runs, letter)
     if found is None:
-        return (PENDING if live else ONE_SHOT), None
-    state = found[1]
+        return (PENDING if live else ONE_SHOT), None, None
+    run, state = found[0], found[1]
     if not any(r.status != "unknown" for r in state.requirements):
-        return ONE_SHOT, None  # no evidence to work from
-    return FULL, state
+        return ONE_SHOT, None, None  # no evidence to work from
+    return FULL, run, state
 
 
 def _load_profile(db: Session, profile_id: int) -> Profile | None:
@@ -639,10 +668,15 @@ def _load_profile(db: Session, profile_id: int) -> Profile | None:
 def assist_job(db: Session, job_id: int, profile_id: int, *, today: datetime.date | None = None) -> dict:
     """GET /jobs/{id}/screening-assist: the job's questions in form order, each with its
     kind and, for a ``full`` job, the help for an assisted one. Sorts an ``unknown``
-    question with the small model only for a ``full`` job (once per bank row)."""
+    question with the small model only for a ``full`` job (once per bank row). Never
+    drafts: an open-ended assisted question is marked ``draftable`` and carries its
+    stored draft (with ``stale`` reasons) if the user asked for one before."""
     today = today or datetime.date.today()
     job = db.get(JobListing, job_id)
-    status, state = help_for_job(db, job_id, profile_id)
+    if preferences.question_help_enabled(db, profile_id):
+        status, run, state = full_run(db, job_id, profile_id)
+    else:
+        status, run, state = OFF, None, None
     questions = bank.job_questions(db, job_id)
     out = {
         "job_id": job_id, "job_title": job.title if job else None, "help": status,
@@ -651,9 +685,12 @@ def assist_job(db: Session, job_id: int, profile_id: int, *, today: datetime.dat
     }
     for q in questions:
         q["assist"] = None
+        q["draftable"], q["draft"] = False, None
     profile = _load_profile(db, profile_id) if status == FULL else None
     if status != FULL or profile is None:
         return out
+
+    from app.screening import drafts  # drafts imports this module
 
     index = ProfileIndex(profile)
     gap_box = _Gaps(gaps.active_decisions(db, profile_id))
@@ -663,6 +700,7 @@ def assist_job(db: Session, job_id: int, profile_id: int, *, today: datetime.dat
             if row is not None and classify.classify(db, row, job_id=job_id):
                 q.update(bank.question_view(row))
         q["assist"] = assist_question(q, state, profile, index, gap_box, today)
+    drafts.attach(db, job_id, profile_id, questions, profile, index, run)
 
     # A remembered "no" the job asks for again: count the ad (once per ad), as a run does.
     by_id = {d.id: d for d in gap_box.decisions}
