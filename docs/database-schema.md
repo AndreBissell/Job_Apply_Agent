@@ -449,13 +449,16 @@ first time `status` transitions to `'applied'`, and is never reset by a
 repeat "mark applied" call. The Centrelink dashboard (`GET /obligation`,
 docs/centrelink-dashboard-plan.md) counts an application by `applied_at` (its
 local date, bucketed into the user's monthly periods), not by `status`, and
-counts hidden matches too.
+counts hidden matches too. The evidence export (`GET /jobs/evidence-export`) uses the
+same `applied_at IS NOT NULL` rule. Re-scoring (`match_job` / `quick_screen` with
+`force=True`, e.g. Regenerate) updates the score but never changes `status`; only a
+new row starts at `'new'`.
 
 `interview_at` records that an application got an interview (the Applied tab's
 "+ Interview", `PATCH /jobs/{id}/interview`, only for an applied match; clicking
 again clears it). It deliberately does **not** move `status` to
-`'interviewing'`: the evidence export, the Applied CSV and retention all read
-`status = 'applied'`, and an interview must not drop a job out of them.
+`'interviewing'`: the `GET /jobs?status=applied` filter reads `status = 'applied'`, so
+an interview must not move it.
 
 `screenshot_path`/`screenshot_taken_at` are further Centrelink evidence: a
 screenshot of the actual applied-to page, captured client-side by the extension

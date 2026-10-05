@@ -952,7 +952,9 @@ def evidence_export(profile_id: int = 1, db: Session = Depends(get_db)) -> Respo
         select(Match, JobListing)
         .join(JobListing, Match.job_id == JobListing.id)
         .where(Match.user_id == profile_id)
-        .where(Match.status == "applied")
+        # applied_at, not status: the same definition as the dashboard (GET /obligation)
+        # and retention, so the export can never disagree with the period counts.
+        .where(Match.applied_at.is_not(None))
         .order_by(Match.applied_at.desc())
     ).all()
 

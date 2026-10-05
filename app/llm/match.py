@@ -299,10 +299,11 @@ def match_job(
 
         gaps_json = json.dumps(gaps)
         if existing is not None:
+            # Re-scoring never touches the lifecycle status: a Regenerate queued
+            # before the user pressed Mark Applied must not un-apply the job.
             existing.score = score
             existing.reasoning = reasoning
             existing.gaps = gaps_json
-            existing.status = "new"
             existing.scored_at = datetime.now(timezone.utc)
         else:
             db.add(

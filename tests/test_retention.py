@@ -525,6 +525,17 @@ class TestEvidenceExport:
         assert ",expired," in rows["Gone"]
         assert ",no," in rows["Bare"]
 
+    def test_applied_at_decides_not_status(self, client, db):
+        """Same definition as the dashboard: a match with applied_at set counts even
+        if its status drifted (the old Regenerate reset it to 'new'), and status
+        'applied' without applied_at does not."""
+        _profile(db)
+        _match(db, title="Drifted", status="new", applied_at=days_ago(3))
+        _match(db, title="Status only", status="applied")
+        csv_text = self._zip(client).read("applied-jobs.csv").decode()
+        assert "Drifted" in csv_text
+        assert "Status only" not in csv_text
+
     def test_spreadsheet_formulas_in_titles_are_neutralised(self, client, db):
         _profile(db)
         _match(db, title="=HYPERLINK(\"http://evil\")", status="applied", applied_at=days_ago(1))
