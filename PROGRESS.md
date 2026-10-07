@@ -5,6 +5,16 @@ one block per milestone.
 
 ---
 
+## 2026-10-05 — Applied-evidence safety: two bug fixes — DONE ✅
+
+- Branch `fix/applied-evidence-safety` (from `centerlink-preperation`), not pushed. From docs/ARCHITECTURE.md §4.9 items 1 and 3.
+- `49f54ee`: re-scoring (`match_job` / `quick_screen` with force, e.g. a queued Regenerate) no longer resets `matches.status` to `'new'`; the evidence export now selects on `applied_at IS NOT NULL`, the dashboard's definition. `scripts/check_applied_consistency.py` counts status/applied_at disagreements read-only (`mode=ro`).
+- `046d2f9`: `DELETE /jobs/{id}` refuses an applied job (409) unless `?allow_applied=true`, and now removes the screenshot file. Jobs-tab cards for applied jobs have no Delete; the Applied tab has its own Delete with an explicit confirm.
+- `python -m pytest -q`: 1508 passed (11 new). E2E `tests/e2e/dashboard_e2e.py`: 90/90 (13 new). `tests/e2e/quick_apply_e2e.py` fails at its side-panel step with or without these changes (the panel now opens on Overview, so its Jobs-list wait times out): pre-existing, not fixed here.
+- Verified
+
+---
+
 ## 2026-10-05 — Centrelink dashboard: Overview tab + monthly Applied periods — DONE ✅
 
 - Plan `docs/centrelink-dashboard-plan.md` (decision log at the end). Branch `centerlink-preperation`, 3 code commits.
