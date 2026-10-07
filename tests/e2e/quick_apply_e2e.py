@@ -819,6 +819,7 @@ def run(headed: bool) -> int:
             side.on("pageerror", lambda e: print("   sidebar pageerror:", e))
             side.on("console", lambda m: m.type in ("error", "warning") and print("   sidebar console:", m.text))
             side.goto(f"chrome-extension://{ext_id}/sidebar.html")
+            side.click("nav#tabs .tab[data-tab=jobs]")  # the panel opens on the Overview tab
             card = side.locator("ul#job-list li", has_text="Full Stack Developer").first
             try:
                 card.wait_for(timeout=15000)
@@ -853,7 +854,6 @@ def run(headed: bool) -> int:
                     break
                 side.wait_for_timeout(250)
             c.check(off, "sidebar: unticking it saves screening_question_help_enabled = false")
-            side.close()
 
             page.goto(apply_url(samples["S5"]))
             wait_overlay(page, len(samples["S5"]["questions"]))
@@ -868,6 +868,9 @@ def run(headed: bool) -> int:
                     f"help off: no draft button and the stored draft isn't shown ({doff['buttons']})")
             c.check(len(stub_calls(stub_log)) == calls_before, "help off: no model call")
             http_json("PUT", "/profile/1/preferences", {"screening_question_help_enabled": True})
+            
+            # Close put here to stop race condition
+            side.close()
 
             # --- the model calls, and nothing else -----------------------------------
             log = stub_calls(stub_log)

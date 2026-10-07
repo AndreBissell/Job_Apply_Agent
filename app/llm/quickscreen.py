@@ -194,10 +194,11 @@ def quick_screen(
             )
             reasoning = f"Auto-skipped by pre-extraction quick screen: {reason}"
             if existing is not None:
+                # Status is left alone, as in match_job: re-screening must not
+                # un-apply a job.
                 existing.score = score
                 existing.reasoning = reasoning
                 existing.gaps = "[]"
-                existing.status = "new"
                 existing.scored_at = datetime.datetime.now(datetime.timezone.utc)
             else:
                 db.add(

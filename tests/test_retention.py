@@ -525,6 +525,17 @@ class TestEvidenceExport:
         assert ",expired," in rows["Gone"]
         assert ",no," in rows["Bare"]
 
+    def test_applied_at_decides_not_status(self, client, db):
+        """Same definition as the dashboard: a match with applied_at set counts even
+        if its status drifted (the old Regenerate reset it to 'new'), and status
+        'applied' without applied_at does not."""
+        _profile(db)
+        _match(db, title="Drifted", status="new", applied_at=days_ago(3))
+        _match(db, title="Status only", status="applied")
+        csv_text = self._zip(client).read("applied-jobs.csv").decode()
+        assert "Drifted" in csv_text
+        assert "Status only" not in csv_text
+
     def test_spreadsheet_formulas_in_titles_are_neutralised(self, client, db):
         _profile(db)
         _match(db, title="=HYPERLINK(\"http://evil\")", status="applied", applied_at=days_ago(1))
@@ -539,3 +550,68 @@ class TestEvidenceExport:
         taken = retention.utc(datetime.fromisoformat(job["screenshot_taken_at"]))
         expires = retention.utc(datetime.fromisoformat(job["screenshot_expires_at"]))
         assert (expires - taken).days == 30
+
+
+# --------------------------------------------------------------------------
+# DELETE /jobs/{id}: an applied job is evidence
+# --------------------------------------------------------------------------
+class TestDeleteJob:
+    def test_an_applied_job_is_refused_without_the_opt_in(self, client, db, shots):
+        _profile(db)
+        (shots / "a.png").write_bytes(b"png")
+        m = _match(db, status="applied", applied_at=days_ago(1), screenshot="a.png", shot_age=1)
+        db.add(CoverLetter(match_id=m.id, generated_content="Dear...", status="draft"))
+        db.commit()
+        job_id, match_id = m.job_id, m.id
+
+        res = client.delete(f"/jobs/{job_id}?profile_id=1")
+
+        assert res.status_code == 409
+        assert "Applied tab" in res.json()["detail"]
+        assert not _gone(db, JobListing, job_id)
+        assert not _gone(db, Match, match_id)
+        assert db.scalar(select(func.count()).select_from(CoverLetter)) == 1
+        assert (shots / "a.png").is_file()
+
+    def test_status_drift_does_not_bypass_the_guard(self, client, db):
+        """applied_at is the definition, so a match whose status was reset still counts."""
+        _profile(db)
+        m = _match(db, status="new", applied_at=days_ago(1))
+        assert client.delete(f"/jobs/{m.job_id}?profile_id=1").status_code == 409
+
+    def test_the_opt_in_deletes_it_and_its_screenshot(self, client, db, shots):
+        _profile(db)
+        (shots / "a.png").write_bytes(b"png")
+        (shots / "other.png").write_bytes(b"png")
+        m = _match(db, status="applied", applied_at=days_ago(1), screenshot="a.png", shot_age=1)
+        job_id, match_id = m.job_id, m.id
+
+        res = client.delete(f"/jobs/{job_id}?profile_id=1&allow_applied=true")
+
+        assert res.status_code == 200 and res.json() == {"deleted": job_id}
+        assert _gone(db, JobListing, job_id)
+        assert _gone(db, Match, match_id)
+        assert not (shots / "a.png").exists()
+        assert (shots / "other.png").is_file()
+
+    def test_an_unapplied_job_deletes_as_before(self, client, db, shots):
+        _profile(db)
+        (shots / "n.png").write_bytes(b"png")
+        m = _match(db, status="new", screenshot="n.png", shot_age=1)
+        job_id = m.job_id
+
+        assert client.delete(f"/jobs/{job_id}").status_code == 200
+        assert _gone(db, JobListing, job_id)
+        assert not (shots / "n.png").exists()
+
+    def test_a_job_with_no_match_deletes_as_before(self, client, db):
+        _profile(db)
+        job = JobListing(source="seek", source_job_id="lonely", url="u", title="T")
+        db.add(job)
+        db.commit()
+        assert client.delete(f"/jobs/{job.id}").status_code == 200
+        assert _gone(db, JobListing, job.id)
+
+    def test_unknown_job_is_404(self, client, db):
+        _profile(db)
+        assert client.delete("/jobs/999").status_code == 404

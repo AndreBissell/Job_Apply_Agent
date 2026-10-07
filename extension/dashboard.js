@@ -505,7 +505,34 @@ function renderPeriodJob(job) {
     toggleInterview(job, iv);
   });
   li.appendChild(iv);
+
+  // Deleting an application is deliberate and lives only here; the Jobs tab offers no
+  // Delete for applied jobs and the backend refuses one without allow_applied.
+  const del = mk('button', 'del-btn');
+  del.title = 'Delete this application';
+  del.innerHTML = TRASH_SVG;
+  del.addEventListener('click', (e) => {
+    e.stopPropagation(); // the row opens the ad
+    deleteApplication(job, del);
+  });
+  li.appendChild(del);
   return li;
+}
+
+async function deleteApplication(job, btn) {
+  if (!confirm(`Permanently delete this application ("${job.title || 'untitled'}")? It will no longer `
+    + 'count towards this period or appear in the evidence export. This can\'t be undone.')) return;
+  btn.disabled = true;
+  try {
+    await getJson(`${BACKEND}/jobs/${job.job_id}?profile_id=${PROFILE_ID}&allow_applied=true`, {
+      method: 'DELETE',
+    });
+    refreshDashboard();
+    loadJobs();
+  } catch {
+    alert('Could not delete the application — is the backend running?');
+    btn.disabled = false;
+  }
 }
 
 // "2026-10-06T22:00:00+00:00" -> the local "YYYY-MM-DD" (the day it counts on)

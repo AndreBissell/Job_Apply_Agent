@@ -476,8 +476,8 @@ class Match(Base):
         DateTime(timezone=True)
     )
     # The user recorded an interview for this application (Applied tab's "+ Interview").
-    # Status stays 'applied': everything that reads status == 'applied' (evidence export,
-    # retention) is unaffected. NULL = none recorded.
+    # Status stays 'applied', so the GET /jobs?status=applied filter is unaffected.
+    # NULL = none recorded.
     interview_at: Mapped[datetime.datetime | None] = mapped_column(
         DateTime(timezone=True)
     )

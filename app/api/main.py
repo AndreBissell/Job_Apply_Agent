@@ -952,7 +952,9 @@ def evidence_export(profile_id: int = 1, db: Session = Depends(get_db)) -> Respo
         select(Match, JobListing)
         .join(JobListing, Match.job_id == JobListing.id)
         .where(Match.user_id == profile_id)
-        .where(Match.status == "applied")
+        # applied_at, not status: the same definition as the dashboard (GET /obligation)
+        # and retention, so the export can never disagree with the period counts.
+        .where(Match.applied_at.is_not(None))
         .order_by(Match.applied_at.desc())
     ).all()
 
@@ -1450,13 +1452,34 @@ def bulk_hide_jobs(
 
 
 @app.delete("/jobs/{job_id}")
-def delete_job(job_id: int, db: Session = Depends(get_db)) -> dict:
-    """Delete a job listing and all its children (matches, cover letters, skills)."""
+def delete_job(
+    job_id: int,
+    profile_id: int = 1,
+    allow_applied: bool = False,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Delete a job listing and all its children (matches, cover letters, skills).
+
+    An applied job is Centrelink evidence, so deleting one is refused (409) unless the
+    caller opts in with ``allow_applied=true`` (the Applied tab's own Delete). The
+    match's screenshot file goes too; the cascade only removes the row pointing at it.
+    """
     job = db.get(JobListing, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
+    match = db.scalar(
+        select(Match).where(Match.user_id == profile_id, Match.job_id == job_id)
+    )
+    if match is not None and match.applied_at is not None and not allow_applied:
+        raise HTTPException(
+            status_code=409,
+            detail="This job is marked applied (Centrelink evidence). "
+                   "Delete it from the Applied tab instead.",
+        )
+    screenshot_path = match.screenshot_path if match is not None else None
     db.delete(job)
     db.commit()
+    unlink_screenshot(_screenshots_dir, screenshot_path)
     return {"deleted": job_id}
 
 

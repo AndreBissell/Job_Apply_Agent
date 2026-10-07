@@ -104,6 +104,13 @@ function truncate(str, n) {
 }
 
 // Small DOM helper: an element with a class and text (always textContent, never HTML).
+// The .del-btn icon, shared by the Jobs cards and the Applied tab (dashboard.js). Inline
+// SVG (not the 🗑 emoji) so the icon can take the hover colour via currentColor.
+const TRASH_SVG =
+  '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+  'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/></svg>';
+
 function mk(tag, className, text) {
   const e = document.createElement(tag);
   if (className) e.className = className;
@@ -335,11 +342,13 @@ function renderJob(job, tier) {
     if (job.status === 'applied') return;
     applyBtn.disabled = true;
     try {
-      await markApplied(job.job_id);
+      const res = await markApplied(job.job_id);
       job.status = 'applied';
+      job.applied_at = res.applied_at;
       applyBtn.className = 'apply-btn applied';
       applyBtn.textContent = '✓ Applied';
       applyBtn.title = 'Applied';
+      row.querySelector('.del-btn')?.remove(); // applied = evidence; delete lives on the Applied tab
     } catch {
       alert('Could not mark applied — is the backend running?');
     } finally {
@@ -348,25 +357,26 @@ function renderJob(job, tier) {
   });
   row.appendChild(applyBtn);
 
-  const delBtn = document.createElement('button');
-  delBtn.className = 'del-btn';
-  delBtn.title = 'Delete';
-  // Inline SVG (not the 🗑 emoji) so the icon can take the hover colour via currentColor.
-  delBtn.innerHTML =
-    '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
-    'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-    '<path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/></svg>';
-  delBtn.addEventListener('click', async (e) => {
-    e.stopPropagation();
-    if (!confirm(`Delete "${job.title}"?`)) return;
-    try {
-      const res = await fetch(`${BACKEND}/jobs/${job.job_id}`, { method: 'DELETE' });
-      if (res.ok) li.remove();
-    } catch {
-      alert('Delete failed — is the backend running?');
-    }
-  });
-  row.appendChild(delBtn);
+  // No Delete for an applied job (applied_at is the one definition): it is Centrelink
+  // evidence, deleted only from the Applied tab. The backend refuses it anyway (409).
+  if (!job.applied_at) {
+    const delBtn = document.createElement('button');
+    delBtn.className = 'del-btn';
+    delBtn.title = 'Delete';
+    delBtn.innerHTML = TRASH_SVG;
+    delBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (!confirm(`Delete "${job.title}"?`)) return;
+      try {
+        const res = await fetch(`${BACKEND}/jobs/${job.job_id}?profile_id=${PROFILE_ID}`, { method: 'DELETE' });
+        if (res.ok) li.remove();
+        else alert((await res.json().catch(() => ({}))).detail || `Delete failed (HTTP ${res.status})`);
+      } catch {
+        alert('Delete failed — is the backend running?');
+      }
+    });
+    row.appendChild(delBtn);
+  }
 
   li.appendChild(row);
 
