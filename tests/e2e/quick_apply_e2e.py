@@ -868,9 +868,9 @@ def run(headed: bool) -> int:
                     f"help off: no draft button and the stored draft isn't shown ({doff['buttons']})")
             c.check(len(stub_calls(stub_log)) == calls_before, "help off: no model call")
             http_json("PUT", "/profile/1/preferences", {"screening_question_help_enabled": True})
-
-            side.close()
+            
             # Close put here to stop race condition
+            side.close()
 
             # --- the model calls, and nothing else -----------------------------------
             log = stub_calls(stub_log)
