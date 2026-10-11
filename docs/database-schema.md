@@ -446,7 +446,11 @@ which stamps `applied_at`); the rest of the vocabulary is free bookkeeping for
 later. `applied_at` exists specifically for Centrelink mutual-obligation
 reporting (CSV export of what was applied to and when) - it is set once, the
 first time `status` transitions to `'applied'`, and is never reset by a
-repeat "mark applied" call. The Centrelink dashboard (`GET /obligation`,
+repeat "mark applied" call. `PATCH /jobs/{id}/status` accepts only the six values
+above (anything else is a 422), and once `applied_at` is set the status can only be
+`'applied'` (any other value is a 409), because an applied match is Centrelink evidence;
+sending `'applied'` again is a no-op that also repairs a row whose date is set but whose
+status is not. The Centrelink dashboard (`GET /obligation`,
 docs/centrelink-dashboard-plan.md) counts an application by `applied_at` (its
 local date, bucketed into the user's monthly periods), not by `status`, and
 counts hidden matches too. The evidence export (`GET /jobs/evidence-export`) uses the

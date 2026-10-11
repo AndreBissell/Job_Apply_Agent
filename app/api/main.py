@@ -436,7 +436,8 @@ class PreferencesUpdate(BaseModel):
 
 
 class StatusUpdate(BaseModel):
-    status: str
+    # The documented vocabulary (docs/database-schema.md, matches.status).
+    status: Literal["new", "shortlisted", "applied", "interviewing", "rejected", "withdrawn"]
 
 
 class CoverLetterUpdate(BaseModel):
@@ -1259,12 +1260,21 @@ def update_status(
     Transitioning to ``'applied'`` stamps ``applied_at`` — but only the first
     time; re-marking an already-applied job as applied again is a no-op on the
     timestamp, so it stays accurate for Centrelink reporting.
+
+    Once ``applied_at`` is set the status can only be ``'applied'`` (409 otherwise):
+    an applied match is Centrelink evidence. Sending ``'applied'`` again is a no-op
+    that also repairs a row whose date is set but whose status is not.
     """
     match = db.scalar(
         select(Match).where(Match.user_id == profile_id, Match.job_id == job_id)
     )
     if match is None:
         raise HTTPException(status_code=404, detail="Match not found")
+    if match.applied_at is not None and body.status != "applied":
+        raise HTTPException(
+            status_code=409,
+            detail="This job is marked applied (Centrelink evidence); its status can't change.",
+        )
 
     match.status = body.status
     if body.status == "applied" and match.applied_at is None:
