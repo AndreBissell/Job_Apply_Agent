@@ -25,7 +25,6 @@ import re
 import time
 import zipfile
 from collections import Counter
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
@@ -40,7 +39,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app import retention, search_suggest
-from app.api import events, paths
+from app.api import events, paths, worker
 from app.api.deps import get_db  # re-exported: tests key dependency_overrides on it
 from app.api.letters import router as letters_router
 from app.api.obligation import router as obligation_router
@@ -52,7 +51,6 @@ from app.llm import search_refine
 from app.llm import usage as llm_usage
 from app.llm.client import BudgetExceededError, DailyQuotaError
 from app.llm.cover_letter import THRESHOLD as COVER_LETTER_THRESHOLD
-from app.llm.extract import extract_job
 from app.llm.letter import production as letter_production
 from app.llm.letter import view as letter_view
 from app.llm.match import match_job
@@ -74,9 +72,6 @@ from app.screenshots import downscale_png, unlink_screenshot
 logger = logging.getLogger(__name__)
 
 SOURCE = "seek"
-
-# One worker thread so LLM calls don't block the event loop.
-_bg_executor = ThreadPoolExecutor(max_workers=1)
 
 # Seconds to wait between idle cover-letter generations (respect per-minute quota).
 _IDLE_INTERVAL_S = 20
@@ -164,7 +159,7 @@ async def _letters_phase() -> bool:
 
     logger.info("Idle: cover letter (%s) for job %s", work.kind, work.job_id)
     landed = await loop.run_in_executor(
-        _bg_executor,
+        worker._bg_executor,
         functools.partial(letter_production.run_work, work, 1, events.broadcast_from_thread),
     )
     if landed.account_limit:
@@ -197,7 +192,7 @@ async def _processing_idle_loop() -> None:
     per-call spacing on top, so we never burst the free-tier limit.
     """
     await asyncio.sleep(15)  # let startup settle before first query
-    await asyncio.get_running_loop().run_in_executor(_bg_executor, _recover_orphaned_runs)
+    await asyncio.get_running_loop().run_in_executor(worker._bg_executor, _recover_orphaned_runs)
     while True:
         try:
             loop = asyncio.get_running_loop()
@@ -208,7 +203,7 @@ async def _processing_idle_loop() -> None:
             # could starve indefinitely. It is a no-op except once per 24h
             # (retention.SWEEP_INTERVAL), and runs on the single worker so it
             # never interleaves with an LLM job writing to the same DB.
-            await loop.run_in_executor(_bg_executor, _retention_tick)
+            await loop.run_in_executor(worker._bg_executor, _retention_tick)
 
             # ── Phase 2: cover letters (checked first — see docstring) ────────
             if await _letters_phase():
@@ -237,7 +232,7 @@ async def _processing_idle_loop() -> None:
                 logger.info("Idle: quick-screen job %s", screen_id)
                 try:
                     outcome = await loop.run_in_executor(
-                        _bg_executor,
+                        worker._bg_executor,
                         functools.partial(quick_screen, screen_id, 1),
                     )
                     if outcome == "skipped":
@@ -284,8 +279,8 @@ async def _processing_idle_loop() -> None:
             if pending_id is not None:
                 logger.info("Idle: extract+match job %s", pending_id)
                 await loop.run_in_executor(
-                    _bg_executor,
-                    functools.partial(_process_listing, pending_id, 1, True),
+                    worker._bg_executor,
+                    functools.partial(worker._process_listing, pending_id, 1, True),
                 )
                 # If extraction failed (Gemini still rate-limited), extracted_at stays
                 # NULL and we'd immediately retry the same job. Back off 3 min instead.
@@ -315,7 +310,7 @@ async def _processing_idle_loop() -> None:
             if unmatched_id is not None:
                 logger.info("Idle: match job %s (already extracted)", unmatched_id)
                 outcome = await loop.run_in_executor(
-                    _bg_executor, functools.partial(_match_attempt, unmatched_id),
+                    worker._bg_executor, functools.partial(_match_attempt, unmatched_id),
                 )
                 if outcome in ("failed", "quota"):
                     logger.warning(
@@ -495,67 +490,6 @@ def _raw_relevance_score(job: JobListing, skill_names: list[str]) -> int:
     """
     text = f"{job.title or ''} {job.raw_description or ''}".lower()
     return sum(1 for name in skill_names if name and name.lower() in text)
-
-
-def _process_listing(
-    job_id: int,
-    profile_id: int,
-    has_description: bool,
-    with_cover_letter: bool = False,
-    bypass_threshold: bool = False,
-    force: bool = False,
-) -> None:
-    """Background task: extract + match (+ optionally cover letter) a listing.
-
-    Runs after the response is sent. With only a card (no description yet) there's
-    nothing to extract from, so we defer until a detail-page ingest fills it in.
-    ``with_cover_letter=True`` is set by /regenerate so the letter is generated
-    after matching completes — never set by /ingest to avoid burning quota on every
-    scraped listing. ``force=True`` (also set by /regenerate) re-runs extraction and
-    matching even if they already ran — e.g. to override a quick-screen auto-skip;
-    this path never calls quick_screen, it goes straight to extraction+matching.
-    """
-    if has_description:
-        # A daily-quota or budget stop applies to the whole account, so the later
-        # steps would only make more doomed requests: tell the sidebar and stop.
-        # (Any other failure is per-job and keeps going, as before.)
-        try:
-            extract_job(job_id, force=force)
-        except (DailyQuotaError, BudgetExceededError) as exc:
-            logger.warning("job %s: %s — stopping this job's processing", job_id, exc)
-            events.broadcast_from_thread("llm_budget_blocked", {"reason": str(exc)})
-            return
-        except Exception:  # noqa: BLE001 — a bad extraction must not kill the task
-            logger.exception("extract_job failed for job %s", job_id)
-        try:
-            match_job(job_id, profile_id, force=force)
-            events.broadcast_from_thread("job_processed", {"job_id": job_id})
-        except (DailyQuotaError, BudgetExceededError) as exc:
-            logger.warning("job %s: %s — stopping this job's processing", job_id, exc)
-            events.broadcast_from_thread("llm_budget_blocked", {"reason": str(exc)})
-            return
-        except Exception:  # noqa: BLE001 — a per-job failure is logged; quota/budget stops are caught above
-            logger.exception("match_job failed for job %s", job_id)
-        if with_cover_letter:
-            try:
-                with SessionLocal() as db:
-                    landed = letter_production.generate_for(
-                        db, job_id, profile_id, events.broadcast_from_thread, bypass_threshold=bypass_threshold,
-                    )
-                if landed is not None and landed.account_limit:
-                    events.broadcast_from_thread("llm_budget_blocked", {"reason": landed.account_limit})
-            except (DailyQuotaError, BudgetExceededError) as exc:
-                logger.warning("job %s: %s — stopping this job's processing", job_id, exc)
-                events.broadcast_from_thread("llm_budget_blocked", {"reason": str(exc)})
-                return
-            except Exception:  # noqa: BLE001 — a per-job failure is logged; quota/budget stops are caught above
-                logger.exception("cover letter failed for job %s", job_id)
-    else:
-        logger.info(
-            "Job %s stored as card only (no description) — deferring extraction/"
-            "matching until a detail page is ingested.",
-            job_id,
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -1424,8 +1358,8 @@ def regenerate(
 
     # On the single worker, behind whatever the idle loop is running: a full letter run
     # takes minutes, and two LLM jobs must not write the DB or hit the rate limit together.
-    _bg_executor.submit(
-        _process_listing,
+    worker._bg_executor.submit(
+        worker._process_listing,
         job_id,
         profile_id,
         job.raw_description is not None,

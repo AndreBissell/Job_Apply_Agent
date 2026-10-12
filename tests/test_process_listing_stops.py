@@ -13,8 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-import app.api.main as api
-from app.api import events
+from app.api import events, worker
 from app.llm.client import BudgetExceededError, DailyQuotaError
 
 
@@ -39,11 +38,11 @@ def calls(monkeypatch):
         return fake
 
     def install(extract_raises=None, match_raises=None):
-        monkeypatch.setattr(api, "extract_job", make("extract", extract_raises))
-        monkeypatch.setattr(api, "match_job", make("match", match_raises))
-        monkeypatch.setattr(api.letter_production, "generate_for", make("letter"))
+        monkeypatch.setattr(worker, "extract_job", make("extract", extract_raises))
+        monkeypatch.setattr(worker, "match_job", make("match", match_raises))
+        monkeypatch.setattr(worker.letter_production, "generate_for", make("letter"))
 
-    monkeypatch.setattr(api, "SessionLocal", lambda: _FakeSession())
+    monkeypatch.setattr(worker, "SessionLocal", lambda: _FakeSession())
     monkeypatch.setattr(events, "broadcast_from_thread", lambda event, data: log["broadcast"].append((event, data)))
     log["install"] = install  # type: ignore[assignment]
     return log
@@ -55,7 +54,7 @@ def _blocked(log):
 
 def test_quota_stop_in_extract_skips_match_and_letter(calls):
     calls["install"](extract_raises=DailyQuotaError("daily quota used up"))
-    api._process_listing(1, 1, has_description=True, with_cover_letter=True)
+    worker._process_listing(1, 1, has_description=True, with_cover_letter=True)
     assert calls["match"] == []
     assert calls["letter"] == []
     assert len(_blocked(calls)) == 1
@@ -64,7 +63,7 @@ def test_quota_stop_in_extract_skips_match_and_letter(calls):
 
 def test_budget_stop_in_match_skips_letter(calls):
     calls["install"](match_raises=BudgetExceededError("budget reached"))
-    api._process_listing(1, 1, has_description=True, with_cover_letter=True)
+    worker._process_listing(1, 1, has_description=True, with_cover_letter=True)
     assert len(calls["match"]) == 1
     assert calls["letter"] == []
     assert len(_blocked(calls)) == 1
@@ -74,7 +73,7 @@ def test_budget_stop_in_match_skips_letter(calls):
 
 def test_ordinary_extract_failure_still_matches(calls):
     calls["install"](extract_raises=ValueError("bad json"))
-    api._process_listing(1, 1, has_description=True, with_cover_letter=True)
+    worker._process_listing(1, 1, has_description=True, with_cover_letter=True)
     assert len(calls["match"]) == 1
     assert len(calls["letter"]) == 1
     assert _blocked(calls) == []
@@ -82,6 +81,6 @@ def test_ordinary_extract_failure_still_matches(calls):
 
 def test_card_only_listing_does_nothing(calls):
     calls["install"]()
-    api._process_listing(1, 1, has_description=False, with_cover_letter=True)
+    worker._process_listing(1, 1, has_description=False, with_cover_letter=True)
     assert calls["extract"] == [] and calls["match"] == [] and calls["letter"] == []
     assert calls["broadcast"] == []

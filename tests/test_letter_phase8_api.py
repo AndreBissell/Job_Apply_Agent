@@ -23,7 +23,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import app.api.main as main
-from app.api import events
+from app.api import events, worker
 import app.api.profile_ui as profile_ui
 from app.db import Base
 from app.llm.letter import production
@@ -270,19 +270,19 @@ class FakeExecutor:
 class TestRegenerate:
     def test_unknown_job_is_404_and_queues_nothing(self, client, db, monkeypatch):
         fake = FakeExecutor()
-        monkeypatch.setattr(main, "_bg_executor", fake)
+        monkeypatch.setattr(worker, "_bg_executor", fake)
         assert client.post("/jobs/404/regenerate").status_code == 404
         assert fake.calls == []
 
     def test_it_queues_the_work_on_the_single_worker(self, client, db, monkeypatch):
         fake = FakeExecutor()
-        monkeypatch.setattr(main, "_bg_executor", fake)
+        monkeypatch.setattr(worker, "_bg_executor", fake)
 
         res = client.post("/jobs/5/regenerate")
 
         assert res.status_code == 200 and res.json() == {"status": "queued"}
         ((fn, args, kwargs),) = fake.calls
-        assert fn is main._process_listing
+        assert fn is worker._process_listing
         assert args[0] == 5 and args[1] == 1
         assert kwargs == {"with_cover_letter": True, "bypass_threshold": True, "force": True}
 
@@ -294,9 +294,9 @@ class TestProcessListing:
     @pytest.fixture()
     def wired(self, Session, monkeypatch):
         calls = {"generate_for": [], "events": []}
-        monkeypatch.setattr(main, "extract_job", lambda job_id, force=False: None)
-        monkeypatch.setattr(main, "match_job", lambda job_id, profile_id, force=False: None)
-        monkeypatch.setattr(main, "SessionLocal", Session)
+        monkeypatch.setattr(worker, "extract_job", lambda job_id, force=False: None)
+        monkeypatch.setattr(worker, "match_job", lambda job_id, profile_id, force=False: None)
+        monkeypatch.setattr(worker, "SessionLocal", Session)
         monkeypatch.setattr(events, "broadcast_from_thread", lambda event_name, data: calls["events"].append((event_name, data)))
         calls["result"] = None
         calls["raises"] = None
@@ -307,11 +307,11 @@ class TestProcessListing:
                 raise calls["raises"]
             return calls["result"]
 
-        monkeypatch.setattr(main.letter_production, "generate_for", fake_generate_for)
+        monkeypatch.setattr(worker.letter_production, "generate_for", fake_generate_for)
         return calls
 
     def test_the_letter_is_handed_to_generate_for_with_the_broadcaster(self, wired):
-        main._process_listing(5, 1, True, with_cover_letter=True, bypass_threshold=True, force=True)
+        worker._process_listing(5, 1, True, with_cover_letter=True, bypass_threshold=True, force=True)
 
         ((db, job_id, profile_id, emit, bypass),) = wired["generate_for"]
         assert (job_id, profile_id, bypass) == (5, 1, True)
@@ -320,25 +320,25 @@ class TestProcessListing:
         assert not any(name == "llm_budget_blocked" for name, _ in wired["events"])
 
     def test_bypass_threshold_false_is_passed_through(self, wired):
-        main._process_listing(5, 1, True, with_cover_letter=True, bypass_threshold=False)
+        worker._process_listing(5, 1, True, with_cover_letter=True, bypass_threshold=False)
         assert wired["generate_for"][0][4] is False
 
     def test_an_account_limit_is_broadcast_as_a_budget_block(self, wired):
         wired["result"] = Landed("pipeline", 5, "cancelled", account_limit="daily cap hit")
-        main._process_listing(5, 1, True, with_cover_letter=True, bypass_threshold=True, force=True)
+        worker._process_listing(5, 1, True, with_cover_letter=True, bypass_threshold=True, force=True)
         assert ("llm_budget_blocked", {"reason": "daily cap hit"}) in wired["events"]
 
     def test_a_failure_in_generate_for_is_swallowed(self, wired):
         wired["raises"] = RuntimeError("letter blew up")
-        main._process_listing(5, 1, True, with_cover_letter=True, bypass_threshold=True, force=True)  # no raise
+        worker._process_listing(5, 1, True, with_cover_letter=True, bypass_threshold=True, force=True)  # no raise
         assert len(wired["generate_for"]) == 1
 
     def test_no_letter_is_written_unless_asked_for(self, wired):
-        main._process_listing(5, 1, True)
+        worker._process_listing(5, 1, True)
         assert wired["generate_for"] == []
 
     def test_a_card_without_a_description_is_deferred(self, wired):
-        main._process_listing(5, 1, False, with_cover_letter=True, bypass_threshold=True)
+        worker._process_listing(5, 1, False, with_cover_letter=True, bypass_threshold=True)
         assert wired["generate_for"] == []
 
 
@@ -365,7 +365,7 @@ class TestLettersPhase:
         monkeypatch.setattr(main, "SessionLocal", Session)
         monkeypatch.setattr(main.letter_production, "next_work", fake_next_work)
         monkeypatch.setattr(main.letter_production, "run_work", fake_run_work)
-        monkeypatch.setattr(main, "_bg_executor", executor)
+        monkeypatch.setattr(worker, "_bg_executor", executor)
         monkeypatch.setattr(main, "_IDLE_INTERVAL_S", 0)
         monkeypatch.setattr(events, "_broadcast", fake_broadcast)
         monkeypatch.setattr(main, "_letters_paused_until", 0.0)

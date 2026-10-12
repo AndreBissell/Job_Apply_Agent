@@ -43,6 +43,7 @@ from sqlalchemy.orm import sessionmaker  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
 import app.api.main as api  # noqa: E402
+from app.api import worker  # noqa: E402
 from app.api.origin_guard import origin_allowed  # noqa: E402
 from app.db import Base  # noqa: E402
 from app.models import JobListing, Match, Profile  # noqa: E402
@@ -84,7 +85,7 @@ def guarded(monkeypatch):
             db.close()
 
     executor = _RecordingExecutor()
-    monkeypatch.setattr(api, "_bg_executor", executor)  # nothing runs, no AI call
+    monkeypatch.setattr(worker, "_bg_executor", executor)  # nothing runs, no AI call
     api.app.dependency_overrides[api.get_db] = _db
     yield TestClient(api.app, base_url="http://localhost:8001"), executor
     api.app.dependency_overrides.pop(api.get_db, None)

@@ -71,6 +71,17 @@ def test_there_is_one_get_db():
     assert main.get_db is profile_ui.get_db is deps.get_db
 
 
+def test_there_is_one_worker_thread_pool():
+    """Every LLM chain runs on worker._bg_executor; a second pool would let two run at once
+    (step 9.4)."""
+    found = [
+        p.name
+        for p in sorted((ROOT / "app" / "api").glob("*.py"))
+        for _ in re.finditer(r"\bThreadPoolExecutor\(", p.read_text(encoding="utf-8"))
+    ]
+    assert found == ["worker.py"]
+
+
 def test_openapi_unchanged():
     expected = json.loads((FIXTURES / "openapi.json").read_text(encoding="utf-8"))
     actual = app.openapi()
