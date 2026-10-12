@@ -30,7 +30,6 @@ from pathlib import Path
 from typing import Iterator, Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -367,17 +366,11 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Seek Job Assistant", version="0.1.0", lifespan=lifespan)
 
-# CORS: the extension calls from a chrome-extension:// origin and the sidebar from
-# localhost. Wide-open for local dev; lock down (specific extension id) later.
-# NOTE: allow_credentials must stay False while allow_origins=["*"] (the spec
-# forbids "*" + credentials), which is fine — we use no cookies.
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# No CORS middleware, on purpose: with no Access-Control-* headers a web page cannot
+# read any response or send a preflighted call (JSON body, PATCH/PUT/DELETE) to this
+# server. The extension doesn't need them (its pages and background worker have
+# host_permissions for localhost), and the profile editor is served from this same
+# origin. See docs/cleanup-3-8-plan.md step 5.1.
 
 app.include_router(profile_ui_router)
 app.include_router(letters_router)
