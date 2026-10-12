@@ -438,7 +438,7 @@ function buildQuickApplyPanel(jobId, data) {
   actions.appendChild(shotBtn);
 
   const applyBtn = document.createElement('button');
-  const isApplied = data.match?.status === 'applied';
+  const isApplied = !!data.match?.applied_at; // applied_at is the one definition of "applied"
   applyBtn.className = 'act' + (isApplied ? ' applied' : '');
   applyBtn.textContent = isApplied ? '✓ Applied' : 'Mark Applied';
   applyBtn.addEventListener('click', async () => {

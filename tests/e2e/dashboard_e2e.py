@@ -23,7 +23,8 @@ Not collected by pytest (needs Chromium and a server). What it does:
    the ✎ editor) and the Applied tab (periods newest first with the current one open,
    counts against the target, cost and "not costed", + Interview set and undo, the
    per-period and full CSV exports), at a narrow and a wide panel width. Then deleting:
-   no Delete on an applied job's Jobs card, the backend's 409, and the Applied tab's Delete
+   no Delete on an applied job's Jobs card (a row with applied_at set but status 'new'
+   shows ✓ Applied there too), the backend's 409, and the Applied tab's Delete
    (cancel, confirm, the row, DB rows and period count gone).
 
 Exit code 0 = all checks passed.
@@ -527,7 +528,23 @@ def run_delete_checks(c: Checks, side, con) -> None:
     without allow_applied, and the Applied tab's own Delete removes it after a confirm.
     Runs after run_applied_checks (no start date: calendar-month periods)."""
     print("Delete")
+    # A drifted row: applied_at set but status still 'new'. Inserted here rather than in
+    # seed() so the period counts the earlier checks rely on don't move. The card must
+    # follow applied_at (the one definition of "applied"), not the status column.
+    now = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")
+    con.execute("INSERT INTO job_listings (id, source, source_job_id, url, title, company, location, extracted_at) "
+                "VALUES (900, 'seek', '99900', 'https://au.seek.com/job/99900', 'Drifted Status Row', "
+                "'Company 900', 'Brisbane QLD', ?)", (now,))
+    con.execute("INSERT INTO matches (id, user_id, job_id, score, status, applied_at) "
+                "VALUES (900, 1, 900, 80, 'new', ?)", (now,))
+    con.commit()
     side.click("nav#tabs .tab[data-tab=jobs]")
+    side.click("#refresh-btn")
+    card_drift = side.locator("#job-list li", has_text="Drifted Status Row")
+    card_drift.wait_for(timeout=10000)
+    c.check(card_drift.locator(".apply-btn").inner_text() == "✓ Applied",
+            "Jobs tab: a row with applied_at set (status still 'new') shows ✓ Applied")
+    c.check(card_drift.locator(".del-btn").count() == 0, "...and has no Delete")
     card_a = side.locator("#job-list li", has_text="Current Analyst A")
     card_a.wait_for(timeout=10000)
     c.check(card_a.locator(".del-btn").count() == 0, "Jobs tab: an applied job's card has no Delete")

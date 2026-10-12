@@ -334,12 +334,13 @@ function renderJob(job, tier) {
   }
 
   const applyBtn = document.createElement('button');
-  applyBtn.className = 'apply-btn' + (job.status === 'applied' ? ' applied' : '');
-  applyBtn.title = job.status === 'applied' ? 'Applied' : 'Mark Applied';
-  applyBtn.textContent = job.status === 'applied' ? '✓ Applied' : 'Mark Applied';
+  const applied = !!job.applied_at; // applied_at is the one definition of "applied"
+  applyBtn.className = 'apply-btn' + (applied ? ' applied' : '');
+  applyBtn.title = applied ? 'Applied' : 'Mark Applied';
+  applyBtn.textContent = applied ? '✓ Applied' : 'Mark Applied';
   applyBtn.addEventListener('click', async (e) => {
     e.stopPropagation();
-    if (job.status === 'applied') return;
+    if (job.applied_at) return;
     applyBtn.disabled = true;
     try {
       const res = await markApplied(job.job_id);
