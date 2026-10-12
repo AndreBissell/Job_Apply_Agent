@@ -5,6 +5,15 @@ one block per milestone.
 
 ---
 
+## 2026-10-12 — Dependencies pinned and CI added (ARCHITECTURE 5.4 #6) — DONE ✅
+
+- Same branch, `fix/applied-evidence-safety` (owner decision: all of plan items #3-#8 go on this one branch, merged once at the end). Plan `docs/cleanup-3-8-plan.md`, Branch 2.
+- `4b70bf9`: `requirements-lock.txt`, frozen from `.venv` (56 packages, `pip check` clean). A fresh venv built only from it passes the suite (1517 passed). `requirements.txt` keeps its ranges and has a header pointing at the lock.
+- `f55a9fc`: `.github/workflows/tests.yml` runs `pytest -q` and `node --check` on every `extension/*.js`, on `windows-latest` with Python 3.11. No secrets, no `LLM_PROVIDER`, no e2e.
+- Not verified: the workflow has not run on GitHub yet (push is the owner's step).
+
+---
+
 ## 2026-10-12 — Applied-evidence safety: one definition of "applied" (ARCHITECTURE 5.4 #4, #3) — DONE ✅
 
 - Branch `fix/applied-evidence-safety`, not pushed. Plan `docs/cleanup-3-8-plan.md`, Branch 1.

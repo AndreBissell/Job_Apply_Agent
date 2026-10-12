@@ -78,6 +78,9 @@ ORM: SQLAlchemy 2.0 (typed, declarative mapped style)
 Migrations: Alembic
 API: FastAPI + uvicorn (local backend for the extension)
 LLM: Gemini on Vertex AI (small/mid/strong tiers) — see the LLM Layer section below
+Deps/CI: exact versions in requirements-lock.txt (frozen from .venv; regenerate with
+pip freeze from Git Bash); GitHub Actions (.github/workflows/tests.yml) runs pytest and
+node --check on windows-latest, with no secrets.
 Config: python-dotenv — app/db.py loads .env so DATABASE_URL (and
 later secrets) can live in a gitignored .env file.
 DB: SQLite for local dev, Postgres-ready for hosting. The database URL
