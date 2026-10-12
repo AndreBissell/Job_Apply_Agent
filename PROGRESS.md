@@ -5,6 +5,15 @@ one block per milestone.
 
 ---
 
+## 2026-10-12 — Overlapping quick screens make one model call (ARCHITECTURE 5.4 #7) — DONE ✅
+
+- Same branch `fix/applied-evidence-safety`. Plan `docs/cleanup-3-8-plan.md`, Branch 4.
+- `bb0b094`: `quick_screen` claims the job id (in-process set + lock, never held during the model call), re-reads the job, and the loser returns `"not-run"`. The Scan Page request thread and the idle loop's Phase 0 could screen the same fresh job at once and pay twice. `run_quick_screen`'s docstring now says so.
+- Reproduced first: `tests/test_quickscreen_race.py` (file SQLite DB, fake model, timeouts) failed on the old code with two model calls. It did NOT hit the `IntegrityError` the plan predicted.
+- Not verified: "database is locked" (never reproduced; owner hand check from plan step 4.2: Scan Page during a letter run on the TEST backend, then search the server console for `database is locked` / `IntegrityError`).
+
+---
+
 ## 2026-10-12 — A failed score no longer becomes a permanent 0 (ARCHITECTURE 5.4 #8) — DONE ✅
 
 - Same branch `fix/applied-evidence-safety`. Plan `docs/cleanup-3-8-plan.md`, Branch 3.
