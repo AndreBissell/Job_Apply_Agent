@@ -45,7 +45,7 @@ from app.api.screening import router as screening_router
 from app.db import SessionLocal, app_env
 from app.llm import search_refine
 from app.llm import usage as llm_usage
-from app.llm.client import DailyQuotaError
+from app.llm.client import BudgetExceededError, DailyQuotaError
 from app.llm.cover_letter import THRESHOLD as COVER_LETTER_THRESHOLD
 from app.llm.extract import extract_job
 from app.llm.letter import production as letter_production
@@ -81,6 +81,38 @@ _IDLE_INTERVAL_S = 20
 # blocked) keeps flowing instead of the loop re-hitting the cap every pass.
 _BUDGET_PAUSE_S = 600
 _letters_paused_until = 0.0
+
+# Idle-loop matching (Phase 1b): a failed score is retried, not written as a 0.
+# After _MATCH_MAX_ATTEMPTS failures for the same job the last attempt records a
+# terminal 0 row so one bad ad can't block the queue (it always takes the OLDEST
+# unmatched job). In memory only: a restart gives each job three more tries.
+_MATCH_MAX_ATTEMPTS = 3
+_MATCH_RETRY_PAUSE_S = 180
+_match_failures: dict[int, int] = {}
+
+
+def _match_attempt(job_id: int) -> str:
+    """One idle-loop scoring attempt for an extracted, unmatched job.
+
+    Returns "ok" (scored), "failed" (will be retried), "gave_up" (the last attempt
+    failed and a terminal 0 row was recorded) or "quota" (daily quota / budget stop;
+    not counted against the job). Sync: the loop runs it on ``_bg_executor``.
+    """
+    failures = _match_failures.get(job_id, 0)
+    last_try = failures + 1 >= _MATCH_MAX_ATTEMPTS
+    try:
+        match_job(job_id, 1, record_failure=last_try)
+    except (DailyQuotaError, BudgetExceededError):
+        return "quota"
+    except Exception:  # noqa: BLE001 — match_job already logged the traceback
+        _match_failures[job_id] = failures + 1
+        return "failed"
+    _match_failures.pop(job_id, None)
+    with SessionLocal() as db:
+        recorded = db.scalar(
+            select(Match.reasoning).where(Match.user_id == 1, Match.job_id == job_id)
+        )
+    return "gave_up" if recorded == "Parse error" else "ok"
 
 # ---------------------------------------------------------------------------
 # SSE event broadcasting
@@ -302,11 +334,17 @@ async def _processing_idle_loop() -> None:
 
             if unmatched_id is not None:
                 logger.info("Idle: match job %s (already extracted)", unmatched_id)
-                await loop.run_in_executor(
-                    _bg_executor,
-                    functools.partial(match_job, unmatched_id, 1),
+                outcome = await loop.run_in_executor(
+                    _bg_executor, functools.partial(_match_attempt, unmatched_id),
                 )
-                await asyncio.sleep(_IDLE_INTERVAL_S)
+                if outcome in ("failed", "quota"):
+                    logger.warning(
+                        "Idle: scoring job %s: %s — pausing %ds",
+                        unmatched_id, outcome, _MATCH_RETRY_PAUSE_S,
+                    )
+                    await asyncio.sleep(_MATCH_RETRY_PAUSE_S)
+                else:
+                    await asyncio.sleep(_IDLE_INTERVAL_S)
                 continue
 
             await asyncio.sleep(30)  # nothing pending — check again shortly

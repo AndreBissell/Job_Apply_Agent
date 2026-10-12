@@ -115,3 +115,53 @@ def test_good_response_still_writes_the_row(db, monkeypatch):
     match_module.match_job(5, 1, session=db)
     (m,) = _matches(db)
     assert m.score == 72 and m.reasoning == "ok"
+
+
+# ---------------------------------------------------------------------------
+# The idle loop's retry policy (_match_attempt). The loop itself isn't tested.
+# ---------------------------------------------------------------------------
+import app.api.main as api  # noqa: E402
+
+
+@pytest.fixture()
+def idle(db, monkeypatch):
+    """Point match_job and the loop helper at the test engine; reset the counter."""
+    factory = sessionmaker(bind=db.get_bind())
+    monkeypatch.setattr(match_module, "SessionLocal", factory)
+    monkeypatch.setattr(api, "SessionLocal", factory)
+    api._match_failures.clear()
+    yield
+    api._match_failures.clear()
+
+
+def test_attempts_fail_twice_then_the_third_records_the_zero_row(db, idle, monkeypatch):
+    monkeypatch.setattr(match_module, "complete_json", _raiser(LLMError("call failed after 3 retries")))
+
+    assert api._match_attempt(5) == "failed"
+    assert _matches(db) == []
+    assert api._match_attempt(5) == "failed"
+    assert _matches(db) == []
+    assert api._match_attempt(5) == "gave_up"
+
+    (m,) = _matches(db)
+    assert m.score == 0 and m.reasoning == "Parse error"
+    assert 5 not in api._match_failures
+
+
+def test_quota_stop_is_not_counted_against_the_job(db, idle, monkeypatch):
+    monkeypatch.setattr(match_module, "complete_json", _raiser(DailyQuotaError("daily quota")))
+    for _ in range(5):
+        assert api._match_attempt(5) == "quota"
+    assert _matches(db) == []
+    assert api._match_failures.get(5, 0) == 0
+
+
+def test_success_after_a_failure_clears_the_count(db, idle, monkeypatch):
+    monkeypatch.setattr(match_module, "complete_json", _raiser(LLMError("blip")))
+    assert api._match_attempt(5) == "failed"
+    monkeypatch.setattr(match_module, "complete_json",
+                        lambda *a, **k: {"score": 72, "reasoning": "ok", "gaps": []})
+    assert api._match_attempt(5) == "ok"
+    assert 5 not in api._match_failures
+    (m,) = _matches(db)
+    assert m.score == 72
