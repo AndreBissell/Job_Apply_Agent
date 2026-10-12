@@ -536,6 +536,15 @@ class TestEvidenceExport:
         assert "Drifted" in csv_text
         assert "Status only" not in csv_text
 
+    def test_status_applied_filter_uses_applied_at_too(self, client, db):
+        """GET /jobs?status=applied (the Applied list) follows the same rule as the
+        export: a drifted row is listed, a status-only row is not."""
+        _profile(db)
+        _match(db, title="Drifted", status="new", applied_at=days_ago(3))
+        _match(db, title="Status only", status="applied")
+        titles = [j["title"] for j in client.get("/jobs?profile_id=1&status=applied").json()]
+        assert titles == ["Drifted"]
+
     def test_spreadsheet_formulas_in_titles_are_neutralised(self, client, db):
         _profile(db)
         _match(db, title="=HYPERLINK(\"http://evil\")", status="applied", applied_at=days_ago(1))

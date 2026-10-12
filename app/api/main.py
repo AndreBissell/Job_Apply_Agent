@@ -744,7 +744,8 @@ def list_jobs(
     awaiting the LLM pass simply don't appear yet. Without ``status``, ranked by
     score desc (the normal Jobs tab). With ``status`` (e.g. ``applied``), ranked
     by ``applied_at`` desc instead — that's the Applied tab / Centrelink export,
-    where recency of application matters more than match quality.
+    where recency of application matters more than match quality. ``status=applied``
+    means ``applied_at IS NOT NULL``; any other value filters the ``status`` column.
 
     Jobs flagged ``expired_detected_at`` (see PATCH /jobs/{id}/expired) are
     excluded from the default (no-``status``) view — the Jobs tab should only
@@ -776,7 +777,12 @@ def list_jobs(
             select(CoverLetter.id).where(CoverLetter.match_id == Match.id).exists()
         )
     if status is not None:
-        query = query.where(Match.status == status).order_by(Match.applied_at.desc())
+        # "Applied" means applied_at is set (same rule as the dashboard and the export).
+        if status == "applied":
+            query = query.where(Match.applied_at.is_not(None))
+        else:
+            query = query.where(Match.status == status)
+        query = query.order_by(Match.applied_at.desc())
     else:
         if not include_expired:
             query = query.where(JobListing.expired_detected_at.is_(None))
