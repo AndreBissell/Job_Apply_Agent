@@ -5,6 +5,15 @@ one block per milestone.
 
 ---
 
+## 2026-10-12 — A failed score no longer becomes a permanent 0 (ARCHITECTURE 5.4 #8) — DONE ✅
+
+- Same branch `fix/applied-evidence-safety`. Plan `docs/cleanup-3-8-plan.md`, Branch 3.
+- `065e1a4`: `match_job` no longer catches every error as `score=0 / "Parse error"`. A failure raises and writes nothing; quota/budget stops always raise; a forced re-score (Regenerate) can no longer replace a real score with 0. New keyword `record_failure=True` writes the terminal 0 row, only when no row exists.
+- `87d8390`: the idle loop's Phase 1b runs `_match_attempt`: up to 3 attempts per job (counted in memory, so a restart allows 3 more), 180 s pause after a failure or quota stop, and the third attempt records today's 0 row so one bad ad can't block the queue.
+- Tests: `tests/test_match_failures.py` (10, all with `complete_json` replaced). Existing "Parse error" rows are left alone (D9). Note: `scripts/letter_lab.py` now stops on a failed score instead of recording a 0.
+
+---
+
 ## 2026-10-12 — Dependencies pinned and CI added (ARCHITECTURE 5.4 #6) — DONE ✅
 
 - Same branch, `fix/applied-evidence-safety` (owner decision: all of plan items #3-#8 go on this one branch, merged once at the end). Plan `docs/cleanup-3-8-plan.md`, Branch 2.
