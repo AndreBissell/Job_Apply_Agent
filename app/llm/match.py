@@ -300,7 +300,7 @@ def match_job(
             gaps = result.gaps
         except (DailyQuotaError, BudgetExceededError):
             raise  # an account-level stop is not this job's fault: never record a 0
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 — logged; re-raised unless the caller asked to record a 0 on the last try (quota/budget re-raised above)
             logger.exception("match_job: scoring job %s failed", job_id)
             if not record_failure or existing is not None:
                 raise

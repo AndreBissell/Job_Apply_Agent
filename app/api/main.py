@@ -147,7 +147,7 @@ def _retention_tick() -> None:
         with SessionLocal() as db:
             for profile_id in db.scalars(select(Profile.id)).all():
                 retention.run_sweep_if_due(db, profile_id, _screenshots_dir)
-    except Exception:
+    except Exception:  # noqa: BLE001 — background guard: a sweep failure is logged, never fatal to the loop
         logger.exception("Retention sweep failed")
 
 
@@ -157,7 +157,7 @@ def _recover_orphaned_runs() -> None:
     try:
         with SessionLocal() as db:
             letter_production.recover_orphaned_runs(db)
-    except Exception:
+    except Exception:  # noqa: BLE001 — startup guard: logged, and the server must still come up
         logger.exception("Recovering orphaned letter runs failed")
 
 
@@ -349,7 +349,7 @@ async def _processing_idle_loop() -> None:
 
             await asyncio.sleep(30)  # nothing pending — check again shortly
 
-        except Exception:
+        except Exception:  # noqa: BLE001 — the idle loop must survive any one pass failing: logged, then a 60 s pause
             logger.exception("Idle processing loop error")
             await asyncio.sleep(60)
 
@@ -555,14 +555,25 @@ def _process_listing(
     this path never calls quick_screen, it goes straight to extraction+matching.
     """
     if has_description:
+        # A daily-quota or budget stop applies to the whole account, so the later
+        # steps would only make more doomed requests: tell the sidebar and stop.
+        # (Any other failure is per-job and keeps going, as before.)
         try:
             extract_job(job_id, force=force)
+        except (DailyQuotaError, BudgetExceededError) as exc:
+            logger.warning("job %s: %s — stopping this job's processing", job_id, exc)
+            broadcast_from_thread("llm_budget_blocked", {"reason": str(exc)})
+            return
         except Exception:  # noqa: BLE001 — a bad extraction must not kill the task
             logger.exception("extract_job failed for job %s", job_id)
         try:
             match_job(job_id, profile_id, force=force)
             broadcast_from_thread("job_processed", {"job_id": job_id})
-        except Exception:  # noqa: BLE001
+        except (DailyQuotaError, BudgetExceededError) as exc:
+            logger.warning("job %s: %s — stopping this job's processing", job_id, exc)
+            broadcast_from_thread("llm_budget_blocked", {"reason": str(exc)})
+            return
+        except Exception:  # noqa: BLE001 — a per-job failure is logged; quota/budget stops are caught above
             logger.exception("match_job failed for job %s", job_id)
         if with_cover_letter:
             try:
@@ -572,7 +583,11 @@ def _process_listing(
                     )
                 if landed is not None and landed.account_limit:
                     broadcast_from_thread("llm_budget_blocked", {"reason": landed.account_limit})
-            except Exception:  # noqa: BLE001
+            except (DailyQuotaError, BudgetExceededError) as exc:
+                logger.warning("job %s: %s — stopping this job's processing", job_id, exc)
+                broadcast_from_thread("llm_budget_blocked", {"reason": str(exc)})
+                return
+            except Exception:  # noqa: BLE001 — a per-job failure is logged; quota/budget stops are caught above
                 logger.exception("cover letter failed for job %s", job_id)
     else:
         logger.info(

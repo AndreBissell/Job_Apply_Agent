@@ -260,7 +260,7 @@ def _record_usage(
                 )
             )
             db.commit()
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 — fail open: a broken spend log must never fail the call it describes
         logger.warning("Could not record llm_usage for task %r", task, exc_info=True)
 
 
@@ -278,7 +278,7 @@ def _check_budget(tier: str) -> None:
 
         with _usage_session() as db:
             status = budget_status(db)
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 — fail open: an unreadable usage table must not stop the pipeline (RPM throttle still bounds spend)
         logger.warning("Budget check unavailable — allowing the call", exc_info=True)
         return
     if status["blocked"]:
@@ -360,7 +360,7 @@ def _inject_truststore() -> None:
     try:
         import truststore
         truststore.inject_into_ssl()
-    except Exception:
+    except Exception:  # noqa: BLE001 — optional TLS helper: if it is missing or fails, use the default trust store
         logger.debug("truststore not available; using default TLS trust store")
 
 

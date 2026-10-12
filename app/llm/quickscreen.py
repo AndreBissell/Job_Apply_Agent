@@ -207,7 +207,7 @@ def quick_screen(
             reason = result.reason
         except DailyQuotaError:
             raise
-        except Exception:
+        except Exception:  # noqa: BLE001 — the screen fails open: logged, and the job proceeds to extraction (small tier is never budget-blocked; quota re-raised above)
             logger.exception(
                 "quick_screen: job %s failed — failing open (proceeds to extraction)",
                 job_id,
