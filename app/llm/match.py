@@ -25,7 +25,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.db import SessionLocal
-from app.llm.client import complete_json
+from app.llm.client import BudgetExceededError, DailyQuotaError, complete_json
 from app.llm.prefilter import PrefilterResult, prefilter
 from app.models import Experience, JobListing, Match, Profile
 
@@ -222,12 +222,19 @@ def match_job(
     profile_id: int,
     session=None,
     force: bool = False,
+    record_failure: bool = False,
 ) -> None:
     """Score one job against one profile and upsert the ``matches`` row.
 
     Self-contained: opens its own DB session when none is supplied (the API calls
     this as a post-response background task). Skips (with a log) jobs that aren't
     extracted yet, and already-scored pairs unless ``force=True``.
+
+    A failed model call (network, bad JSON) RAISES and writes nothing, so the caller
+    can retry and an existing score is never replaced by a 0. The one exception is
+    ``record_failure=True`` (the idle loop's last attempt): a job with no row then gets
+    a terminal score 0 / "Parse error" row so one bad ad can't block the queue. A quota
+    or budget stop always raises, and an existing row is never overwritten.
     """
     own_session = session is None
     db = session or SessionLocal()
@@ -291,8 +298,12 @@ def match_job(
             score = max(0, min(100, result.score))
             reasoning = result.reasoning
             gaps = result.gaps
-        except Exception as exc:  # noqa: BLE001 — record a row rather than vanish
-            logger.exception("match_job: scoring job %s failed to parse", job_id)
+        except (DailyQuotaError, BudgetExceededError):
+            raise  # an account-level stop is not this job's fault: never record a 0
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("match_job: scoring job %s failed", job_id)
+            if not record_failure or existing is not None:
+                raise
             score = 0
             reasoning = "Parse error"
             gaps = [f"LLM response could not be parsed: {exc}"]
