@@ -5,14 +5,14 @@ one block per milestone.
 
 ---
 
-## 2026-10-12 — Applied-evidence safety: one definition of "applied" (ARCHITECTURE 5.4 #4, #3) — DONE ✅ (#3 waits on the owner's check)
+## 2026-10-12 — Applied-evidence safety: one definition of "applied" (ARCHITECTURE 5.4 #4, #3) — DONE ✅
 
 - Branch `fix/applied-evidence-safety`, not pushed. Plan `docs/cleanup-3-8-plan.md`, Branch 1.
 - `ed7435a`: `PATCH /jobs/{id}/status` accepts only the six documented statuses (else 422), and once `applied_at` is set any status but `applied` is refused (409). Re-sending `applied` stays a no-op and repairs a drifted row. First tests for this endpoint: `tests/test_status_update.py`.
 - `37e0452`: `GET /jobs?status=applied` now means `applied_at IS NOT NULL`, like the dashboard and the export. Two older tests that seeded a status with no date now set `applied_at`.
 - `463c3a5`: the Jobs-card "Mark Applied" button and the Seek overlay read `applied_at`, not `status`.
 - `.venv\Scripts\python -m pytest -q`: 1517 passed (9 new; baseline 1508). E2E `tests/e2e/dashboard_e2e.py`: 92/92 (2 new: a row with `applied_at` set and status `new` shows "✓ Applied", no Delete; it failed 91/92 before the change). `tests/e2e/quick_apply_e2e.py`: 123/123. `node --check` clean on both edited JS files.
-- #3 (old rows with `status='applied'` but no `applied_at`): not checked on `real.db`. The code never had a path that sets one without the other (`e632e39`), so probably zero rows. The owner runs `python scripts/check_applied_consistency.py real.db`; a backfill only if it finds rows.
+- #3 (old rows with `status='applied'` but no `applied_at`): CLOSED, no backfill needed. The owner ran `python scripts/check_applied_consistency.py real.db` (read-only) on 2026-10-12: 3 matches have `applied_at` set, 0 with `applied_at` set but status not `applied`, 0 with status `applied` but no `applied_at`.
 - Not verified: the Seek overlay's "✓ Applied" in a real Chrome (no e2e covers the overlay).
 
 ---
