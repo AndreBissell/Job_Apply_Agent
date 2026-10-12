@@ -1,3 +1,6 @@
+# Ranges here; exact versions live in requirements-lock.txt (frozen from .venv).
+# Regenerate it from Git Bash: .venv/Scripts/python -m pip freeze > requirements-lock.txt
+# (see docs/cleanup-3-8-plan.md step 2.1). Install the lock for a reproducible env.
 SQLAlchemy>=2.0,<2.1
 alembic>=1.13
 python-dotenv>=1.0
