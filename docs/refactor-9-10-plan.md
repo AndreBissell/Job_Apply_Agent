@@ -844,7 +844,7 @@ Every other backend step is fully covered by tests and the e2e scripts.
 
 ## 5. Order and branches
 
-**Do #9 first, then #10, on separate branches. Don't interleave them.**
+**Do #9 first, then #10. Don't interleave them.**
 - #9 touches the file that conflicts with every backend branch (ARCHITECTURE 3.9), and
   it's fully machine-checkable.
 - #10 needs owner hand checks.
@@ -861,19 +861,19 @@ Every other backend step is fully covered by tests and the e2e scripts.
 - `centerlink-preperation`, `feat/cover-letter-agent-phases-5-9` and
   `feat/search-suggestion-pipeline` are all already in both HEAD and `origin/main`.
 
-**Before #9 starts (owner; the executor doesn't push or merge):**
-1. Push `fix/applied-evidence-safety` (it carries this plan, too) and merge it into
-   `main` through a PR. Watch the first CI run on GitHub; the earlier plan noted it had
-   never been watched.
-2. `git checkout main; git pull`.
-3. `git checkout -b refactor/split-main-py`. Do 9.0-9.16 there, then merge to `main`.
-4. `git checkout main; git pull; git checkout -b refactor/split-sidebar-js`. Do 10.0-10.12
-   there, then merge.
-
-ARCHITECTURE 5.4 says "do it after the branches above merge". All the other 5.4 branches
-are merged or folded into `fix/applied-evidence-safety`, so step 1 is the last
-prerequisite. Keep each refactor branch short-lived: don't start feature work on
-`main.py` or `sidebar.js` in parallel, or merge `main` into the refactor branch first.
+**Owner decision (2026-10-12): all of #9 and #10 happen on `fix/applied-evidence-safety`**
+(pushed at `2872a71`), and the branch is merged into `main` once both are done. This
+replaces the two-branch recommendation (D7).
+- Order on the branch is unchanged: 9.0-9.16, then 10.0-10.12. Don't interleave them.
+- The executor doesn't create branches, push, merge or rebase. The owner pushes after
+  reviewing steps.
+- Because the branch now lives longer, don't start other work on `main.py` or
+  `sidebar.js` elsewhere until it merges.
+- The merge should be a plain merge (not squash), so each step stays a separately
+  revertible commit on `main`.
+- `origin/main`'s extra merge commit `c7cd8ea` has the same content as this branch, so
+  the final merge is expected to be conflict-free. Check with
+  `git merge-tree --write-tree origin/main HEAD` before opening the PR.
 
 ---
 
@@ -938,7 +938,7 @@ prerequisite. Keep each refactor branch short-lived: don't start feature work on
 | D4 | Classic scripts vs ES modules | **Classic scripts** (3.2). Modules would need setters for cross-file writes and can't include `screening_assist.js` (a content script). |
 | D5 | Slicing of the extension | **11 files, one per section, extracted top-down** (3.3). Flat in `extension/`, named `sidebar_*.js`, so CI's `node --check extension/*.js` covers them. Coarser slicing (for example 5 files) is possible, but each step's diff then exceeds the 15-minute review target. |
 | D6 | Do optional step 9.15 (routers take `get_db` from `deps`) | **Yes.** Three one-line edits, and the profile editor stops being the session provider for unrelated routers. |
-| D7 | Share a branch between #9 and #10 | **No.** Two branches, #9 merged first (section 5). |
+| D7 | Share a branch between #9 and #10 | Recommended two branches; **owner decided: both on `fix/applied-evidence-safety`, #9 then #10, merged once at the end** (section 5). |
 | D8 | Keep the route-table, OpenAPI, scan-policy and load e2e permanently | **Yes for scan-policy, the shadow test and the load e2e** (cheap, and they guard the Seek policy and load order forever). **OpenAPI and route table: keep as well**, and regenerate deliberately when an endpoint changes on purpose (the fixture diff then documents the API change in review). If that feels like friction, drop them after both refactors merge. |
 | D9 | Who runs the hand checks | **The owner** (H1-H6, H-B1). Without H2, step 10.7 stays "machine-checked only" in the docs. |
 
