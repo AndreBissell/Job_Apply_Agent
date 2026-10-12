@@ -5,6 +5,20 @@ one block per milestone.
 
 ---
 
+## 2026-10-12 — Cleanup of ARCHITECTURE 5.4 #11-#14 and the stub provider — DONE ✅
+
+- Same branch `fix/applied-evidence-safety`. Plan `docs/cleanup-11-14-plan.md`.
+- `3c974de` (#12): the scan's detail-page selectors come from `selectors.js` (passed to the injected function as `args`); `tests/test_selectors_sync.py` keeps `app/scraper/selectors.py` in step.
+- `e9b8a53` (#13): the background worker tracks scan tabs (`SCAN_TAB_ADD` / `SCAN_TAB_REMOVE` / `IS_SCAN_TAB`) and the content script skips them, so a scanned job is ingested once, not twice. It fails to "not a scan tab". Confirmed before the fix: a 3-job scan logged 6 ingests.
+- `6e95050` (#11): `_process_listing` stops on `DailyQuotaError` / `BudgetExceededError` and broadcasts `llm_budget_blocked`. `tests/test_exception_audit.py` requires every `except Exception` in `app/` (outside the dormant scraper) to end in a bare `raise` or carry `# noqa: BLE001 - <reason>`.
+- `5eeef4e` (#14): comments and docs that had drifted (comments only, no logic). `.claude/settings.json` stays tracked (deliberate policy).
+- `fb7fb98` (E4): `model_for` returns `"stub"` for the stub provider, so `LLM_PROVIDER=stub` can run the whole suite. `complete_text` / `complete_tools` still have no stub support.
+- Tests: 1549 passed, normally and with `LLM_PROVIDER=stub` set for the session. `node --check` on the edited JS files.
+- Hand checks (owner, TEST backend, own Chrome, 2026-10-12): all passed. Scan Page logged "captured ✓" with real character counts; one `POST /ingest` per scanned job and no scan-tab lookups; a `/job/` page opened in a normal tab is captured. The cap of 4 pages is honoured.
+- Not built (noticed): job pages shown in the search page's side pane (`?jobId=...`) are not captured, because the path is a search path. Needs live selectors from the user.
+
+---
+
 ## 2026-10-12 — Local server locked down: no CORS, Origin guard on writes (ARCHITECTURE 5.4 #5) — DONE ✅
 
 - Same branch `fix/applied-evidence-safety`. Plan `docs/cleanup-3-8-plan.md`, Branch 5 (D3 = remove CORS, D4 = Origin guard).

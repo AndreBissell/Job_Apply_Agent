@@ -714,9 +714,9 @@ Not yet ranked; Step 5 will triage these with the rest.
 3. **FIXED in `046d2f9`** (409 without `allow_applied`; Delete only on the Applied tab). **Delete removes evidence.** Every Jobs-tab card has a Delete button (`sidebar.js`, `delBtn`) -> `DELETE /jobs/{id}` -> `main.py::delete_job`, which hard-deletes the job and, by cascade, its match and letter, **even if applied**. `CLAUDE.md` says applied matches are Centrelink evidence and never purged; this endpoint has no such guard.
    **Fixed in `046d2f9`:** `delete_job` now returns 409 (refused) for an applied job unless `?allow_applied=true` is passed, and it removes the screenshot file. Jobs-tab cards for applied jobs have no Delete button. Deleting an application is a separate, confirmed button on the Applied tab.
 4. **`PATCH /jobs/{id}/status` accepts any string** (`StatusUpdate.status: str`, no allowed list).
-5. **Duplicated selectors.** `sidebar.js::pageScrapeDetail` hardcodes `[data-automation="jobAdDetails"]` and `[data-automation="job-detail-title"]` instead of using `selectors.js`. There is a likely reason: a function injected with `chrome.scripting.executeScript` can't see the content script's globals. Still, a selector change must now be made in three places (`selectors.js`, `app/scraper/selectors.py`, `sidebar.js`).
-6. **Probable double capture during a scan.** The background tab the scan opens is a Seek page, so `content_script.js` also runs there and ingests the same job. Harmless because `/ingest` is an upsert, but it doubles the requests. **Unverified at runtime.**
-7. **Doc drift.**
+5. **FIXED in `3c974de`** (the panel passes `selectors.js` values to the injected function as `args`; `tests/test_selectors_sync.py` keeps the Python copy in step). **Duplicated selectors.** `sidebar.js::pageScrapeDetail` hardcodes `[data-automation="jobAdDetails"]` and `[data-automation="job-detail-title"]` instead of using `selectors.js`. There is a likely reason: a function injected with `chrome.scripting.executeScript` can't see the content script's globals. Still, a selector change must now be made in three places (`selectors.js`, `app/scraper/selectors.py`, `sidebar.js`).
+6. **FIXED in `e9b8a53`** (the background worker tracks scan tabs and the content script skips them). **Double capture during a scan.** The background tab the scan opens is a Seek page, so `content_script.js` also runs there and ingests the same job. Harmless because `/ingest` is an upsert, but it doubles the requests. **Confirmed at runtime** before the fix: a 3-job scan logged 6 ingests.
+7. **FIXED in `5eeef4e`** (comments and docs only). **Doc drift.**
    - `CLAUDE.md` says the scan "auto-navigates the user's active tab"; the code opens **background** tabs (`active: false`).
    - The `check_claims.py` docstring says stage 2 is a "Small model"; `CLAIMS_TIER = "mid"`.
    - `main.py`'s module docstring says extraction is "stubbed for now".
@@ -791,9 +791,9 @@ Two parts:
 |---|---|
 | `extension/sidebar.js::scanPage`, `pageCollectJobLinks` | Links come only from the page **you** opened, never from pages the scan visits. `SCAN_DELAY_MS` is still at least 5000 and `SCAN_PAGES_CEILING` still 25 (`sidebar.js:1124-1126`). The API's matching bound (`PreferencesUpdate`, `le=25`) agrees. |
 | `extension/content_script.js` | No code types into Seek's form, clicks Seek's buttons, or submits anything. Question capture reads question text only, never your answers. |
-| `extension/background.js` | The `BACKEND_FETCH` allow-list is still localhost ports 8000/8001 only. Otherwise any Seek page could use the extension to make arbitrary requests. |
+| `extension/background.js` | The `BACKEND_FETCH` allow-list is still localhost ports 8000/8001 only. Otherwise any Seek page could use the extension to make arbitrary requests. The scan-tab set (`SCAN_TAB_ADD` / `SCAN_TAB_REMOVE` / `IS_SCAN_TAB`) must fail to "not a scan tab", so a normal Seek page is always captured. |
 | `extension/manifest.json` | Any new `permissions` / `host_permissions` entry needs a reason. |
-| Seek selectors | A change must be made in three places: `extension/selectors.js`, `app/scraper/selectors.py`, and the hardcoded copies in `sidebar.js::pageScrapeDetail` (4.9, item 5). |
+| Seek selectors | A change is made in two places: `extension/selectors.js` and `app/scraper/selectors.py`. The side panel loads `selectors.js` and passes the values to `pageScrapeDetail` as `args`. `tests/test_selectors_sync.py` fails if the two files disagree or a hardcoded copy comes back. |
 | `tests/e2e/*` | `chrome.tabs.create` is stubbed. A real tab can escape Playwright's routing and load Seek (`CLAUDE.md`, Centrelink dashboard entry). |
 
 **Quick Apply**
@@ -833,21 +833,21 @@ Within a level, cheaper fixes come first. Size is rough: S = under an hour, M = 
 | 8 | **A failed score becomes a permanent 0** (4.9, item 2) | A network error or daily-quota stop writes `score=0, "Parse error"`, and the loop never retries it. | `match.py::match_job` (`except Exception`) | Don't write a row on transport or quota errors. | S | **Fixed (2026-10-12)** in `065e1a4` (`match_job` raises on failure; a forced re-score never replaces a real score) and `87d8390` (idle loop: 3 attempts, 180 s pause, then the 0 row; quota stops are not counted). Existing "Parse error" rows are left alone (D9). |
 | 9 | **`app/api/main.py` does too much** | 1,564 lines: endpoints, the background loop and helpers. Edited in 18 of 75 commits, so most branches touch it and conflict. | `app/api/main.py` | Move groups into routers (jobs, events/SSE, evidence and screenshots) and the idle loop into its own module, following `letters.py` / `obligation.py`. Pure moves, no behaviour change. | L | Open. Do it **after** the branches above merge. |
 | 10 | **`sidebar.js` is one 2,723-line file**, and `dashboard.js` relies on its globals | The most-changed file in the repo. Load order is the only contract between the two files. | `extension/sidebar.js`, `dashboard.js` | Split by tab (jobs list, scan, profile). No build step, so use more `<script>` files in a fixed order, or ES modules. | L | Open, low priority |
-| 11 | **Broad `except Exception`** | 37 in `app/` (count by search). Many are deliberate fail-opens (usage logging, the budget guard's read, quick screen). #8 shows one that hides a real failure. | `app/**` | Audit each one: does it log, and does it let `BudgetExceededError` / `DailyQuotaError` through? | M | Open |
-| 12 | **Seek selectors in three places** (4.9, item 5) | One Seek layout change needs three edits; missing one breaks the scan quietly. | `selectors.js`, `app/scraper/selectors.py`, `sidebar.js::pageScrapeDetail` | Pass the selectors into the injected function as `args` to `chrome.scripting.executeScript`, which can't see content-script globals. | S | Open |
-| 13 | **Probable double capture during a scan** (4.9, item 6) | The scan's background tab also runs `content_script.js`, so each job is ingested twice. Harmless (upsert), just extra work. | `content_script.js::main`, `sidebar.js::produce` | Confirm first. If true, skip auto-ingest in tabs the scan opened. | S | Open, **unverified** |
-| 14 | **Documentation drift** | Misleads the next reader (and the AI assistant that reads `CLAUDE.md`). | See list below | One docs-only branch | S | Open |
+| 11 | **Broad `except Exception`** | 27 in `app/` outside the dormant scraper (count by search). Many are deliberate fail-opens (usage logging, the budget guard's read, quick screen). #8 shows one that hides a real failure. | `app/**` | Audit each one: does it log, and does it let `BudgetExceededError` / `DailyQuotaError` through? | M | **Fixed (2026-10-12)** in `6e95050`: `_process_listing` now stops on quota/budget errors and broadcasts `llm_budget_blocked`; `tests/test_exception_audit.py` requires every `except Exception` to end in a bare `raise` or carry `# noqa: BLE001 - <reason>`. Tests only, no hand check needed. |
+| 12 | **Seek selectors in three places** (4.9, item 5) | One Seek layout change needs three edits; missing one breaks the scan quietly. | `selectors.js`, `app/scraper/selectors.py`, `sidebar.js::pageScrapeDetail` | Pass the selectors into the injected function as `args` to `chrome.scripting.executeScript`, which can't see content-script globals. | S | **Fixed (2026-10-12)** in `3c974de` (`test_selectors_sync.py`, `dashboard_e2e.py`). **Hand check passed** (owner, TEST backend, Scan Page: every job logged "captured ✓" with a real character count). |
+| 13 | **Probable double capture during a scan** (4.9, item 6) | The scan's background tab also runs `content_script.js`, so each job is ingested twice. Harmless (upsert), just extra work. | `content_script.js::main`, `sidebar.js::produce` | Confirm first. If true, skip auto-ingest in tabs the scan opened. | S | **Confirmed, then fixed (2026-10-12)** in `e9b8a53`: the pre-fix server log showed 2 ingests per scanned job. **Hand check passed** (owner, TEST backend): one ingest per scanned job, no scan-tab lookups, and a job page opened in a normal tab is still captured. |
+| 14 | **Documentation drift** | Misleads the next reader (and the AI assistant that reads `CLAUDE.md`). | See list below | One docs-only branch | S | **Fixed (2026-10-12)** in `5eeef4e` (comments and docs only; list below all done). |
 | 15 | **Hardcoded profile id 1** | Fine for one user per database. A blocker only if this becomes multi-user. | `main.py`, `sidebar.js` `PROFILE_ID`, others | Nothing now; remove before any hosted version. | L (later) | Deliberate for now |
 
 **The drift list for #14:**
-- `app/models.py` docstring says "Eleven tables" (there are 18).
-- `app/llm/__init__.py` says "stub package".
-- `app/api/main.py` docstring says extraction is "stubbed".
-- `check_claims.py` docstring says stage 2 uses a "Small model" (`CLAIMS_TIER = "mid"`).
-- `requirements.txt` calls OpenAI "active" and Gemini "dormant" (the reverse of `CLAUDE.md`).
-- `.env.example` describes the scraper proxy as mandatory.
-- `CLAUDE.md` says the scan navigates "the user's active tab" (it opens background tabs).
-- `.claude/settings.json` is tracked by git and holds one machine's approval history.
+- ~~`app/models.py` docstring says "Eleven tables" (there are 18).~~ Done.
+- ~~`app/llm/__init__.py` says "stub package".~~ Done.
+- ~~`app/api/main.py` docstring says extraction is "stubbed".~~ Done.
+- ~~`check_claims.py` docstring says stage 2 uses a "Small model" (`CLAIMS_TIER = "mid"`).~~ Done.
+- ~~`requirements.txt` calls OpenAI "active" and Gemini "dormant" (the reverse of `CLAUDE.md`).~~ Done.
+- ~~`.env.example` describes the scraper proxy as mandatory.~~ Done.
+- ~~`CLAUDE.md` says the scan navigates "the user's active tab" (it opens background tabs).~~ Done.
+- ~~`.claude/settings.json` is tracked by git and holds one machine's approval history.~~ Closed with no change: since `1b1e4cb` it is a deliberate, reviewed project policy.
 
 ## 5.5 Looks odd, but leave it alone
 
