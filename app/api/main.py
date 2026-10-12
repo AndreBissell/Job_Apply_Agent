@@ -748,9 +748,11 @@ def run_quick_screen(job_id: int, profile_id: int = 1, db: Session = Depends(get
     consecutive weak results (see app/llm/quickscreen.py) without waiting on
     the idle loop's own pacing to get to it. Still goes through client.py's
     shared LLM_RPM throttle, so it can't burst past quota even though it
-    bypasses the idle loop's queue. If the idle loop's Phase 0 happens to reach
-    this exact job first, quick_screen()'s own idempotency check makes this a
-    harmless no-op that just reports the existing verdict.
+    bypasses the idle loop's queue. If the idle loop's Phase 0 reaches this exact
+    job at the same time, quick_screen() claims the job before its model call, so
+    only one of the two calls runs and the other reports "not-run" (score null,
+    which the sidebar already treats as "already processed"). Without the claim
+    both would pay for the model and race to write the same match row.
     """
     job = db.get(JobListing, job_id)
     if job is None:

@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import datetime
 import logging
+import threading
 
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -120,6 +121,28 @@ def _as_session():
     return SessionLocal()
 
 
+# Jobs being screened right now, in this process. The "already screened?" check below
+# reads the DB, but the verdict is only committed AFTER the model call, so two threads
+# (the Scan Page request and the idle loop's Phase 0) could both pass the check and pay
+# twice. A job is claimed here before the call and released after the commit. The lock
+# guards only the set operations, never the model call.
+_in_flight: set[int] = set()
+_in_flight_lock = threading.Lock()
+
+
+def _claim(job_id: int) -> bool:
+    with _in_flight_lock:
+        if job_id in _in_flight:
+            return False
+        _in_flight.add(job_id)
+        return True
+
+
+def _release(job_id: int) -> None:
+    with _in_flight_lock:
+        _in_flight.discard(job_id)
+
+
 def quick_screen(
     job_id: int,
     profile_id: int,
@@ -134,6 +157,7 @@ def quick_screen(
     """
     own_session = session is None
     db = session or _as_session()
+    claimed = False
     try:
         job = db.get(JobListing, job_id)
         if job is None:
@@ -144,6 +168,14 @@ def quick_screen(
                 "quick_screen: job %s has no raw_description — skipping", job_id
             )
             return "not-run"
+        # Claim the job BEFORE the check, then re-read it: either another thread holds
+        # the claim (we step aside), or it finished and committed before we claimed, so
+        # the refresh sees its verdict.
+        if not _claim(job_id):
+            logger.info("quick_screen: job %s is being screened right now — skipping", job_id)
+            return "not-run"
+        claimed = True
+        db.refresh(job)
         if job.quick_screen_at is not None and not force:
             logger.info(
                 "quick_screen: job %s already screened (%s) — skipping (use force)",
@@ -227,5 +259,7 @@ def quick_screen(
         db.rollback()
         raise
     finally:
+        if claimed:
+            _release(job_id)
         if own_session:
             db.close()
