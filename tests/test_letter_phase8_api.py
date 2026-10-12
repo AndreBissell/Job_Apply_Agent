@@ -23,7 +23,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import app.api.main as main
-from app.api import events, worker
+from app.api import events, idle_loop, worker
 import app.api.profile_ui as profile_ui
 from app.db import Base
 from app.llm.letter import production
@@ -422,11 +422,11 @@ class TestLettersPhase:
 # ---------------------------------------------------------------------------
 class TestRecoverOrphanedRuns:
     def test_running_runs_are_marked_failed(self, db, Session, monkeypatch):
-        monkeypatch.setattr(main, "SessionLocal", Session)
+        monkeypatch.setattr(idle_loop, "SessionLocal", Session)
         running = add_run(db, 9, "running")
         waiting = add_run(db, 10, "waiting_user")
 
-        assert main._recover_orphaned_runs() is None
+        assert idle_loop._recover_orphaned_runs() is None
 
         db.expire_all()
         assert db.get(LetterRun, running).status == "failed"
@@ -437,14 +437,14 @@ class TestRecoverOrphanedRuns:
         def boom(*a, **k):
             raise RuntimeError("db is down")
 
-        monkeypatch.setattr(main, "SessionLocal", boom)
-        assert main._recover_orphaned_runs() is None
+        monkeypatch.setattr(idle_loop, "SessionLocal", boom)
+        assert idle_loop._recover_orphaned_runs() is None
 
     def test_it_never_raises_when_recovery_itself_fails(self, Session, monkeypatch):
-        monkeypatch.setattr(main, "SessionLocal", Session)
+        monkeypatch.setattr(idle_loop, "SessionLocal", Session)
 
         def boom(db):
             raise RuntimeError("recovery bug")
 
         monkeypatch.setattr(production, "recover_orphaned_runs", boom)
-        assert main._recover_orphaned_runs() is None
+        assert idle_loop._recover_orphaned_runs() is None

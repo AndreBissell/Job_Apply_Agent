@@ -39,7 +39,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app import retention, search_suggest
-from app.api import events, paths, worker
+from app.api import events, idle_loop, paths, worker
 from app.api.deps import get_db  # re-exported: tests key dependency_overrides on it
 from app.api.letters import router as letters_router
 from app.api.obligation import router as obligation_router
@@ -49,11 +49,10 @@ from app.api.screening import router as screening_router
 from app.db import SessionLocal, app_env
 from app.llm import search_refine
 from app.llm import usage as llm_usage
-from app.llm.client import BudgetExceededError, DailyQuotaError
+from app.llm.client import DailyQuotaError
 from app.llm.cover_letter import THRESHOLD as COVER_LETTER_THRESHOLD
 from app.llm.letter import production as letter_production
 from app.llm.letter import view as letter_view
-from app.llm.match import match_job
 from app.llm.quickscreen import quick_screen
 from app.models import (
     CoverLetter,
@@ -81,60 +80,6 @@ _IDLE_INTERVAL_S = 20
 # blocked) keeps flowing instead of the loop re-hitting the cap every pass.
 _BUDGET_PAUSE_S = 600
 _letters_paused_until = 0.0
-
-# Idle-loop matching (Phase 1b): a failed score is retried, not written as a 0.
-# After _MATCH_MAX_ATTEMPTS failures for the same job the last attempt records a
-# terminal 0 row so one bad ad can't block the queue (it always takes the OLDEST
-# unmatched job). In memory only: a restart gives each job three more tries.
-_MATCH_MAX_ATTEMPTS = 3
-_MATCH_RETRY_PAUSE_S = 180
-_match_failures: dict[int, int] = {}
-
-
-def _match_attempt(job_id: int) -> str:
-    """One idle-loop scoring attempt for an extracted, unmatched job.
-
-    Returns "ok" (scored), "failed" (will be retried), "gave_up" (the last attempt
-    failed and a terminal 0 row was recorded) or "quota" (daily quota / budget stop;
-    not counted against the job). Sync: the loop runs it on ``_bg_executor``.
-    """
-    failures = _match_failures.get(job_id, 0)
-    last_try = failures + 1 >= _MATCH_MAX_ATTEMPTS
-    try:
-        match_job(job_id, 1, record_failure=last_try)
-    except (DailyQuotaError, BudgetExceededError):
-        return "quota"
-    except Exception:  # noqa: BLE001 — match_job already logged the traceback
-        _match_failures[job_id] = failures + 1
-        return "failed"
-    _match_failures.pop(job_id, None)
-    with SessionLocal() as db:
-        recorded = db.scalar(
-            select(Match.reasoning).where(Match.user_id == 1, Match.job_id == job_id)
-        )
-    return "gave_up" if recorded == "Parse error" else "ok"
-
-
-def _retention_tick() -> None:
-    """Run the retention sweep for every profile that is due. Never raises: a
-    sweep failure must not take the LLM idle loop down with it."""
-    try:
-        with SessionLocal() as db:
-            for profile_id in db.scalars(select(Profile.id)).all():
-                retention.run_sweep_if_due(db, profile_id, paths._screenshots_dir)
-    except Exception:  # noqa: BLE001 — background guard: a sweep failure is logged, never fatal to the loop
-        logger.exception("Retention sweep failed")
-
-
-def _recover_orphaned_runs() -> None:
-    """Runs the previous server process left ``running`` can never finish: mark them
-    failed so they stop blocking their matches (letter_production.recover_orphaned_runs)."""
-    try:
-        with SessionLocal() as db:
-            letter_production.recover_orphaned_runs(db)
-    except Exception:  # noqa: BLE001 — startup guard: logged, and the server must still come up
-        logger.exception("Recovering orphaned letter runs failed")
-
 
 async def _letters_phase() -> bool:
     """One pass of the cover-letter phase. True when it did letter work (so the loop
@@ -192,7 +137,7 @@ async def _processing_idle_loop() -> None:
     per-call spacing on top, so we never burst the free-tier limit.
     """
     await asyncio.sleep(15)  # let startup settle before first query
-    await asyncio.get_running_loop().run_in_executor(worker._bg_executor, _recover_orphaned_runs)
+    await asyncio.get_running_loop().run_in_executor(worker._bg_executor, idle_loop._recover_orphaned_runs)
     while True:
         try:
             loop = asyncio.get_running_loop()
@@ -203,7 +148,7 @@ async def _processing_idle_loop() -> None:
             # could starve indefinitely. It is a no-op except once per 24h
             # (retention.SWEEP_INTERVAL), and runs on the single worker so it
             # never interleaves with an LLM job writing to the same DB.
-            await loop.run_in_executor(worker._bg_executor, _retention_tick)
+            await loop.run_in_executor(worker._bg_executor, idle_loop._retention_tick)
 
             # ── Phase 2: cover letters (checked first — see docstring) ────────
             if await _letters_phase():
@@ -273,7 +218,7 @@ async def _processing_idle_loop() -> None:
                     .limit(50)
                 ).all()
                 if candidates:
-                    job = max(candidates, key=lambda j: _raw_relevance_score(j, profile_skills))
+                    job = max(candidates, key=lambda j: idle_loop._raw_relevance_score(j, profile_skills))
                     pending_id = job.id
 
             if pending_id is not None:
@@ -310,14 +255,14 @@ async def _processing_idle_loop() -> None:
             if unmatched_id is not None:
                 logger.info("Idle: match job %s (already extracted)", unmatched_id)
                 outcome = await loop.run_in_executor(
-                    worker._bg_executor, functools.partial(_match_attempt, unmatched_id),
+                    worker._bg_executor, functools.partial(idle_loop._match_attempt, unmatched_id),
                 )
                 if outcome in ("failed", "quota"):
                     logger.warning(
                         "Idle: scoring job %s: %s — pausing %ds",
-                        unmatched_id, outcome, _MATCH_RETRY_PAUSE_S,
+                        unmatched_id, outcome, idle_loop._MATCH_RETRY_PAUSE_S,
                     )
-                    await asyncio.sleep(_MATCH_RETRY_PAUSE_S)
+                    await asyncio.sleep(idle_loop._MATCH_RETRY_PAUSE_S)
                 else:
                     await asyncio.sleep(_IDLE_INTERVAL_S)
                 continue
@@ -476,20 +421,6 @@ def _eligibility_notes(job: JobListing) -> list[str]:
         r["text"] for r in (reqs or [])
         if isinstance(r, dict) and r.get("letter_role") == "not_for_letter" and r.get("text")
     ]
-
-
-def _raw_relevance_score(job: JobListing, skill_names: list[str]) -> int:
-    """Zero-cost queue-ordering signal: how many of the profile's skill names
-    appear as substrings in the job's title/raw description.
-
-    Not a gate — every job still gets extracted+matched regardless of this
-    score (see app/llm/prefilter.py's "no silent gate" rule). It only decides
-    which pending job the idle loop picks next, so likely-relevant jobs reach
-    the front of the single-worker LLM queue before likely-irrelevant ones,
-    without spending an extra LLM call to find out.
-    """
-    text = f"{job.title or ''} {job.raw_description or ''}".lower()
-    return sum(1 for name in skill_names if name and name.lower() in text)
 
 
 # ---------------------------------------------------------------------------
