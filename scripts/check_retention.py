@@ -265,8 +265,9 @@ def main() -> int:
             total = db.scalar(select(func.count()).select_from(Match).where(Match.user_id == 1))
 
         import app.api.main as api_main
+        from app.api import paths
 
-        api_main._screenshots_dir = shots  # never the real screenshots folder
+        paths._screenshots_dir = shots  # never the real screenshots folder
         records: list[logging.LogRecord] = []
 
         class Capture(logging.Handler):

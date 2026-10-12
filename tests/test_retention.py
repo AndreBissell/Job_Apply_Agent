@@ -24,8 +24,8 @@ from sqlalchemy import create_engine, event, func, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-import app.api.main as main_module
 from app import retention, search_suggest
+from app.api import paths
 from app.api.main import app, get_db
 from app.db import Base
 from app.llm import search_refine
@@ -69,7 +69,7 @@ def db(engine):
 def shots(tmp_path, monkeypatch):
     directory = tmp_path / "screenshots"
     directory.mkdir()
-    monkeypatch.setattr(main_module, "_screenshots_dir", directory)
+    monkeypatch.setattr(paths, "_screenshots_dir", directory)
     return directory
 
 

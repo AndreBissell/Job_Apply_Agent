@@ -40,6 +40,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app import retention, search_suggest
+from app.api import paths
 from app.api.deps import get_db  # re-exported: tests key dependency_overrides on it
 from app.api.letters import router as letters_router
 from app.api.obligation import router as obligation_router
@@ -150,7 +151,7 @@ def _retention_tick() -> None:
     try:
         with SessionLocal() as db:
             for profile_id in db.scalars(select(Profile.id)).all():
-                retention.run_sweep_if_due(db, profile_id, _screenshots_dir)
+                retention.run_sweep_if_due(db, profile_id, paths._screenshots_dir)
     except Exception:  # noqa: BLE001 — background guard: a sweep failure is logged, never fatal to the loop
         logger.exception("Retention sweep failed")
 
@@ -385,16 +386,8 @@ app.include_router(letters_router)
 app.include_router(screening_router)
 app.include_router(obligation_router)
 
-_static_dir = Path(__file__).parent.parent / "static"
-app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
-
-# Per-environment, so the real instance's evidence files never share a folder
-# (or a retention sweep) with the test instance's.
-_screenshots_dir = Path(__file__).parent.parent / (
-    "screenshots_real" if app_env() == "real" else "screenshots"
-)
-_screenshots_dir.mkdir(parents=True, exist_ok=True)
-app.mount("/screenshots", StaticFiles(directory=str(_screenshots_dir)), name="screenshots")
+app.mount("/static", StaticFiles(directory=str(paths._static_dir)), name="static")
+app.mount("/screenshots", StaticFiles(directory=str(paths._screenshots_dir)), name="screenshots")
 
 
 # ---------------------------------------------------------------------------
@@ -1019,7 +1012,7 @@ def evidence_export(profile_id: int = 1, db: Session = Depends(get_db)) -> Respo
     files: list[tuple[str, Path]] = []
     for match, job in rows:
         path = (
-            _screenshots_dir / Path(match.screenshot_path).name
+            paths._screenshots_dir / Path(match.screenshot_path).name
             if match.screenshot_path else None
         )
         on_disk = path is not None and path.is_file()
@@ -1422,11 +1415,11 @@ def upload_screenshot(
     # Store at <=1200px wide; falls back to the untouched bytes on any failure.
     png_bytes = downscale_png(png_bytes)
 
-    unlink_screenshot(_screenshots_dir, match.screenshot_path)
+    unlink_screenshot(paths._screenshots_dir, match.screenshot_path)
 
     ts = datetime.now(timezone.utc)
     filename = f"{job_id}-{profile_id}-{ts.strftime('%Y%m%dT%H%M%SZ')}.png"
-    (_screenshots_dir / filename).write_bytes(png_bytes)
+    (paths._screenshots_dir / filename).write_bytes(png_bytes)
 
     match.screenshot_path = f"screenshots/{filename}"
     match.screenshot_taken_at = ts
@@ -1540,7 +1533,7 @@ def delete_job(
     screenshot_path = match.screenshot_path if match is not None else None
     db.delete(job)
     db.commit()
-    unlink_screenshot(_screenshots_dir, screenshot_path)
+    unlink_screenshot(paths._screenshots_dir, screenshot_path)
     return {"deleted": job_id}
 
 

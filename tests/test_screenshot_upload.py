@@ -1,7 +1,7 @@
 """Tests for POST /jobs/{job_id}/screenshot — Centrelink evidence persistence.
 
 Uses an in-memory SQLite database (StaticPool), same pattern as
-tests/test_profile_ui.py, and monkeypatches app.api.main._screenshots_dir to a
+tests/test_profile_ui.py, and monkeypatches app.api.paths._screenshots_dir to a
 pytest tmp_path so tests never touch the real repo's screenshots/ directory.
 """
 from __future__ import annotations
@@ -14,7 +14,7 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-import app.api.main as main_module
+from app.api import paths
 from app.api.main import app, get_db
 from app.db import Base
 from app.models import JobListing, Match, Profile
@@ -58,7 +58,7 @@ def client(engine, tmp_path, monkeypatch):
 
     screenshots_dir = tmp_path / "screenshots"
     screenshots_dir.mkdir()
-    monkeypatch.setattr(main_module, "_screenshots_dir", screenshots_dir)
+    monkeypatch.setattr(paths, "_screenshots_dir", screenshots_dir)
 
     app.dependency_overrides[get_db] = _db
     with TestClient(app, raise_server_exceptions=True) as c:
@@ -106,7 +106,7 @@ class TestScreenshotUpload:
         assert match.screenshot_path is not None
         assert match.screenshot_taken_at is not None
 
-        saved_dir = main_module._screenshots_dir
+        saved_dir = paths._screenshots_dir
         files = list(saved_dir.glob("*.png"))
         assert len(files) == 1
 
@@ -123,7 +123,7 @@ class TestScreenshotUpload:
         db.refresh(match)
         assert match.screenshot_path is not None
 
-        saved_dir = main_module._screenshots_dir
+        saved_dir = paths._screenshots_dir
         files = list(saved_dir.glob("*.png"))
         assert len(files) == 1  # old file was deleted, not accumulated
 
