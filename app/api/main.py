@@ -39,6 +39,7 @@ from sqlalchemy.orm import Session, selectinload
 from app import retention, search_suggest
 from app.api.letters import router as letters_router
 from app.api.obligation import router as obligation_router
+from app.api.origin_guard import OriginGuardMiddleware
 from app.api.profile_ui import router as profile_ui_router
 from app.api.screening import router as screening_router
 from app.db import SessionLocal, app_env
@@ -371,6 +372,9 @@ app = FastAPI(title="Seek Job Assistant", version="0.1.0", lifespan=lifespan)
 # server. The extension doesn't need them (its pages and background worker have
 # host_permissions for localhost), and the profile editor is served from this same
 # origin. See docs/cleanup-3-8-plan.md step 5.1.
+# What CORS can't stop is a "simple" cross-site write (a body-less POST such as
+# /regenerate), so OriginGuardMiddleware refuses writes from other websites.
+app.add_middleware(OriginGuardMiddleware)
 
 app.include_router(profile_ui_router)
 app.include_router(letters_router)
