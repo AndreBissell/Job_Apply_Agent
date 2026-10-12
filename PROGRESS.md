@@ -5,6 +5,18 @@ one block per milestone.
 
 ---
 
+## 2026-10-13 — `app/api/main.py` split into routers and modules (ARCHITECTURE 5.4 #9) — DONE ✅
+
+- Same branch `fix/applied-evidence-safety`. Plan `docs/refactor-9-10-plan.md`, steps 9.0-9.16; pure moves, one commit each.
+- `f7f561d` safety nets: `scripts/dump_routes.py`, `tests/fixtures/route_table.txt` + `openapi.json`, `tests/test_route_table.py` (table, OpenAPI, shadowing of `GET /jobs/<literal>`), `tests/test_scan_policy.py` (Seek policy read from every `extension/*.js`).
+- `d38b433` one `get_db` (`deps.py`); `e62290c` `paths.py`; `995c00e` `events.py`; `5fdcbd7` `worker.py`; `392b502` + `fb66b41` `idle_loop.py`; `bf7c21c` `profile.py`; `24d7b28` `health.py`; `6d29fed` `evidence.py`; `046e23a` `search.py`; `9745b7b` `ingest.py`; `36e9a1f` `job_actions.py`; `a41bc43` `jobs.py`; `3f0af65` tidy (`main.py` 1,658 -> 95 lines); `e42c098` routers import `get_db` from `deps`.
+- Rule M1: every patched or shared name has one owner module and is reached as `owner.name` at call time; `main` re-exports only `app` and `get_db`; tests patch the owner. `tests/test_route_table.py` also checks one `ThreadPoolExecutor`, one `get_db`, and that nothing under `app/` imports `app.api.main`.
+- Tests: 1567 passed at the end (1549 at the start). `dashboard_e2e.py` 92/92, `quick_apply_e2e.py` 123/123. Route table and OpenAPI unchanged except the `get_db` dependency column (step 9.1).
+- Hand check H-B1 (owner, TEST backend): server starts, no traceback, `/health` 200. Log lines now come from `app.api.worker` / `app.api.idle_loop` (a change of logger name only).
+- Noticed, not fixed: `tests/test_screening_assist.py::TestConcurrentClassify::test_two_requests_one_call_both_sorted` failed intermittently in 3 full runs during step 9.10 (the second concurrent request came back unsorted); it passes alone and on later full runs, and nothing it uses was touched. `Counter` was an unused import in `main.py` from before the split (removed in the tidy-up).
+
+---
+
 ## 2026-10-12 — Cleanup of ARCHITECTURE 5.4 #11-#14 and the stub provider — DONE ✅
 
 - Same branch `fix/applied-evidence-safety`. Plan `docs/cleanup-11-14-plan.md`.

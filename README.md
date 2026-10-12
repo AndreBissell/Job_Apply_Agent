@@ -222,7 +222,7 @@ connect-listener in `app/db.py`.
 ## 6. Component 1 — The FastAPI Backend (`app/api/`)
 
 A small local API the extension talks to. Entry point: `scripts/run_api.py`
-(uvicorn on `127.0.0.1:8000`, `reload=True`). All of it lives in `app/api/main.py`.
+(uvicorn on `127.0.0.1:8000`, `reload=True`). `app/api/main.py` wires it together; the endpoints live in the router files beside it (`jobs.py`, `job_actions.py`, `ingest.py`, `profile.py`, `evidence.py`, `search.py`, `health.py`, `events.py`, `letters.py`, ...) and the background loop in `idle_loop.py`.
 
 **Cross-cutting**
 - **CORS / cross-site writes:** no CORS headers (the extension and the profile editor
@@ -324,7 +324,8 @@ Job_Apply_Agent/
 │   ├── db.py                  ← engine + SessionLocal + Base + SQLite FK pragma
 │   ├── models.py              ← the 11 tables (SQLAlchemy 2.0 typed)
 │   ├── api/
-│   │   └── main.py            ← FastAPI app + all endpoints
+│   │   ├── main.py            ← FastAPI app: wires the routers together
+│   │   └── (routers)          ← jobs.py, ingest.py, profile.py, ...; idle_loop.py, worker.py, events.py
 │   ├── llm/
 │   │   ├── extract.py         ← STUB: job-skill/requirement extraction
 │   │   └── match.py           ← STUB: scoring + cover-letter generation

@@ -158,3 +158,24 @@ def test_literal_job_paths_answer(client, path):
     assert res.status_code != 422, f"GET {path} answered 422: shadowed by /jobs/{{job_id}}?"
     expected = 404 if path.startswith("/jobs/by-source-id/") else 200
     assert res.status_code == expected, f"GET {path}: {res.status_code} {res.text[:200]}"
+
+
+def test_nothing_in_app_imports_main():
+    """main.py imports every router, so any module that imported it back would be a cycle
+    (step 9.16). Only scripts/ and tests may import it. Read with ast: nothing is imported."""
+    import ast
+
+    offenders = []
+    for path in sorted((ROOT / "app").rglob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.ImportFrom):
+                names = [node.module or ""]
+                if node.module == "app.api":
+                    names += [f"app.api.{a.name}" for a in node.names]
+            elif isinstance(node, ast.Import):
+                names = [a.name for a in node.names]
+            else:
+                continue
+            if any(n == "app.api.main" or n.startswith("app.api.main.") for n in names):
+                offenders.append(str(path.relative_to(ROOT)))
+    assert not offenders, f"imports app.api.main: {offenders}"

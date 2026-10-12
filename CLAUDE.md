@@ -136,7 +136,7 @@ Cost control (all in client.py + app/llm/usage.py):
 
 Rate-limit handling: on HTTP 429, client.py backs off and retries (max 3);
 delays > 300s are treated as daily exhaustion → DailyQuotaError. The idle loop
-(_processing_idle_loop in main.py) serialises LLM work through a single-worker
+(_processing_idle_loop in app/api/idle_loop.py) serialises LLM work through a single-worker
 executor and backs off 3 minutes when extraction fails. Local throttle: LLM_RPM=8.
 
 Env vars (gitignored .env): LLM_PROVIDER=gemini, GOOGLE_GENAI_USE_VERTEXAI=true,
@@ -163,7 +163,17 @@ job-app-assistant/
     db.py              # engine + session factory; reads DATABASE_URL
     models.py          # SQLAlchemy models
     api/
-      main.py          # FastAPI backend for the extension
+      main.py          # wires the FastAPI app together: lifespan, Origin guard, ordered routers, static mounts
+      deps.py          # get_db, the one session dependency
+      paths.py         # static + screenshots folders
+      events.py        # SSE broadcaster + GET /events
+      worker.py        # the ONE background worker thread + _process_listing
+      idle_loop.py     # the idle loop, the letters phase and their helpers
+      health.py ingest.py evidence.py search.py job_actions.py jobs.py profile.py   # routers
+      letters.py obligation.py profile_ui.py screening.py origin_guard.py          # (older routers)
+      Patch the module that OWNS a name (worker._bg_executor, idle_loop._letters_phase, ...), never main;
+      main re-exports only app and get_db. GET /jobs/{job_id} (jobs.py) must be matched after every other
+      GET /jobs/<literal> router; tests/test_route_table.py guards the route table and OpenAPI schema.
     llm/
       client.py        # provider abstraction: tiers, tool calling, usage log, budget guard — ONE place
       usage.py         # spend totals + budget cap status (reads llm_usage)
@@ -607,7 +617,7 @@ the detailed rationale/design) except the §5.2 fast-follow noted above.
   `SavedSearch`), `GET /jobs` gained `top_skills` (top-3 hard job_skills) and
   an optional `status` filter (switches sort to `applied_at desc` for the
   Applied tab/CSV export).
-- **Idle loop** (`app/api/main.py::_processing_idle_loop`): reordered so the
+- **Idle loop** (`app/api/idle_loop.py::_processing_idle_loop`): reordered so the
   cover-letter phase is checked first every iteration; extraction/matching
   only runs when there's no cover-letter backlog for score>=75 matches.
 - **Sidebar** (`extension/sidebar.html`/`sidebar.js`): client-side score
