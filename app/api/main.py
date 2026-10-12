@@ -39,15 +39,14 @@ from sqlalchemy.orm import Session, selectinload
 from app import retention, search_suggest
 from app.api import events, idle_loop, paths, worker
 from app.api.deps import get_db  # re-exported: tests key dependency_overrides on it
+from app.api.health import router as health_router
 from app.api.letters import router as letters_router
 from app.api.obligation import router as obligation_router
 from app.api.origin_guard import OriginGuardMiddleware
 from app.api.profile import router as profile_router
 from app.api.profile_ui import router as profile_ui_router
 from app.api.screening import router as screening_router
-from app.db import app_env
 from app.llm import search_refine
-from app.llm import usage as llm_usage
 from app.llm.client import DailyQuotaError
 from app.llm.cover_letter import THRESHOLD as COVER_LETTER_THRESHOLD
 from app.llm.letter import view as letter_view
@@ -91,6 +90,7 @@ app.include_router(profile_ui_router)
 app.include_router(letters_router)
 app.include_router(screening_router)
 app.include_router(obligation_router)
+app.include_router(health_router)
 app.include_router(events.router)
 app.include_router(profile_router)
 
@@ -175,24 +175,6 @@ def _eligibility_notes(job: JobListing) -> list[str]:
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
-@app.get("/health")
-def health(db: Session = Depends(get_db)) -> dict:
-    """Liveness check the extension uses to confirm the backend is up."""
-    profile_id = db.scalar(select(Profile.id).order_by(Profile.id).limit(1))
-    return {"status": "ok", "profile_id": profile_id, "env": app_env()}
-
-
-@app.get("/llm/usage")
-def llm_usage_status(db: Session = Depends(get_db)) -> dict:
-    """LLM spend vs the budget caps, for the sidebar's budget banner.
-
-    ``blocked`` means mid/strong calls (cover letters) are refused until the
-    daily window rolls over or the cap is raised in ``profiles.preferences``;
-    quick-screen/extraction/matching (``small``) keep running regardless.
-    """
-    return llm_usage.budget_status(db)
-
-
 @app.post("/ingest")
 def ingest(
     body: IngestBody,
