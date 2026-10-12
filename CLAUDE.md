@@ -36,8 +36,9 @@ What the extension IS allowed to do — the 1-hop rule (standing behaviour):
 
 
 Read the DOM of any Seek page the user themselves opened.
-Auto-navigate the user's active tab to job links that already appear on a page the
-user opened — i.e. links on the opened search-results page are fair game. This is
+Open job links that already appear on a page the user opened, one at a time in a
+background tab (`chrome.tabs.create({active: false})`), read it, then close it — i.e.
+links on the opened search-results page are fair game. This is
 1 hop: the page the user opened → the listings linked from it.
 Paced and capped so it stays a trickle, not a crawl: ≥5s between pages
 (SCAN_DELAY_MS = 5000), and a per-scan cap. The cap is now user-tunable in the

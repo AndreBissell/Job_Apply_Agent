@@ -1,12 +1,16 @@
 """SQLAlchemy 2.0 models for the Job Application Assistant.
 
 This is the implementation of ``docs/database-schema.md`` — that document is the
-source of truth. Eleven tables across two halves that meet at ``matches``:
+source of truth. Eighteen tables across two halves that meet at ``matches``:
 
     profile side : profiles, saved_searches, qualifications, experiences,
-                   skills, experience_skills, user_cvs
-    job side     : job_listings, job_skills
+                   skills, experience_skills, user_cvs, gap_decisions,
+                   gap_sightings
+    job side     : job_listings, job_skills, screening_questions,
+                   job_screening_questions
     bridge       : matches, cover_letters
+    letter runs  : letter_runs, letter_run_steps
+    spend log    : llm_usage (no foreign keys, so it outlives the rows it describes)
 
 Portability notes (SQLite local dev <-> Postgres hosting):
   * ``BIG_INT_PK`` renders ``BIGINT`` on Postgres but ``INTEGER`` on SQLite, so

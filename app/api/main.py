@@ -1,11 +1,14 @@
 """FastAPI backend for the Seek Job Assistant Chrome extension.
 
 Receives job listings the user's *real* browser scraped from Seek pages they
-opened themselves (POST /ingest), upserts them into ``job_listings``, and fires
-background tasks for LLM extraction + matching (stubbed for now). Also serves the
-dashboard reads the extension's side panel uses (/jobs, /profile).
+opened themselves (POST /ingest) and upserts them into ``job_listings``. /ingest
+makes no LLM call: the idle loop (``_processing_idle_loop``) does the AI work one
+job at a time on a single worker thread, in this order: retention sweep, cover
+letters, quick screen, extraction + matching. Also serves everything the side panel
+and profile editor read and write (/jobs, /profile, /obligation, letters, screening).
 
-Run it with ``python scripts/run_api.py`` (uvicorn on 127.0.0.1:8000).
+Run it with ``python scripts/run_api.py real|test`` (uvicorn on 127.0.0.1, port
+8000 for real and 8001 for test).
 """
 
 from __future__ import annotations

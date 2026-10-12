@@ -5,8 +5,9 @@ SQLAlchemy>=2.0,<2.1
 alembic>=1.13
 python-dotenv>=1.0
 
-# Scraper: Playwright drives a real headless Chromium (Seek is JS-rendered).
-# After installing, run once to fetch the browser binary:
+# Dormant scraper: Playwright drives a real headless Chromium. The Playwright
+# scraper is kept (app/scraper/) but is not in the active pipeline (the Chrome
+# extension is). The browser binary is only needed to run it:
 #   python -m playwright install chromium
 playwright>=1.40
 
@@ -22,13 +23,13 @@ pytest>=8.0  # test runner
 pillow>=10.0
 
 # LLM layer: all calls go through app/llm/client.py; provider/model/key from .env.
-# OpenAI — active provider (gpt-5-nano for extraction/matching, gpt-5-mini for
-# cover letters; see app/llm/client.py docstring).
+# Gemini on Vertex AI (Google GenAI SDK) — the ACTIVE provider, using Application
+# Default Credentials; see app/llm/client.py and the LLM Layer section of CLAUDE.md.
+google-genai>=1.0
+# OpenAI — kept as a dormant fallback (see app/llm/client.py).
 openai>=1.0
 # Groq (OpenAI-compatible SDK) — kept as a dormant fallback.
 groq>=0.9
-# Gemini (Google GenAI SDK) — kept as a dormant fallback.
-google-genai>=1.0
 # Makes Python's TLS use the OS trust store — needed where AV/corporate proxies
 # do TLS interception (the local CA is in the OS store, not certifi's bundle).
 truststore>=0.9
