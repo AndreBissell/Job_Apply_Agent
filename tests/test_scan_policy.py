@@ -19,7 +19,7 @@ from pathlib import Path
 
 from annotated_types import Le
 
-from app.api.main import PreferencesUpdate
+from app.api.profile import PreferencesUpdate
 
 ROOT = Path(__file__).resolve().parent.parent
 EXT = ROOT / "extension"

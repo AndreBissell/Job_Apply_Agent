@@ -24,7 +24,7 @@ import re
 import zipfile
 from collections import Counter
 from contextlib import asynccontextmanager
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Literal
@@ -32,7 +32,7 @@ from typing import Literal
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
@@ -42,6 +42,7 @@ from app.api.deps import get_db  # re-exported: tests key dependency_overrides o
 from app.api.letters import router as letters_router
 from app.api.obligation import router as obligation_router
 from app.api.origin_guard import OriginGuardMiddleware
+from app.api.profile import router as profile_router
 from app.api.profile_ui import router as profile_ui_router
 from app.api.screening import router as screening_router
 from app.db import app_env
@@ -53,16 +54,12 @@ from app.llm.letter import view as letter_view
 from app.llm.quickscreen import quick_screen
 from app.models import (
     CoverLetter,
-    Experience,
     JobListing,
     Match,
     Profile,
-    Qualification,
     SavedSearch,
-    Skill,
-    UserCv,
 )
-from app.preferences import LIMIT_BOUNDS, get_preferences, set_preferences
+from app.preferences import get_preferences, set_preferences
 from app.screenshots import downscale_png, unlink_screenshot
 
 logger = logging.getLogger(__name__)
@@ -95,6 +92,7 @@ app.include_router(letters_router)
 app.include_router(screening_router)
 app.include_router(obligation_router)
 app.include_router(events.router)
+app.include_router(profile_router)
 
 app.mount("/static", StaticFiles(directory=str(paths._static_dir)), name="static")
 app.mount("/screenshots", StaticFiles(directory=str(paths._screenshots_dir)), name="screenshots")
@@ -120,50 +118,6 @@ class IngestListing(BaseModel):
 class IngestBody(BaseModel):
     listings: list[IngestListing]
     profile_id: int = 1
-
-
-class ProfileUpdate(BaseModel):
-    name: str | None = None
-    email: str | None = None
-
-
-class PreferencesUpdate(BaseModel):
-    auto_cover_letter_min_score: int | None = Field(default=None, ge=0, le=100)
-    # The full cover-letter pipeline (plan §6): master switch, the score bar for it
-    # (the one-shot still covers auto_cover_letter_min_score up to this), and which
-    # engine runs it.
-    letter_loop_enabled: bool | None = None
-    letter_loop_min_score: int | None = Field(default=None, ge=0, le=100)
-    letter_engine: Literal["agent", "workflow"] | None = None
-    # The pipeline's side outputs (plan §6): each off = that model call is never made.
-    resume_advice_enabled: bool | None = None
-    learning_suggestions_enabled: bool | None = None
-    screening_answers_enabled: bool | None = None
-    # Help with the Quick Apply questions (plan §10.1); off = every question is yours to answer.
-    screening_question_help_enabled: bool | None = None
-    # Per-run limits of the pipeline (plan 7); bounds in preferences.LIMIT_BOUNDS. A run
-    # that reaches one stops with its best draft and the open issues flagged.
-    letter_max_drafts: int | None = Field(default=None, ge=LIMIT_BOUNDS["letter_max_drafts"][0],
-                                          le=LIMIT_BOUNDS["letter_max_drafts"][1])
-    letter_max_tool_calls: int | None = Field(default=None, ge=LIMIT_BOUNDS["letter_max_tool_calls"][0],
-                                              le=LIMIT_BOUNDS["letter_max_tool_calls"][1])
-    llm_run_budget_usd: float | None = Field(default=None, ge=LIMIT_BOUNDS["llm_run_budget_usd"][0],
-                                             le=LIMIT_BOUNDS["llm_run_budget_usd"][1])
-    llm_search_suggestions: bool | None = None
-    # Job pages opened per Scan Page. The upper bound is the Seek access policy's
-    # standing cap (CLAUDE.md) — raise it deliberately, don't remove it.
-    scan_max_pages: int | None = Field(default=None, ge=1, le=25)
-    # Retention tunables — see app/retention.py. Bounds keep a typo from
-    # turning the sweep into "delete everything" (window >= 7 days) or the
-    # screenshot TTL into "delete evidence immediately" (>= 1 day).
-    retention_window_days: int | None = Field(default=None, ge=7, le=730)
-    retention_floor_matches: int | None = Field(default=None, ge=0, le=5000)
-    screenshot_ttl_days: int | None = Field(default=None, ge=1, le=365)
-    stale_profile_weight: float | None = Field(default=None, gt=0, le=1)
-    # Centrelink mutual obligation (app/obligation.py): applications per period and the
-    # date a period starts. Stored as "YYYY-MM-DD" (update_preferences dumps in JSON mode).
-    obligation_target: int | None = Field(default=None, ge=1, le=100)
-    obligation_cycle_start: date | None = None
 
 
 class StatusUpdate(BaseModel):
@@ -1170,79 +1124,3 @@ def delete_job(
     db.commit()
     unlink_screenshot(paths._screenshots_dir, screenshot_path)
     return {"deleted": job_id}
-
-
-@app.get("/profile/{profile_id}")
-def get_profile(profile_id: int, db: Session = Depends(get_db)) -> dict:
-    """Profile with nested qualifications, experiences, skills, and CVs."""
-    profile = db.get(Profile, profile_id)
-    if profile is None:
-        raise HTTPException(status_code=404, detail="Profile not found")
-
-    qualifications = db.scalars(
-        select(Qualification).where(Qualification.user_id == profile_id)
-    ).all()
-    experiences = db.scalars(
-        select(Experience).where(Experience.user_id == profile_id)
-    ).all()
-    skills = db.scalars(select(Skill).where(Skill.user_id == profile_id)).all()
-    cvs = db.scalars(select(UserCv).where(UserCv.user_id == profile_id)).all()
-
-    return {
-        "id": profile.id,
-        "name": profile.name,
-        "email": profile.email,
-        "visa_status": profile.visa_status,
-        "qualifications": [
-            {"id": q.id, "title": q.title, "qualification_type": q.qualification_type,
-             "institution": q.institution, "status": q.status}
-            for q in qualifications
-        ],
-        "experiences": [
-            {"id": e.id, "title": e.title, "organization": e.organization,
-             "experience_type": e.experience_type, "on_cv": e.on_cv}
-            for e in experiences
-        ],
-        "skills": [
-            {"id": s.id, "name": s.name, "category": s.category} for s in skills
-        ],
-        "cvs": [
-            {"id": c.id, "label": c.label, "is_default": c.is_default} for c in cvs
-        ],
-    }
-
-
-@app.put("/profile/{profile_id}")
-def update_profile(
-    profile_id: int, body: ProfileUpdate, db: Session = Depends(get_db)
-) -> dict:
-    """Partial update of a profile's ``name`` / ``email``."""
-    profile = db.get(Profile, profile_id)
-    if profile is None:
-        raise HTTPException(status_code=404, detail="Profile not found")
-
-    if body.name is not None:
-        profile.name = body.name
-    if body.email is not None:
-        profile.email = body.email
-    db.commit()
-
-    return {"id": profile.id, "name": profile.name, "email": profile.email}
-
-
-@app.get("/profile/{profile_id}/preferences")
-def read_preferences(profile_id: int, db: Session = Depends(get_db)) -> dict:
-    if db.get(Profile, profile_id) is None:
-        raise HTTPException(status_code=404, detail="Profile not found")
-    return get_preferences(db, profile_id)
-
-
-@app.put("/profile/{profile_id}/preferences")
-def update_preferences(
-    profile_id: int, body: PreferencesUpdate, db: Session = Depends(get_db)
-) -> dict:
-    """Partial update: only the keys present in the body change."""
-    if db.get(Profile, profile_id) is None:
-        raise HTTPException(status_code=404, detail="Profile not found")
-    # mode="json": a date must reach json.dumps as its ISO string.
-    return set_preferences(db, profile_id, body.model_dump(mode="json", exclude_none=True))
