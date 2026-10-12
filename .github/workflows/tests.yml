@@ -1,0 +1,26 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install pinned dependencies
+        run: python -m pip install -r requirements-lock.txt
+      # No secrets and no LLM_PROVIDER on purpose: with no GOOGLE_CLOUD_PROJECT
+      # any model call that slips through raises instead of spending money.
+      - name: Run tests
+        run: python -m pytest -q
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Check extension JavaScript syntax
+        shell: bash
+        run: for f in extension/*.js; do node --check "$f"; done
