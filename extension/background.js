@@ -17,6 +17,13 @@ function tellSeekTabs(type) {
   });
 }
 
+// Tabs the side panel's scan opened (sidebar.js produce()). The scan reads and
+// ingests those pages itself, so content_script.js asks IS_SCAN_TAB and skips its
+// own capture there. Lost if the worker restarts, which only brings back the
+// harmless double capture (an upsert), never a missed one.
+const scanTabs = new Set();
+chrome.tabs.onRemoved.addListener((id) => scanTabs.delete(id));
+
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== 'sidebar') return;
   openSidebars += 1;
@@ -33,6 +40,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     chrome.action.setBadgeText({ text: capturedThisSession ? String(capturedThisSession) : '' });
     chrome.action.setBadgeBackgroundColor({ color: '#2557a7' });
     console.log('[SeekAssistant BG] Ingest done:', msg);
+  } else if (msg && msg.type === 'SCAN_TAB_ADD') {
+    scanTabs.add(msg.tabId);
+    sendResponse({ ok: true });
+  } else if (msg && msg.type === 'SCAN_TAB_REMOVE') {
+    scanTabs.delete(msg.tabId);
+    sendResponse({ ok: true });
+  } else if (msg && msg.type === 'IS_SCAN_TAB') {
+    sendResponse({ scan: scanTabs.has(sender.tab?.id) });
   } else if (msg && msg.type === 'GET_SESSION_COUNT') {
     sendResponse({ count: capturedThisSession });
   } else if (msg && msg.type === 'BACKEND_FETCH') {

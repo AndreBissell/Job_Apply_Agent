@@ -1283,10 +1283,18 @@ async function scanPage() {
         let bgTab;
         try {
           bgTab = await chrome.tabs.create({ url: urls[i], active: false });
+          // Tell the worker this is a scan tab, so the content script running in it
+          // doesn't also capture the job (this scan ingests it below). The page can't
+          // be idle yet, so this lands first; if it ever lost, the result is just
+          // the old double capture.
+          await chrome.runtime.sendMessage({ type: 'SCAN_TAB_ADD', tabId: bgTab.id }).catch(() => {});
           await waitForTabComplete(bgTab.id, 15000);
         } catch (e) {
           scanLog(`${label} could not open tab: ${e.message}`);
-          if (bgTab) await chrome.tabs.remove(bgTab.id).catch(() => {});
+          if (bgTab) {
+            await chrome.tabs.remove(bgTab.id).catch(() => {});
+            await chrome.runtime.sendMessage({ type: 'SCAN_TAB_REMOVE', tabId: bgTab.id }).catch(() => {});
+          }
           continue;
         }
 
@@ -1298,7 +1306,10 @@ async function scanPage() {
           }]);
         }
         catch (e) { scanLog(`${label} could not scrape: ${e.message}`); }
-        finally { await chrome.tabs.remove(bgTab.id).catch(() => {}); }
+        finally {
+          await chrome.tabs.remove(bgTab.id).catch(() => {});
+          await chrome.runtime.sendMessage({ type: 'SCAN_TAB_REMOVE', tabId: bgTab.id }).catch(() => {});
+        }
 
         if (payload?.source_job_id) {
           const jobId = await ingestListing(payload);
