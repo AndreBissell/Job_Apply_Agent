@@ -25,6 +25,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import app.api.main as main
+from app.api import idle_loop
 import app.api.profile_ui as profile_ui
 from app.db import Base
 from app.llm.client import ToolStep
@@ -114,7 +115,7 @@ def client(Session, monkeypatch):
     async def _no_idle_loop():  # the real one would work on whatever SessionLocal points at
         return None
 
-    monkeypatch.setattr(main, "_processing_idle_loop", _no_idle_loop)
+    monkeypatch.setattr(idle_loop, "_processing_idle_loop", _no_idle_loop)
 
     def _db():
         s = Session()

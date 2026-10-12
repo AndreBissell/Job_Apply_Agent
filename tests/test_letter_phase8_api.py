@@ -362,45 +362,45 @@ class TestLettersPhase:
         async def fake_broadcast(event_name, data):
             rec["events"].append((event_name, data))
 
-        monkeypatch.setattr(main, "SessionLocal", Session)
-        monkeypatch.setattr(main.letter_production, "next_work", fake_next_work)
-        monkeypatch.setattr(main.letter_production, "run_work", fake_run_work)
+        monkeypatch.setattr(idle_loop, "SessionLocal", Session)
+        monkeypatch.setattr(idle_loop.letter_production, "next_work", fake_next_work)
+        monkeypatch.setattr(idle_loop.letter_production, "run_work", fake_run_work)
         monkeypatch.setattr(worker, "_bg_executor", executor)
-        monkeypatch.setattr(main, "_IDLE_INTERVAL_S", 0)
+        monkeypatch.setattr(idle_loop, "_IDLE_INTERVAL_S", 0)
         monkeypatch.setattr(events, "_broadcast", fake_broadcast)
-        monkeypatch.setattr(main, "_letters_paused_until", 0.0)
+        monkeypatch.setattr(idle_loop, "_letters_paused_until", 0.0)
         yield rec
         executor.shutdown(wait=True)
-        main._letters_paused_until = 0.0  # never leak a pause into other tests
+        idle_loop._letters_paused_until = 0.0  # never leak a pause into other tests
 
     def test_no_work_returns_false_without_running_anything(self, phase):
-        assert asyncio.run(main._letters_phase()) is False
+        assert asyncio.run(idle_loop._letters_phase()) is False
         assert phase["next_work"] == [1] and phase["run_work"] == []
 
     def test_work_is_run_on_the_worker_with_the_broadcaster(self, phase):
         phase["work"] = Work("pipeline", 5)
         phase["landed"] = Landed("pipeline", 5, "done", letter="x")
 
-        assert asyncio.run(main._letters_phase()) is True
+        assert asyncio.run(idle_loop._letters_phase()) is True
 
         ((work, profile_id, emit),) = phase["run_work"]
         assert work == Work("pipeline", 5) and profile_id == 1
         assert emit is events.broadcast_from_thread
         assert phase["events"] == []
-        assert main._letters_paused_until == 0.0
+        assert idle_loop._letters_paused_until == 0.0
 
     def test_an_account_limit_pauses_letters_and_tells_the_sidebar(self, phase):
         phase["work"] = Work("pipeline", 5)
         phase["landed"] = Landed("pipeline", 5, "cancelled", account_limit="daily cap hit")
         before = time.monotonic()
 
-        assert asyncio.run(main._letters_phase()) is True
+        assert asyncio.run(idle_loop._letters_phase()) is True
 
-        assert main._letters_paused_until > before + 60  # paused well into the future
+        assert idle_loop._letters_paused_until > before + 60  # paused well into the future
         assert phase["events"] == [("llm_budget_blocked", {"reason": "daily cap hit"})]
 
         # the next pass does no letter work at all while paused
-        assert asyncio.run(main._letters_phase()) is False
+        assert asyncio.run(idle_loop._letters_phase()) is False
         assert phase["next_work"] == [1]  # still just the first call
         assert len(phase["run_work"]) == 1
 
@@ -408,12 +408,12 @@ class TestLettersPhase:
         phase["work"] = Work("pipeline", 5)
         phase["landed"] = Landed("pipeline", 5, "waiting_user", questions=2)
 
-        assert asyncio.run(main._letters_phase()) is True
+        assert asyncio.run(idle_loop._letters_phase()) is True
 
-        assert main._letters_paused_until == 0.0
+        assert idle_loop._letters_paused_until == 0.0
         assert phase["events"] == []
         phase["work"] = None
-        assert asyncio.run(main._letters_phase()) is False  # next_work is consulted again
+        assert asyncio.run(idle_loop._letters_phase()) is False  # next_work is consulted again
         assert phase["next_work"] == [1, 1]
 
 
