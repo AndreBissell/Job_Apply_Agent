@@ -225,9 +225,9 @@ A small local API the extension talks to. Entry point: `scripts/run_api.py`
 (uvicorn on `127.0.0.1:8000`, `reload=True`). All of it lives in `app/api/main.py`.
 
 **Cross-cutting**
-- **CORS:** `allow_origins=["*"]`, `allow_credentials=False` (open for local dev; the
-  extension calls from a `chrome-extension://` origin). Lock down to the extension id
-  before any hosted deployment.
+- **CORS / cross-site writes:** no CORS headers (the extension and the profile editor
+  don't need them); `app/api/origin_guard.py` refuses writes whose `Origin` isn't the
+  extension or this server's own localhost origin.
 - **DB session:** a `get_db()` dependency yields a `SessionLocal()` and closes it per
   request — the standard FastAPI pattern.
 - **Background work:** uses FastAPI `BackgroundTasks`. Because the request session is

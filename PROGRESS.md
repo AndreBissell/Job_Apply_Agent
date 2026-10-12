@@ -5,6 +5,16 @@ one block per milestone.
 
 ---
 
+## 2026-10-12 — Local server locked down: no CORS, Origin guard on writes (ARCHITECTURE 5.4 #5) — DONE in code ✅, hand checks pending
+
+- Same branch `fix/applied-evidence-safety`. Plan `docs/cleanup-3-8-plan.md`, Branch 5 (D3 = remove CORS, D4 = Origin guard).
+- `3c2a974`: the `CORSMiddleware` is gone. A page on another site gets no `Access-Control-*` headers, so it can't read responses or send preflighted calls.
+- `52c46f9`: `app/api/origin_guard.py` (plain ASGI middleware) returns 403 for POST/PUT/PATCH/DELETE with an `Origin` that is not `chrome-extension://...` or `http://<Host>` on localhost/127.0.0.1. This closes the body-less `POST /jobs/{id}/regenerate` (about $0.2), `/quick-screen` and `/gaps/{id}/clear`. No `Origin` (scripts, tests) passes.
+- Tests: `tests/test_origin_guard.py` (12; the worker is replaced by a recorder, no AI). `tests/e2e/dashboard_e2e.py` 92/92 and `tests/e2e/quick_apply_e2e.py` 123/123 with the real extension loaded.
+- Not verified: the owner's hand checks in a real Chrome (side panel + live update, popup `/health`, profile editor save, Seek overlay "Save edits", and the example.com negative fetch). If 1-4 fail, fall back to an allow-list.
+
+---
+
 ## 2026-10-12 — Overlapping quick screens make one model call (ARCHITECTURE 5.4 #7) — DONE ✅
 
 - Same branch `fix/applied-evidence-safety`. Plan `docs/cleanup-3-8-plan.md`, Branch 4.
