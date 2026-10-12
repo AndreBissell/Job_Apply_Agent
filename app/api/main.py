@@ -32,15 +32,15 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Literal
 
-from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import Response, StreamingResponse
+from fastapi import Depends, FastAPI, HTTPException
+from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app import retention, search_suggest
-from app.api import paths
+from app.api import events, paths
 from app.api.deps import get_db  # re-exported: tests key dependency_overrides on it
 from app.api.letters import router as letters_router
 from app.api.obligation import router as obligation_router
@@ -119,31 +119,6 @@ def _match_attempt(job_id: int) -> str:
         )
     return "gave_up" if recorded == "Parse error" else "ok"
 
-# ---------------------------------------------------------------------------
-# SSE event broadcasting
-# ---------------------------------------------------------------------------
-_sse_clients: list[asyncio.Queue] = []
-_event_loop: asyncio.AbstractEventLoop | None = None
-
-
-async def _broadcast(event: str, data: dict) -> None:
-    """Push an SSE event to all connected sidebar clients."""
-    if not _sse_clients:
-        return
-    msg = f"event: {event}\ndata: {json.dumps(data)}\n\n"
-    for q in list(_sse_clients):
-        try:
-            q.put_nowait(msg)
-        except asyncio.QueueFull:
-            pass
-
-
-def broadcast_from_thread(event: str, data: dict) -> None:
-    """Thread-safe wrapper — call from sync background tasks."""
-    if _event_loop is None:
-        return
-    asyncio.run_coroutine_threadsafe(_broadcast(event, data), _event_loop)
-
 
 def _retention_tick() -> None:
     """Run the retention sweep for every profile that is due. Never raises: a
@@ -190,14 +165,14 @@ async def _letters_phase() -> bool:
     logger.info("Idle: cover letter (%s) for job %s", work.kind, work.job_id)
     landed = await loop.run_in_executor(
         _bg_executor,
-        functools.partial(letter_production.run_work, work, 1, broadcast_from_thread),
+        functools.partial(letter_production.run_work, work, 1, events.broadcast_from_thread),
     )
     if landed.account_limit:
         # The USD guard (or the provider's daily quota) is hit: every later run would be
         # too, so pause letters. Scanning and scoring (`small`) keep flowing.
         _letters_paused_until = time.monotonic() + _BUDGET_PAUSE_S
         logger.warning("Idle: %s Pausing cover letters for %ds.", landed.account_limit, _BUDGET_PAUSE_S)
-        await _broadcast("llm_budget_blocked", {"reason": landed.account_limit})
+        await events._broadcast("llm_budget_blocked", {"reason": landed.account_limit})
     await asyncio.sleep(_IDLE_INTERVAL_S)
     return True
 
@@ -271,7 +246,7 @@ async def _processing_idle_loop() -> None:
                         # for, so it's the only one that needs a live refresh. A
                         # pass just moves the job on to Phase 1, with nothing to
                         # display yet.
-                        broadcast_from_thread("job_processed", {"job_id": screen_id})
+                        events.broadcast_from_thread("job_processed", {"job_id": screen_id})
                     await asyncio.sleep(_IDLE_INTERVAL_S)
                 except DailyQuotaError:
                     logger.warning("Idle: quick-screen daily quota hit — backing off 3 min")
@@ -361,8 +336,7 @@ async def _processing_idle_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _event_loop
-    _event_loop = asyncio.get_running_loop()
+    events._event_loop = asyncio.get_running_loop()
     task = asyncio.create_task(_processing_idle_loop())
     try:
         yield
@@ -385,6 +359,7 @@ app.include_router(profile_ui_router)
 app.include_router(letters_router)
 app.include_router(screening_router)
 app.include_router(obligation_router)
+app.include_router(events.router)
 
 app.mount("/static", StaticFiles(directory=str(paths._static_dir)), name="static")
 app.mount("/screenshots", StaticFiles(directory=str(paths._screenshots_dir)), name="screenshots")
@@ -548,16 +523,16 @@ def _process_listing(
             extract_job(job_id, force=force)
         except (DailyQuotaError, BudgetExceededError) as exc:
             logger.warning("job %s: %s — stopping this job's processing", job_id, exc)
-            broadcast_from_thread("llm_budget_blocked", {"reason": str(exc)})
+            events.broadcast_from_thread("llm_budget_blocked", {"reason": str(exc)})
             return
         except Exception:  # noqa: BLE001 — a bad extraction must not kill the task
             logger.exception("extract_job failed for job %s", job_id)
         try:
             match_job(job_id, profile_id, force=force)
-            broadcast_from_thread("job_processed", {"job_id": job_id})
+            events.broadcast_from_thread("job_processed", {"job_id": job_id})
         except (DailyQuotaError, BudgetExceededError) as exc:
             logger.warning("job %s: %s — stopping this job's processing", job_id, exc)
-            broadcast_from_thread("llm_budget_blocked", {"reason": str(exc)})
+            events.broadcast_from_thread("llm_budget_blocked", {"reason": str(exc)})
             return
         except Exception:  # noqa: BLE001 — a per-job failure is logged; quota/budget stops are caught above
             logger.exception("match_job failed for job %s", job_id)
@@ -565,13 +540,13 @@ def _process_listing(
             try:
                 with SessionLocal() as db:
                     landed = letter_production.generate_for(
-                        db, job_id, profile_id, broadcast_from_thread, bypass_threshold=bypass_threshold,
+                        db, job_id, profile_id, events.broadcast_from_thread, bypass_threshold=bypass_threshold,
                     )
                 if landed is not None and landed.account_limit:
-                    broadcast_from_thread("llm_budget_blocked", {"reason": landed.account_limit})
+                    events.broadcast_from_thread("llm_budget_blocked", {"reason": landed.account_limit})
             except (DailyQuotaError, BudgetExceededError) as exc:
                 logger.warning("job %s: %s — stopping this job's processing", job_id, exc)
-                broadcast_from_thread("llm_budget_blocked", {"reason": str(exc)})
+                events.broadcast_from_thread("llm_budget_blocked", {"reason": str(exc)})
                 return
             except Exception:  # noqa: BLE001 — a per-job failure is logged; quota/budget stops are caught above
                 logger.exception("cover letter failed for job %s", job_id)
@@ -1535,34 +1510,6 @@ def delete_job(
     db.commit()
     unlink_screenshot(paths._screenshots_dir, screenshot_path)
     return {"deleted": job_id}
-
-
-@app.get("/events")
-async def sse_events(request: Request):
-    """Server-Sent Events stream. Pushes job_processed and cover_letter_ready events."""
-    queue: asyncio.Queue[str] = asyncio.Queue(maxsize=50)
-    _sse_clients.append(queue)
-
-    async def stream():
-        try:
-            yield "event: ping\ndata: {}\n\n"
-            while True:
-                if await request.is_disconnected():
-                    break
-                try:
-                    msg = await asyncio.wait_for(queue.get(), timeout=25)
-                    yield msg
-                except asyncio.TimeoutError:
-                    yield "event: ping\ndata: {}\n\n"  # keepalive
-        finally:
-            if queue in _sse_clients:
-                _sse_clients.remove(queue)
-
-    return StreamingResponse(
-        stream(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
 
 
 @app.get("/profile/{profile_id}")

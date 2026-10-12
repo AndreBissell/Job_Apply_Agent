@@ -23,6 +23,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import app.api.main as main
+from app.api import events
 import app.api.profile_ui as profile_ui
 from app.db import Base
 from app.llm.letter import production
@@ -296,7 +297,7 @@ class TestProcessListing:
         monkeypatch.setattr(main, "extract_job", lambda job_id, force=False: None)
         monkeypatch.setattr(main, "match_job", lambda job_id, profile_id, force=False: None)
         monkeypatch.setattr(main, "SessionLocal", Session)
-        monkeypatch.setattr(main, "broadcast_from_thread", lambda event_name, data: calls["events"].append((event_name, data)))
+        monkeypatch.setattr(events, "broadcast_from_thread", lambda event_name, data: calls["events"].append((event_name, data)))
         calls["result"] = None
         calls["raises"] = None
 
@@ -314,7 +315,7 @@ class TestProcessListing:
 
         ((db, job_id, profile_id, emit, bypass),) = wired["generate_for"]
         assert (job_id, profile_id, bypass) == (5, 1, True)
-        assert emit is main.broadcast_from_thread
+        assert emit is events.broadcast_from_thread
         assert db is not None
         assert not any(name == "llm_budget_blocked" for name, _ in wired["events"])
 
@@ -366,7 +367,7 @@ class TestLettersPhase:
         monkeypatch.setattr(main.letter_production, "run_work", fake_run_work)
         monkeypatch.setattr(main, "_bg_executor", executor)
         monkeypatch.setattr(main, "_IDLE_INTERVAL_S", 0)
-        monkeypatch.setattr(main, "_broadcast", fake_broadcast)
+        monkeypatch.setattr(events, "_broadcast", fake_broadcast)
         monkeypatch.setattr(main, "_letters_paused_until", 0.0)
         yield rec
         executor.shutdown(wait=True)
@@ -384,7 +385,7 @@ class TestLettersPhase:
 
         ((work, profile_id, emit),) = phase["run_work"]
         assert work == Work("pipeline", 5) and profile_id == 1
-        assert emit is main.broadcast_from_thread
+        assert emit is events.broadcast_from_thread
         assert phase["events"] == []
         assert main._letters_paused_until == 0.0
 

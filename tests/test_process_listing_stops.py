@@ -14,6 +14,7 @@ from __future__ import annotations
 import pytest
 
 import app.api.main as api
+from app.api import events
 from app.llm.client import BudgetExceededError, DailyQuotaError
 
 
@@ -43,7 +44,7 @@ def calls(monkeypatch):
         monkeypatch.setattr(api.letter_production, "generate_for", make("letter"))
 
     monkeypatch.setattr(api, "SessionLocal", lambda: _FakeSession())
-    monkeypatch.setattr(api, "broadcast_from_thread", lambda event, data: log["broadcast"].append((event, data)))
+    monkeypatch.setattr(events, "broadcast_from_thread", lambda event, data: log["broadcast"].append((event, data)))
     log["install"] = install  # type: ignore[assignment]
     return log
 
