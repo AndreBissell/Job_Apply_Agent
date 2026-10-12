@@ -1,9 +1,11 @@
-// Seek DOM selectors for the content script.
+// Seek DOM selectors, loaded by the content script AND the side panel
+// (sidebar.html). The panel passes the values it needs into functions it injects
+// into Seek tabs as `args`, because an injected function can't see these globals.
 //
 // IMPORTANT: keep in sync with app/scraper/selectors.py (the Python side mirrors
-// these). They are based on Seek's data-automation attributes. If Seek changes
-// its DOM and capture stops working, fix the selectors HERE and in the Python
-// file together.
+// these; tests/test_selectors_sync.py fails if they disagree). They are based on
+// Seek's data-automation attributes. If Seek changes its DOM and capture stops
+// working, fix the selectors HERE and in the Python file together.
 
 const SELECTORS = {
   // Matches normal AND premium/featured cards (data-automation varies:

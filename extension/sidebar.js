@@ -1170,18 +1170,20 @@ function pageCollectJobLinks() {
   return out;
 }
 
-// Runs inside a Seek detail page — scrape the job data.
-async function pageScrapeDetail() {
+// Runs inside a Seek detail page — scrape the job data. An injected function
+// can't see this panel's globals (SELECTORS), so the selectors arrive as the
+// `sel` argument, passed through injectFn's `args`.
+async function pageScrapeDetail(sel) {
   const m = location.pathname.match(/\/job\/(\d+)/);
   if (!m) return null;
   const start = Date.now();
   let descEl = null;
   while (Date.now() - start < 8000) {
-    descEl = document.querySelector('[data-automation="jobAdDetails"]');
+    descEl = document.querySelector(sel.description);
     if (descEl && descEl.innerText.trim()) break;
     await new Promise(r => setTimeout(r, 400));
   }
-  const titleEl = document.querySelector('[data-automation="job-detail-title"]');
+  const titleEl = document.querySelector(sel.title);
   return {
     source_job_id: m[1],
     url: location.href,
@@ -1202,8 +1204,8 @@ function waitForTabComplete(tabId, timeoutMs) {
   });
 }
 
-async function injectFn(tabId, func) {
-  const [{ result }] = await chrome.scripting.executeScript({ target: { tabId }, func });
+async function injectFn(tabId, func, args = []) {
+  const [{ result }] = await chrome.scripting.executeScript({ target: { tabId }, func, args });
   return result;
 }
 
@@ -1289,7 +1291,12 @@ async function scanPage() {
         }
 
         let payload = null;
-        try { payload = await injectFn(bgTab.id, pageScrapeDetail); }
+        try {
+          payload = await injectFn(bgTab.id, pageScrapeDetail, [{
+            description: SELECTORS.DETAIL_DESCRIPTION,
+            title: SELECTORS.DETAIL_TITLE,
+          }]);
+        }
         catch (e) { scanLog(`${label} could not scrape: ${e.message}`); }
         finally { await chrome.tabs.remove(bgTab.id).catch(() => {}); }
 
