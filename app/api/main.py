@@ -9,24 +9,34 @@ and profile editor read and write (/jobs, /profile, /obligation, letters, screen
 
 Run it with ``python scripts/run_api.py real|test`` (uvicorn on 127.0.0.1, port
 8000 for real and 8001 for test).
+
+This file only wires the app together; the code lives in app/api/:
+  deps.py        get_db, the one database-session dependency
+  paths.py       the static and screenshots folders
+  events.py      the SSE broadcaster and GET /events
+  worker.py      the one background worker thread and _process_listing
+  idle_loop.py   the idle loop, the letters phase and their helpers
+  health.py      /health, /llm/usage
+  ingest.py      POST /ingest
+  evidence.py    evidence export and screenshot upload
+  search.py      search performance and suggestions
+  job_actions.py quick screen, status, expired, cover letter, regenerate, delete
+  jobs.py        the job read endpoints
+  profile.py     profile and preferences
+  letters.py, obligation.py, profile_ui.py, screening.py, origin_guard.py
+Tests and scripts patch the module that owns a name (``worker._bg_executor``,
+``idle_loop._letters_phase``, ...), never ``main``: only ``app`` and ``get_db`` live here
+for others to import.
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
-import logging
-from collections import Counter
 from contextlib import asynccontextmanager
-from datetime import timedelta
-from decimal import Decimal
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import func, select
-from sqlalchemy.orm import Session, selectinload
 
-from app import retention
 from app.api import events, idle_loop, paths
 from app.api.deps import get_db  # re-exported: tests key dependency_overrides on it
 from app.api.evidence import router as evidence_router
@@ -38,18 +48,9 @@ from app.api.letters import router as letters_router
 from app.api.obligation import router as obligation_router
 from app.api.origin_guard import OriginGuardMiddleware
 from app.api.profile import router as profile_router
-from app.api.search import router as search_router
 from app.api.profile_ui import router as profile_ui_router
 from app.api.screening import router as screening_router
-from app.llm.letter import view as letter_view
-from app.models import (
-    CoverLetter,
-    JobListing,
-    Match,
-)
-from app.preferences import get_preferences
-
-logger = logging.getLogger(__name__)
+from app.api.search import router as search_router
 
 
 @asynccontextmanager
@@ -73,6 +74,10 @@ app = FastAPI(title="Seek Job Assistant", version="0.1.0", lifespan=lifespan)
 # /regenerate), so OriginGuardMiddleware refuses writes from other websites.
 app.add_middleware(OriginGuardMiddleware)
 
+# Router order matters. Every GET /jobs/<literal> path (known-ids, pending-count,
+# by-source-id, search-performance, evidence-export, suggested-searches) must be matched
+# BEFORE GET /jobs/{job_id}, which lives in jobs.py: keep jobs_router after the routers
+# that own those literals. tests/test_route_table.py fails if one is shadowed.
 app.include_router(profile_ui_router)
 app.include_router(letters_router)
 app.include_router(screening_router)
@@ -83,19 +88,8 @@ app.include_router(ingest_router)
 app.include_router(evidence_router)
 app.include_router(search_router)
 app.include_router(job_actions_router)
-app.include_router(jobs_router)
+app.include_router(jobs_router)  # holds GET /jobs/{job_id}: after every other /jobs router
 app.include_router(profile_router)
 
 app.mount("/static", StaticFiles(directory=str(paths._static_dir)), name="static")
 app.mount("/screenshots", StaticFiles(directory=str(paths._screenshots_dir)), name="screenshots")
-
-
-# ---------------------------------------------------------------------------
-# Request/response schemas
-# ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
-# Endpoints
-# ---------------------------------------------------------------------------
