@@ -134,6 +134,9 @@ def model_for(tier: str, provider: str | None = None) -> str:
         return OPENAI_MODEL_SMALL if tier == "small" else OPENAI_MODEL_LETTER
     if provider == "groq":
         return GROQ_MODEL
+    if provider == "stub":
+        # Test-only provider: lets LLM_PROVIDER=stub run the whole suite.
+        return "stub"
     raise LLMError(f"Unknown LLM_PROVIDER={provider!r}")
 
 

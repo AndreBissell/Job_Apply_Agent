@@ -95,6 +95,14 @@ def test_model_for_each_provider():
     assert client.model_for("strong", "groq") == client.GROQ_MODEL
 
 
+def test_model_for_stub_provider_labels_every_tier():
+    # Pure lookup, no I/O: never reaches the network or a paid call.
+    for tier in client.TIERS:
+        assert client.model_for(tier, "stub") == "stub"
+    with pytest.raises(LLMError, match="Unknown tier"):
+        client.model_for("huge", "stub")
+
+
 def test_unknown_tier_and_provider_raise():
     with pytest.raises(LLMError, match="Unknown tier"):
         client.model_for("huge", "gemini")
