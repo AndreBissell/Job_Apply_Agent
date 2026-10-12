@@ -33,7 +33,7 @@ from sqlalchemy.pool import StaticPool
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from app.api import main, profile_ui  # noqa: E402
+from app.api import deps, main, profile_ui  # noqa: E402
 from app.api.main import app  # noqa: E402
 from app.db import Base  # noqa: E402
 from app.models import Profile  # noqa: E402
@@ -64,6 +64,11 @@ def test_route_table_unchanged():
     expected = (FIXTURES / "route_table.txt").read_text(encoding="utf-8").strip()
     actual = "\n".join(route_lines(app))
     assert actual == expected, "Route table changed:\n" + _diff(expected, actual, "route_table.txt")
+
+
+def test_there_is_one_get_db():
+    """Overriding either key must override every route (step 9.1)."""
+    assert main.get_db is profile_ui.get_db is deps.get_db
 
 
 def test_openapi_unchanged():

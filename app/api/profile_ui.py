@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import datetime
 from pathlib import Path
-from typing import Iterator
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import HTMLResponse
@@ -21,23 +20,13 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, selectinload
 
 from app import gaps
-from app.db import SessionLocal, app_env
+from app.api.deps import get_db  # also imported from here by letters, obligation, screening and tests
+from app.db import app_env
 from app.models import Experience, Profile, Qualification, Skill
 
 router = APIRouter()
 
 _HTML_PATH = Path(__file__).parent.parent / "static" / "profile_ui.html"
-
-
-# ---------------------------------------------------------------------------
-# DB dependency
-# ---------------------------------------------------------------------------
-def get_db() -> Iterator[Session]:
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
 # ---------------------------------------------------------------------------

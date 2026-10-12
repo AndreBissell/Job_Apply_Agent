@@ -30,7 +30,7 @@ from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
-from typing import Iterator, Literal
+from typing import Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
@@ -40,6 +40,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app import retention, search_suggest
+from app.api.deps import get_db  # re-exported: tests key dependency_overrides on it
 from app.api.letters import router as letters_router
 from app.api.obligation import router as obligation_router
 from app.api.origin_guard import OriginGuardMiddleware
@@ -394,17 +395,6 @@ _screenshots_dir = Path(__file__).parent.parent / (
 )
 _screenshots_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/screenshots", StaticFiles(directory=str(_screenshots_dir)), name="screenshots")
-
-
-# ---------------------------------------------------------------------------
-# DB session dependency
-# ---------------------------------------------------------------------------
-def get_db() -> Iterator[Session]:
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
 # ---------------------------------------------------------------------------
