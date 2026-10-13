@@ -36,14 +36,17 @@ What the extension IS allowed to do — the 1-hop rule (standing behaviour):
 
 
 Read the DOM of any Seek page the user themselves opened.
-Auto-navigate the user's active tab to job links that already appear on a page the
-user opened — i.e. links on the opened search-results page are fair game. This is
+Open job links that already appear on a page the user opened, one at a time in a
+background tab (`chrome.tabs.create({active: false})`), read it, then close it — i.e.
+links on the opened search-results page are fair game. This is
 1 hop: the page the user opened → the listings linked from it.
 Paced and capped so it stays a trickle, not a crawl: ≥5s between pages
 (SCAN_DELAY_MS = 5000), and a per-scan cap. The cap is now user-tunable in the
 sidebar's Personalise panel (`scan_max_pages`, default 10) but hard-bounded at 25
 by both the API (PreferencesUpdate le=25) and the sidebar (SCAN_PAGES_CEILING) —
 that ceiling is the policy cap: raise it deliberately if needed, don't remove it.
+Both constants and the scan code (scanPage, pageCollectJobLinks, pageScrapeDetail)
+live in extension/sidebar_scan.js; tests/test_scan_policy.py checks them wherever they are.
 
 
 The hard line that still holds — no second hop:
@@ -78,6 +81,9 @@ ORM: SQLAlchemy 2.0 (typed, declarative mapped style)
 Migrations: Alembic
 API: FastAPI + uvicorn (local backend for the extension)
 LLM: Gemini on Vertex AI (small/mid/strong tiers) — see the LLM Layer section below
+Deps/CI: exact versions in requirements-lock.txt (frozen from .venv; regenerate with
+pip freeze from Git Bash); GitHub Actions (.github/workflows/tests.yml) runs pytest and
+node --check on windows-latest, with no secrets.
 Config: python-dotenv — app/db.py loads .env so DATABASE_URL (and
 later secrets) can live in a gitignored .env file.
 DB: SQLite for local dev, Postgres-ready for hosting. The database URL
@@ -132,7 +138,7 @@ Cost control (all in client.py + app/llm/usage.py):
 
 Rate-limit handling: on HTTP 429, client.py backs off and retries (max 3);
 delays > 300s are treated as daily exhaustion → DailyQuotaError. The idle loop
-(_processing_idle_loop in main.py) serialises LLM work through a single-worker
+(_processing_idle_loop in app/api/idle_loop.py) serialises LLM work through a single-worker
 executor and backs off 3 minutes when extraction fails. Local throttle: LLM_RPM=8.
 
 Env vars (gitignored .env): LLM_PROVIDER=gemini, GOOGLE_GENAI_USE_VERTEXAI=true,
@@ -159,7 +165,17 @@ job-app-assistant/
     db.py              # engine + session factory; reads DATABASE_URL
     models.py          # SQLAlchemy models
     api/
-      main.py          # FastAPI backend for the extension
+      main.py          # wires the FastAPI app together: lifespan, Origin guard, ordered routers, static mounts
+      deps.py          # get_db, the one session dependency
+      paths.py         # static + screenshots folders
+      events.py        # SSE broadcaster + GET /events
+      worker.py        # the ONE background worker thread + _process_listing
+      idle_loop.py     # the idle loop, the letters phase and their helpers
+      health.py ingest.py evidence.py search.py job_actions.py jobs.py profile.py   # routers
+      letters.py obligation.py profile_ui.py screening.py origin_guard.py          # (older routers)
+      Patch the module that OWNS a name (worker._bg_executor, idle_loop._letters_phase, ...), never main;
+      main re-exports only app and get_db. GET /jobs/{job_id} (jobs.py) must be matched after every other
+      GET /jobs/<literal> router; tests/test_route_table.py guards the route table and OpenAPI schema.
     llm/
       client.py        # provider abstraction: tiers, tool calling, usage log, budget guard — ONE place
       usage.py         # spend totals + budget cap status (reads llm_usage)
@@ -169,6 +185,16 @@ job-app-assistant/
       cover_letter.py  # match → cover-letter draft (DONE 2026-06-27)
     scraper/           # RETAINED but not in the active pipeline (selector logic reused)
   extension/           # Manifest V3 Chrome extension
+    content_script.js background.js popup.js config.js selectors.js screening_assist.js
+    sidebar.html       # side panel; its <script> tags load the panel's CLASSIC scripts in order:
+    sidebar_shared.js sidebar_jobs.js sidebar_letter_notes.js sidebar_letter_card.js
+    sidebar_evidence.js sidebar_suggest.js sidebar_scan.js sidebar_personalise.js
+    sidebar_profile.js sidebar_seek_import.js sidebar_events.js
+    sidebar.js         # env pill, zoom, startup
+    dashboard.js       # Overview + Applied tabs; loaded last
+      They share one global scope, so load order is the contract: no top-level name in two
+      files, nothing used at load time from a later file. Check with
+      `python scripts/js_globals.py --check` (also in pytest) and tests/e2e/sidebar_load_e2e.py.
   alembic/
   alembic.ini
   scripts/
@@ -186,6 +212,7 @@ job-app-assistant/
     check_llm.py       # validate the LLM key before a batch
     smoke_test.py
     explore_seek.py    # dev-only selector cache tool
+    js_globals.py      # side-panel scripts: shared-name map; --check guards the load-order contract
   requirements.txt
   .env.example
   .gitignore
@@ -603,7 +630,7 @@ the detailed rationale/design) except the §5.2 fast-follow noted above.
   `SavedSearch`), `GET /jobs` gained `top_skills` (top-3 hard job_skills) and
   an optional `status` filter (switches sort to `applied_at desc` for the
   Applied tab/CSV export).
-- **Idle loop** (`app/api/main.py::_processing_idle_loop`): reordered so the
+- **Idle loop** (`app/api/idle_loop.py::_processing_idle_loop`): reordered so the
   cover-letter phase is checked first every iteration; extraction/matching
   only runs when there's no cover-letter backlog for score>=75 matches.
 - **Sidebar** (`extension/sidebar.html`/`sidebar.js`): client-side score

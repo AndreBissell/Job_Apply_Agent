@@ -24,8 +24,8 @@ from sqlalchemy import create_engine, event, func, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-import app.api.main as main_module
 from app import retention, search_suggest
+from app.api import paths
 from app.api.main import app, get_db
 from app.db import Base
 from app.llm import search_refine
@@ -69,7 +69,7 @@ def db(engine):
 def shots(tmp_path, monkeypatch):
     directory = tmp_path / "screenshots"
     directory.mkdir()
-    monkeypatch.setattr(main_module, "_screenshots_dir", directory)
+    monkeypatch.setattr(paths, "_screenshots_dir", directory)
     return directory
 
 
@@ -535,6 +535,15 @@ class TestEvidenceExport:
         csv_text = self._zip(client).read("applied-jobs.csv").decode()
         assert "Drifted" in csv_text
         assert "Status only" not in csv_text
+
+    def test_status_applied_filter_uses_applied_at_too(self, client, db):
+        """GET /jobs?status=applied (the Applied list) follows the same rule as the
+        export: a drifted row is listed, a status-only row is not."""
+        _profile(db)
+        _match(db, title="Drifted", status="new", applied_at=days_ago(3))
+        _match(db, title="Status only", status="applied")
+        titles = [j["title"] for j in client.get("/jobs?profile_id=1&status=applied").json()]
+        assert titles == ["Drifted"]
 
     def test_spreadsheet_formulas_in_titles_are_neutralised(self, client, db):
         _profile(db)

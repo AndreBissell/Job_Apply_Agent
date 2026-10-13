@@ -9,7 +9,7 @@ stages:
    letter that isn't in the profile: an ad asking for "a link to a 2 minute video"
    once got an invented ``youtu.be/...`` link (eval workflow-v1), which the judge
    passed because it isn't a claim about experience.
-2. **Small model, independently.** It reads the letter sentence by sentence, lists
+2. **A mid-tier model (``CLAIMS_TIER``), independently.** It reads the letter sentence by sentence, lists
    every factual claim about the candidate (and about the employer), pairs each with
    the declared claim it corresponds to, and judges it against the profile (or the
    ad, for employer claims): supported / overstated / unsupported. Code then

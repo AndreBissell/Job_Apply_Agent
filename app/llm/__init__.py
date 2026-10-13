@@ -1,6 +1,7 @@
-"""LLM-backed extraction and matching.
+"""The LLM layer: job extraction, matching, quick screening and cover letters.
 
-Stub package for now — `extract.py` and `match.py` expose the function signatures
-the API's background tasks call, so the ingest → process pipeline works end to end
-before the real LLM logic is wired in.
+Every provider call goes through ``client.py`` (tiers, usage log, budget guard); no
+other module imports a provider SDK. The main modules are ``extract``, ``match``,
+``quickscreen``, ``cover_letter`` (the one-shot letter) and the ``letter/`` package
+(the agent and workflow engines).
 """

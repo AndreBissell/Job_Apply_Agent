@@ -7,6 +7,7 @@ Same in-memory SQLite (StaticPool) pattern as tests/test_screenshot_upload.py.
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -62,14 +63,14 @@ def db(engine):
     session.close()
 
 
-def _seed_job(db, job_id: int, source_job_id: str, user_id: int = 1, score: int = 80, status: str = "new") -> JobListing:
+def _seed_job(db, job_id: int, source_job_id: str, user_id: int = 1, score: int = 80, status: str = "new", applied_at=None) -> JobListing:
     db.merge(Profile(id=user_id, name="Alice", email="alice@example.com", password_hash="x"))
     job = JobListing(
         id=job_id, source="seek", source_job_id=source_job_id,
         url="https://example.com", title="Test Job",
     )
     db.add(job)
-    db.add(Match(user_id=user_id, job_id=job_id, score=score, status=status))
+    db.add(Match(user_id=user_id, job_id=job_id, score=score, status=status, applied_at=applied_at))
     db.commit()
     db.refresh(job)
     return job
@@ -128,7 +129,10 @@ class TestListJobsExcludesExpired:
         assert closed_job.id in ids
 
     def test_applied_status_view_ignores_expired_flag(self, client, db):
-        job = _seed_job(db, job_id=1, source_job_id="seek-closed", status="applied")
+        job = _seed_job(
+            db, job_id=1, source_job_id="seek-closed", status="applied",
+            applied_at=datetime(2026, 9, 1, tzinfo=timezone.utc),
+        )
         client.patch(f"/jobs/{job.id}/expired")
 
         res = client.get("/jobs?profile_id=1&status=applied")

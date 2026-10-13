@@ -446,19 +446,24 @@ which stamps `applied_at`); the rest of the vocabulary is free bookkeeping for
 later. `applied_at` exists specifically for Centrelink mutual-obligation
 reporting (CSV export of what was applied to and when) - it is set once, the
 first time `status` transitions to `'applied'`, and is never reset by a
-repeat "mark applied" call. The Centrelink dashboard (`GET /obligation`,
+repeat "mark applied" call. `PATCH /jobs/{id}/status` accepts only the six values
+above (anything else is a 422), and once `applied_at` is set the status can only be
+`'applied'` (any other value is a 409), because an applied match is Centrelink evidence;
+sending `'applied'` again is a no-op that also repairs a row whose date is set but whose
+status is not. The Centrelink dashboard (`GET /obligation`,
 docs/centrelink-dashboard-plan.md) counts an application by `applied_at` (its
 local date, bucketed into the user's monthly periods), not by `status`, and
 counts hidden matches too. The evidence export (`GET /jobs/evidence-export`) uses the
-same `applied_at IS NOT NULL` rule. Re-scoring (`match_job` / `quick_screen` with
+same `applied_at IS NOT NULL` rule, and so does the `GET /jobs?status=applied` filter
+(other `status` values filter the column). Re-scoring (`match_job` / `quick_screen` with
 `force=True`, e.g. Regenerate) updates the score but never changes `status`; only a
 new row starts at `'new'`.
 
 `interview_at` records that an application got an interview (the Applied tab's
 "+ Interview", `PATCH /jobs/{id}/interview`, only for an applied match; clicking
 again clears it). It deliberately does **not** move `status` to
-`'interviewing'`: the `GET /jobs?status=applied` filter reads `status = 'applied'`, so
-an interview must not move it.
+`'interviewing'`: the status vocabulary stays as the user left it, and the match keeps
+`applied_at`, so it stays in the `GET /jobs?status=applied` list either way.
 
 `screenshot_path`/`screenshot_taken_at` are further Centrelink evidence: a
 screenshot of the actual applied-to page, captured client-side by the extension

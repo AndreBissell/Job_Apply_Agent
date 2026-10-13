@@ -264,9 +264,9 @@ def main() -> int:
             keep_id = first.id
             total = db.scalar(select(func.count()).select_from(Match).where(Match.user_id == 1))
 
-        import app.api.main as api_main
+        from app.api import idle_loop, paths
 
-        api_main._screenshots_dir = shots  # never the real screenshots folder
+        paths._screenshots_dir = shots  # never the real screenshots folder
         records: list[logging.LogRecord] = []
 
         class Capture(logging.Handler):
@@ -274,11 +274,11 @@ def main() -> int:
                 records.append(record)
 
         handler = Capture(level=logging.INFO)
-        for name in ("app.retention", api_main.logger.name):
+        for name in ("app.retention", idle_loop.logger.name):
             logging.getLogger(name).addHandler(handler)
             logging.getLogger(name).setLevel(logging.INFO)
 
-        api_main._retention_tick()
+        idle_loop._retention_tick()
         with SessionLocal() as db:
             left = set(db.scalars(select(Match.id).where(Match.user_id == 1)).all())
             last = get_preferences(db, 1)["retention_last_run"]
@@ -290,7 +290,7 @@ def main() -> int:
         check(last is not None and abs(datetime.fromisoformat(last) - datetime.now(timezone.utc))
               < timedelta(minutes=5), "retention_last_run stamped with the real time")
         records.clear()
-        api_main._retention_tick()
+        idle_loop._retention_tick()
         with SessionLocal() as db:
             check(set(db.scalars(select(Match.id).where(Match.user_id == 1)).all()) == left
                   and not records, "second tick is a no-op (not due)")

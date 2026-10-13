@@ -26,7 +26,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import gaps
-from app.api.profile_ui import get_db
+from app.api.deps import get_db
 from app.llm.client import DailyQuotaError, LLMError
 from app.llm.letter import answers, view
 from app.llm.letter.gap_policy import ANSWER_HINT

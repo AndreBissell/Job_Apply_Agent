@@ -158,7 +158,7 @@ def _count_gap_sightings(db, job_id: int) -> None:
         from app.gaps import record_scan_sightings  # local: app.gaps imports prefilter
 
         record_scan_sightings(db, job_id)
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 — code-only side count: rolled back and logged, never fails the extraction
         db.rollback()
         logger.exception("extract_job: gap sightings failed for job %s", job_id)
 

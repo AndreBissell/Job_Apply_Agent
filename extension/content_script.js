@@ -438,7 +438,7 @@ function buildQuickApplyPanel(jobId, data) {
   actions.appendChild(shotBtn);
 
   const applyBtn = document.createElement('button');
-  const isApplied = data.match?.status === 'applied';
+  const isApplied = !!data.match?.applied_at; // applied_at is the one definition of "applied"
   applyBtn.className = 'act' + (isApplied ? ' applied' : '');
   applyBtn.textContent = isApplied ? '✓ Applied' : 'Mark Applied';
   applyBtn.addEventListener('click', async () => {
@@ -916,7 +916,22 @@ function startApplyWatcher() {
   schedule();
 }
 
+// True only if the background worker says the side panel's scan opened this tab.
+// Any error or odd reply means "no", so a normal Seek page is always captured.
+async function isScanTab() {
+  try {
+    const reply = await chrome.runtime.sendMessage({ type: 'IS_SCAN_TAB' });
+    return reply?.scan === true;
+  } catch {
+    return false;
+  }
+}
+
 async function main() {
+  // A tab the side panel's scan opened: the scan reads and ingests it itself
+  // (sidebar.js pageScrapeDetail), so capturing here too would double every request.
+  if (await isScanTab()) return;
+
   const path = window.location.pathname;
   startApplyWatcher();
 

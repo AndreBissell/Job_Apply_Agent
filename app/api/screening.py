@@ -36,7 +36,7 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.api.profile_ui import get_db
+from app.api.deps import get_db
 from app.llm.client import BudgetExceededError, DailyQuotaError, LLMError
 from app.llm.letter import answers
 from app.models import JobListing

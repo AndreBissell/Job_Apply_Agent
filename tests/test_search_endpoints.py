@@ -11,6 +11,7 @@ Same in-memory SQLite (StaticPool) pattern as tests/test_preferences.py.
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime, timezone
 from unittest.mock import patch
 
 import pytest
@@ -281,7 +282,7 @@ class TestBulkHide:
     def test_hidden_jobs_stay_out_of_the_applied_tab(self, client, db):
         _profile(db)
         _scored(db, [("Warehouse Operator", 20)])
-        db.query(Match).update({"status": "applied"})
+        db.query(Match).update({"status": "applied", "applied_at": datetime.now(timezone.utc)})
         db.commit()
         client.request("DELETE", "/jobs", params={"below_score": 70})
         assert client.get("/jobs", params={"status": "applied"}).json() == []

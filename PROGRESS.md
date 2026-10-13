@@ -5,13 +5,98 @@ one block per milestone.
 
 ---
 
+## 2026-10-13 — `extension/sidebar.js` split into classic scripts (ARCHITECTURE 5.4 #10) — DONE ✅
+
+- Same branch `fix/applied-evidence-safety`. Plan `docs/refactor-9-10-plan.md`, steps 10.0-10.12; pure moves, one commit each. Classic `<script>` files, not ES modules (D4): one shared global scope, so the order in `sidebar.html` is the contract.
+- `729caf8` safety nets: `scripts/js_globals.py` (shared-name map; `--check` fails on a duplicate top-level name, an undeclared name, a name `dashboard.js` needs from a later script, or an injected Seek-tab function using a panel global; `tests/test_js_globals.py` runs it in pytest/CI), `tests/e2e/sidebar_load_e2e.py` (real side panel, no backend, every off-extension request aborted, `chrome.tabs.create` and `EventSource` stubbed; every top-level name defined, every tab, Personalise, zoom, every SSE event), `test_selectors_sync` scans every `extension/*.js`, `quick_apply_e2e` fails on side-panel page errors, `dashboard.js` header lists `TRASH_SVG` and `scanBtn`.
+- Moves, top-down, each tag inserted just before `sidebar.js`: `ebb1e96` `sidebar_shared.js`, `6f81cf0` `sidebar_jobs.js`, `35b6f6c` `sidebar_letter_notes.js`, `91fafe4` `sidebar_letter_card.js`, `203ead8` `sidebar_evidence.js`, `8332355` `sidebar_suggest.js`, `127a045` `sidebar_scan.js` (scan constants and injected functions), `f565551` `sidebar_personalise.js`, `6e5590d` `sidebar_profile.js` (largest, 580 lines), `ca3e619` `sidebar_seek_import.js`, `bc9968b` `sidebar_events.js`. `sidebar.js`: 2,752 -> 83 lines (env pill, zoom, startup). Each moved block was checked byte-identical by rebuilding the old file from the new ones.
+- Tests: pytest 1569 passed (1567 + 2). `sidebar_load_e2e.py` 44/44 at baseline, 55/55 at the end (one check per script); `dashboard_e2e.py` 92/92 every step; `quick_apply_e2e.py` 124/124 (123 + the new page-error check). No backend file changed.
+- Hand checks (owner, own Chrome, TEST backend, 2026-10-13): H1 (panel opens, every tab draws, no console errors) passed after 10.1. H2 (Scan Page, cap 2) passed after 10.7: the panel's Console showed `[scan] (1/2) opening job page…` / `captured ✓ (4732 chars)` and `(2/2) … captured ✓ (4015 chars)` from `sidebar_scan.js:34`. H3 (Personalise: score save, side-output checkbox persists, cap 26 snaps back) passed after 10.8. Final manual check after 10.12 (owner, TEST backend, same day): H1 again (panel opens, every tab draws, no script errors; the only red Console lines are `ERR_CONNECTION_REFUSED` when the backend is stopped, which is expected), H4 (Profile) and H6 (live updates) all passed. H5 (Seek profile import) was optional and not run.
+
+---
+
+## 2026-10-13 — `app/api/main.py` split into routers and modules (ARCHITECTURE 5.4 #9) — DONE ✅
+
+- Same branch `fix/applied-evidence-safety`. Plan `docs/refactor-9-10-plan.md`, steps 9.0-9.16; pure moves, one commit each.
+- `f7f561d` safety nets: `scripts/dump_routes.py`, `tests/fixtures/route_table.txt` + `openapi.json`, `tests/test_route_table.py` (table, OpenAPI, shadowing of `GET /jobs/<literal>`), `tests/test_scan_policy.py` (Seek policy read from every `extension/*.js`).
+- `d38b433` one `get_db` (`deps.py`); `e62290c` `paths.py`; `995c00e` `events.py`; `5fdcbd7` `worker.py`; `392b502` + `fb66b41` `idle_loop.py`; `bf7c21c` `profile.py`; `24d7b28` `health.py`; `6d29fed` `evidence.py`; `046e23a` `search.py`; `9745b7b` `ingest.py`; `36e9a1f` `job_actions.py`; `a41bc43` `jobs.py`; `3f0af65` tidy (`main.py` 1,658 -> 95 lines); `e42c098` routers import `get_db` from `deps`.
+- Rule M1: every patched or shared name has one owner module and is reached as `owner.name` at call time; `main` re-exports only `app` and `get_db`; tests patch the owner. `tests/test_route_table.py` also checks one `ThreadPoolExecutor`, one `get_db`, and that nothing under `app/` imports `app.api.main`.
+- Tests: 1567 passed at the end (1549 at the start). `dashboard_e2e.py` 92/92, `quick_apply_e2e.py` 123/123. Route table and OpenAPI unchanged except the `get_db` dependency column (step 9.1).
+- Hand check H-B1 (owner, TEST backend): server starts, no traceback, `/health` 200. Log lines now come from `app.api.worker` / `app.api.idle_loop` (a change of logger name only).
+- Noticed, not fixed: `tests/test_screening_assist.py::TestConcurrentClassify::test_two_requests_one_call_both_sorted` failed intermittently in 3 full runs during step 9.10 (the second concurrent request came back unsorted); it passes alone and on later full runs, and nothing it uses was touched. `Counter` was an unused import in `main.py` from before the split (removed in the tidy-up).
+
+---
+
+## 2026-10-12 — Cleanup of ARCHITECTURE 5.4 #11-#14 and the stub provider — DONE ✅
+
+- Same branch `fix/applied-evidence-safety`. Plan `docs/cleanup-11-14-plan.md`.
+- `3c974de` (#12): the scan's detail-page selectors come from `selectors.js` (passed to the injected function as `args`); `tests/test_selectors_sync.py` keeps `app/scraper/selectors.py` in step.
+- `e9b8a53` (#13): the background worker tracks scan tabs (`SCAN_TAB_ADD` / `SCAN_TAB_REMOVE` / `IS_SCAN_TAB`) and the content script skips them, so a scanned job is ingested once, not twice. It fails to "not a scan tab". Confirmed before the fix: a 3-job scan logged 6 ingests.
+- `6e95050` (#11): `_process_listing` stops on `DailyQuotaError` / `BudgetExceededError` and broadcasts `llm_budget_blocked`. `tests/test_exception_audit.py` requires every `except Exception` in `app/` (outside the dormant scraper) to end in a bare `raise` or carry `# noqa: BLE001 - <reason>`.
+- `5eeef4e` (#14): comments and docs that had drifted (comments only, no logic). `.claude/settings.json` stays tracked (deliberate policy).
+- `fb7fb98` (E4): `model_for` returns `"stub"` for the stub provider, so `LLM_PROVIDER=stub` can run the whole suite. `complete_text` / `complete_tools` still have no stub support.
+- Tests: 1549 passed, normally and with `LLM_PROVIDER=stub` set for the session. `node --check` on the edited JS files.
+- Hand checks (owner, TEST backend, own Chrome, 2026-10-12): all passed. Scan Page logged "captured ✓" with real character counts; one `POST /ingest` per scanned job and no scan-tab lookups; a `/job/` page opened in a normal tab is captured. The cap of 4 pages is honoured.
+- Not built (noticed): job pages shown in the search page's side pane (`?jobId=...`) are not captured, because the path is a search path. Needs live selectors from the user.
+
+---
+
+## 2026-10-12 — Local server locked down: no CORS, Origin guard on writes (ARCHITECTURE 5.4 #5) — DONE ✅
+
+- Same branch `fix/applied-evidence-safety`. Plan `docs/cleanup-3-8-plan.md`, Branch 5 (D3 = remove CORS, D4 = Origin guard).
+- `3c2a974`: the `CORSMiddleware` is gone. A page on another site gets no `Access-Control-*` headers, so it can't read responses or send preflighted calls.
+- `52c46f9`: `app/api/origin_guard.py` (plain ASGI middleware) returns 403 for POST/PUT/PATCH/DELETE with an `Origin` that is not `chrome-extension://...` or `http://<Host>` on localhost/127.0.0.1. This closes the body-less `POST /jobs/{id}/regenerate` (about $0.2), `/quick-screen` and `/gaps/{id}/clear`. No `Origin` (scripts, tests) passes.
+- Tests: `tests/test_origin_guard.py` (12; the worker is replaced by a recorder, no AI). `tests/e2e/dashboard_e2e.py` 92/92 and `tests/e2e/quick_apply_e2e.py` 123/123 with the real extension loaded.
+- Hand checks (owner, own Chrome, TEST backend, 2026-10-12): all passed. Side panel, popup, profile editor and the Seek overlay's Save edits work without CORS headers. On example.com both fetches were blocked by Chrome's Local Network Access prompt (denied), so the Origin guard's 403 was not seen live; it is covered by `tests/test_origin_guard.py`.
+
+---
+
+## 2026-10-12 — Overlapping quick screens make one model call (ARCHITECTURE 5.4 #7) — DONE ✅
+
+- Same branch `fix/applied-evidence-safety`. Plan `docs/cleanup-3-8-plan.md`, Branch 4.
+- `bb0b094`: `quick_screen` claims the job id (in-process set + lock, never held during the model call), re-reads the job, and the loser returns `"not-run"`. The Scan Page request thread and the idle loop's Phase 0 could screen the same fresh job at once and pay twice. `run_quick_screen`'s docstring now says so.
+- Reproduced first: `tests/test_quickscreen_race.py` (file SQLite DB, fake model, timeouts) failed on the old code with two model calls. It did NOT hit the `IntegrityError` the plan predicted.
+- Not verified: "database is locked" (never reproduced; owner hand check from plan step 4.2: Scan Page during a letter run on the TEST backend, then search the server console for `database is locked` / `IntegrityError`).
+
+---
+
+## 2026-10-12 — A failed score no longer becomes a permanent 0 (ARCHITECTURE 5.4 #8) — DONE ✅
+
+- Same branch `fix/applied-evidence-safety`. Plan `docs/cleanup-3-8-plan.md`, Branch 3.
+- `065e1a4`: `match_job` no longer catches every error as `score=0 / "Parse error"`. A failure raises and writes nothing; quota/budget stops always raise; a forced re-score (Regenerate) can no longer replace a real score with 0. New keyword `record_failure=True` writes the terminal 0 row, only when no row exists.
+- `87d8390`: the idle loop's Phase 1b runs `_match_attempt`: up to 3 attempts per job (counted in memory, so a restart allows 3 more), 180 s pause after a failure or quota stop, and the third attempt records today's 0 row so one bad ad can't block the queue.
+- Tests: `tests/test_match_failures.py` (10, all with `complete_json` replaced). Existing "Parse error" rows are left alone (D9). Note: `scripts/letter_lab.py` now stops on a failed score instead of recording a 0.
+
+---
+
+## 2026-10-12 — Dependencies pinned and CI added (ARCHITECTURE 5.4 #6) — DONE ✅
+
+- Same branch, `fix/applied-evidence-safety` (owner decision: all of plan items #3-#8 go on this one branch, merged once at the end). Plan `docs/cleanup-3-8-plan.md`, Branch 2.
+- `4b70bf9`: `requirements-lock.txt`, frozen from `.venv` (56 packages, `pip check` clean). A fresh venv built only from it passes the suite (1517 passed). `requirements.txt` keeps its ranges and has a header pointing at the lock.
+- `f55a9fc`: `.github/workflows/tests.yml` runs `pytest -q` and `node --check` on every `extension/*.js`, on `windows-latest` with Python 3.11. No secrets, no `LLM_PROVIDER`, no e2e.
+- Not verified: the workflow has not run on GitHub yet (push is the owner's step).
+
+---
+
+## 2026-10-12 — Applied-evidence safety: one definition of "applied" (ARCHITECTURE 5.4 #4, #3) — DONE ✅
+
+- Branch `fix/applied-evidence-safety`, not pushed. Plan `docs/cleanup-3-8-plan.md`, Branch 1.
+- `ed7435a`: `PATCH /jobs/{id}/status` accepts only the six documented statuses (else 422), and once `applied_at` is set any status but `applied` is refused (409). Re-sending `applied` stays a no-op and repairs a drifted row. First tests for this endpoint: `tests/test_status_update.py`.
+- `37e0452`: `GET /jobs?status=applied` now means `applied_at IS NOT NULL`, like the dashboard and the export. Two older tests that seeded a status with no date now set `applied_at`.
+- `463c3a5`: the Jobs-card "Mark Applied" button and the Seek overlay read `applied_at`, not `status`.
+- `.venv\Scripts\python -m pytest -q`: 1517 passed (9 new; baseline 1508). E2E `tests/e2e/dashboard_e2e.py`: 92/92 (2 new: a row with `applied_at` set and status `new` shows "✓ Applied", no Delete; it failed 91/92 before the change). `tests/e2e/quick_apply_e2e.py`: 123/123. `node --check` clean on both edited JS files.
+- #3 (old rows with `status='applied'` but no `applied_at`): CLOSED, no backfill needed. The owner ran `python scripts/check_applied_consistency.py real.db` (read-only) on 2026-10-12: 3 matches have `applied_at` set, 0 with `applied_at` set but status not `applied`, 0 with status `applied` but no `applied_at`.
+- Not verified: the Seek overlay's "✓ Applied" in a real Chrome (no e2e covers the overlay).
+
+---
+
 ## 2026-10-05 — Applied-evidence safety: two bug fixes — DONE ✅
 
 - Branch `fix/applied-evidence-safety` (from `centerlink-preperation`), not pushed. From docs/ARCHITECTURE.md §4.9 items 1 and 3.
 - `49f54ee`: re-scoring (`match_job` / `quick_screen` with force, e.g. a queued Regenerate) no longer resets `matches.status` to `'new'`; the evidence export now selects on `applied_at IS NOT NULL`, the dashboard's definition. `scripts/check_applied_consistency.py` counts status/applied_at disagreements read-only (`mode=ro`).
 - `046d2f9`: `DELETE /jobs/{id}` refuses an applied job (409) unless `?allow_applied=true`, and now removes the screenshot file. Jobs-tab cards for applied jobs have no Delete; the Applied tab has its own Delete with an explicit confirm.
 - `python -m pytest -q`: 1508 passed (11 new). E2E `tests/e2e/dashboard_e2e.py`: 90/90 (13 new). `tests/e2e/quick_apply_e2e.py` now completely passes as well
-- Verified through manual testing on the real user profile. Clicked applied to a job, it moved to the jobs tab, Then deleted the job and confirmed. THe job was removed.
+- Verified through manual testing on the real user profile. Clicked applied to a job, it moved to the applies tab, Then deleted the job and confirmed. THe job was removed.
 
 ---
 

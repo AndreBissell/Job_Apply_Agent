@@ -26,8 +26,8 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app import obligation, retention
+from app.api.deps import get_db
 from app.api.letters import waiting_runs
-from app.api.profile_ui import get_db
 from app.models import JobListing, LlmUsage, Match
 from app.preferences import get_preferences, obligation_settings
 

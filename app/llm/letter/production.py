@@ -214,7 +214,7 @@ def _emit(emit: Emit | None, event: str, data: dict) -> None:
         return
     try:
         emit(event, data)
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 — a broken sidebar listener must never break a letter run
         logger.exception("emitting %s failed", event)
 
 
