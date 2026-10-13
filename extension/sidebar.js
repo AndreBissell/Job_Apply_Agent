@@ -1,7 +1,7 @@
-// Side panel: tabbed Overview / Jobs / Applied / Profile. The Overview and Applied tabs
-// live in dashboard.js (loaded after this file, sharing its globals).
-// Vanilla JS, no build step. Talks to the FastAPI backend — BACKEND comes from
-// config.js and is either the real (8000) or test (8001) environment.
+// Side panel: tabbed Overview / Jobs / Applied / Profile. Vanilla JS, no build step: the
+// panel is the classic scripts listed in sidebar.html (sidebar_*.js, then this file, then
+// dashboard.js), sharing one global scope, so their order is the contract. This file holds
+// the env pill, zoom and startup. BACKEND comes from config.js (real 8000 / test 8001).
 
 // ---------------------------------------------------------------------------
 // Init

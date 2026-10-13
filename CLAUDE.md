@@ -45,6 +45,8 @@ Paced and capped so it stays a trickle, not a crawl: ≥5s between pages
 sidebar's Personalise panel (`scan_max_pages`, default 10) but hard-bounded at 25
 by both the API (PreferencesUpdate le=25) and the sidebar (SCAN_PAGES_CEILING) —
 that ceiling is the policy cap: raise it deliberately if needed, don't remove it.
+Both constants and the scan code (scanPage, pageCollectJobLinks, pageScrapeDetail)
+live in extension/sidebar_scan.js; tests/test_scan_policy.py checks them wherever they are.
 
 
 The hard line that still holds — no second hop:
@@ -183,6 +185,16 @@ job-app-assistant/
       cover_letter.py  # match → cover-letter draft (DONE 2026-06-27)
     scraper/           # RETAINED but not in the active pipeline (selector logic reused)
   extension/           # Manifest V3 Chrome extension
+    content_script.js background.js popup.js config.js selectors.js screening_assist.js
+    sidebar.html       # side panel; its <script> tags load the panel's CLASSIC scripts in order:
+    sidebar_shared.js sidebar_jobs.js sidebar_letter_notes.js sidebar_letter_card.js
+    sidebar_evidence.js sidebar_suggest.js sidebar_scan.js sidebar_personalise.js
+    sidebar_profile.js sidebar_seek_import.js sidebar_events.js
+    sidebar.js         # env pill, zoom, startup
+    dashboard.js       # Overview + Applied tabs; loaded last
+      They share one global scope, so load order is the contract: no top-level name in two
+      files, nothing used at load time from a later file. Check with
+      `python scripts/js_globals.py --check` (also in pytest) and tests/e2e/sidebar_load_e2e.py.
   alembic/
   alembic.ini
   scripts/
@@ -200,6 +212,7 @@ job-app-assistant/
     check_llm.py       # validate the LLM key before a batch
     smoke_test.py
     explore_seek.py    # dev-only selector cache tool
+    js_globals.py      # side-panel scripts: shared-name map; --check guards the load-order contract
   requirements.txt
   .env.example
   .gitignore

@@ -3,7 +3,8 @@
 // (default 20) in each monthly period; the backend (GET /obligation) buckets every
 // application into its period and this file draws it.
 //
-// Classic script loaded after sidebar.js, sharing its globals: PROFILE_ID, mk,
+// Classic script loaded last, after sidebar.js and the sidebar_*.js files, sharing their
+// globals (scripts/js_globals.py prints where each lives): PROFILE_ID, mk,
 // tierOf, coverLetterState, autoLetterMin, seekSearchUrl, markApplied, loadJobs, showTab,
 // typingIn, overviewSection, appliedSection, evidenceNote, csvEscape, TRASH_SVG, and
 // scanBtn (used at load time, so it must be declared by an earlier script). BACKEND

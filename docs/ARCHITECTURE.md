@@ -63,7 +63,7 @@ E. APPLY     you edit/copy the letter, submit on Seek yourself, press Mark Appli
 | `app/llm/client.py` | Every AI call, all spending and retries |
 | `app/llm/letter/state.py`, `guardrails.py`, `runner.py` | The contract and the rules of the letter pipeline |
 | `app/api/main.py` | Was: most endpoints and the background loop in one 1,564-line file. Now 95 lines of wiring; the endpoints and the loop live in the other `app/api/*.py` files (3.2) |
-| `extension/sidebar.js` | The most-changed file; all UI |
+| `extension/sidebar.html` + `sidebar_*.js` | The most-changed code: all the side-panel UI, split by tab into classic scripts. Their `<script>` order in `sidebar.html` is the only contract between them (3.7) |
 
 **Size, honestly:** about 28k lines of real code, 17.7k of tests, 8k of docs. The rest of the "85k" is mostly gitignored experiment output in `evals/`.
 
@@ -103,6 +103,8 @@ Counted with my own script over every file that is **tracked by git or untracked
 | **Config** | 360 | 6 | `alembic.ini`, `requirements.txt`, `.env.example`, `.gitignore`, two style word lists |
 | **Total (non-ignored)** | **56,767** | **215** | |
 
+Since counted: 5.4 #10 (2026-10-13) split `extension/sidebar.js` into 12 files (header comments add ~35 lines; the extension's JS, HTML and manifest are now 6,218 lines) and added `tests/e2e/sidebar_load_e2e.py`, `scripts/js_globals.py` and `tests/test_js_globals.py`.
+
 **Hand-written code that runs (source + migrations + plumbing): about 28,000 lines.** Tests are another 17,700, so roughly 0.63 lines of test per line of source. That is a healthy ratio. There are no lock files (no `package-lock.json`, no `poetry.lock`); dependencies are listed in `requirements.txt` only.
 
 ## 1.2 Where "85k" probably comes from (unverified)
@@ -141,7 +143,7 @@ Other things on disk that are not code:
 
 | Lines | File | Role |
 |---:|---|---|
-| 2,723 | `extension/sidebar.js` | The whole side-panel UI in one file |
+| 2,723 | `extension/sidebar.js` (before the split; now 83 lines plus 11 `sidebar_*.js` files, the largest 580, 3.7) | The whole side-panel UI in one file |
 | 1,761 | `scripts/letter_lab.py` | Cover-letter experiment harness (dev tool, not runtime) |
 | 1,564 | `app/api/main.py` (before the split; now 95 lines, 3.2) | The server: most endpoints plus the background loop |
 | 980 | `extension/content_script.js` | Code injected into Seek pages |
@@ -294,7 +296,7 @@ Non-obvious design choices documented in `CLAUDE.md` and `docs/database-schema.m
 
 ### UI / API layer
 - **Server**: `app/api/main.py` creates the app and includes the routers (`ingest.py`: `/ingest`; `jobs.py` and `job_actions.py`: `/jobs/...`; `profile.py`: `/profile/{id}`; `events.py`: `/events` for SSE; `health.py`: `/health`; `evidence.py`, `search.py`), plus `letters.py` (questions/answers, to-work-on list), `screening.py` (Quick Apply), `obligation.py` (Centrelink dashboard data) and `profile_ui.py` (serves the profile editor page and its data). The idle loop is `idle_loop.py`, the one background worker is `worker.py`.
-- **Extension UI**: `sidebar.html` + `sidebar.js` (tabs Overview / Jobs / Applied / Profile), `dashboard.js` (Overview + Applied tabs), `screening_assist.js` (Quick Apply help, drawn both on the Seek page and in the sidebar), `popup.html/js`.
+- **Extension UI**: `sidebar.html` + `sidebar_*.js` + `sidebar.js` (tabs Overview / Jobs / Applied / Profile), `dashboard.js` (Overview + Applied tabs), `screening_assist.js` (Quick Apply help, drawn both on the Seek page and in the sidebar), `popup.html/js`.
 - **Profile editor**: `app/static/profile_ui.html` served at `/profile-ui`.
 - No build step, no framework: plain JavaScript files.
 
@@ -373,7 +375,7 @@ Key facts the diagram encodes:
 - **The extension never talks to the server directly from the Seek page.** `extension/content_script.js::backendFetch` sends a message to `background.js`, which makes the call (reason in the code comment: Chrome blocks a public web page from reaching localhost).
 - **AI work is not done inside request handlers.** `/ingest` just saves the job (`app/api/ingest.py::ingest`). The idle loop picks it up later on a single background thread, so only one AI call chain runs at a time.
 - **One gateway to the AI.** Everything goes through `app/llm/client.py`; no other file imports a provider SDK (a rule stated in `CLAUDE.md`; **unverified** that it holds everywhere, I will check in Step 5).
-- **Two databases, never mixed.** One profile (id 1) per database; `profile_id=1` is hardcoded in many places (`app/api/idle_loop.py`, `extension/sidebar.js` `PROFILE_ID`).
+- **Two databases, never mixed.** One profile (id 1) per database; `profile_id=1` is hardcoded in many places (`app/api/idle_loop.py`, `extension/sidebar_shared.js` `PROFILE_ID`).
 
 ## 2.5 The job's life, in one line
 
@@ -385,7 +387,7 @@ Key facts the diagram encodes:
 
 - **Hardcoded `1`s:** profile id 1 is assumed throughout. Fine for single-user; a real problem if this ever becomes multi-user. The code says so (`CLAUDE.md`, "TWO ENVIRONMENTS").
 - **Comments are very long and reference plan sections** like "plan §5.5" or "Phase 7c". Those point into `docs/cover-letter-loop-plan.md` (1,244 lines). You do not need to read it to follow the code.
-- **Big files are the exception, not the rule:** most `app/llm/letter/` files are 100-300 lines. `extension/sidebar.js` and `app/llm/client.py` are the two that need patience (`app/api/main.py` was a third until it was split, see 5.4 #9).
+- **Big files are the exception, not the rule:** most `app/llm/letter/` files are 100-300 lines. `app/llm/client.py` is the one that needs patience (`app/api/main.py` and `extension/sidebar.js` were two more until they were split, see 5.4 #9 and #10).
 
 ## 2.7 Mismatches I found while mapping (full triage comes in Step 5)
 
@@ -509,8 +511,20 @@ Descriptions come from reading each file's header docstring and, for the central
 | `selectors.js` | The CSS selectors for Seek's page elements (must be kept in sync with `app/scraper/selectors.py`). |
 | `content_script.js` | Runs on Seek pages. `parseSearchPage` / `parseDetailPage` read the DOM, `ingest` sends data, `maybeInjectQuickApply` shows the letter panel, `parseQuestionnaire` captures Quick Apply questions, `main` is the page-type router. |
 | `background.js` | Service worker. Relays localhost calls for content scripts (`BACKEND_FETCH`, allow-listed to localhost ports 8000/8001 only), takes screenshots, counts captures for the icon badge. |
-| `sidebar.html` / `sidebar.js` | The side panel UI: 83 top-level functions in one file. Job list, cards, tabs, profile, scanning pages. |
-| `dashboard.js` | Overview and Applied tabs. Shares globals with `sidebar.js` (loaded after it; relies on its functions). |
+| `sidebar.html` | The side panel's markup and CSS. Its `<script>` tags load the panel's classic scripts in a fixed order; they share one global scope, so **that order is the contract** (`scripts/js_globals.py --check` and `tests/e2e/sidebar_load_e2e.py` guard it). |
+| `sidebar_shared.js` | `PROFILE_ID`, score tiers, label tables, the `mk` DOM helper, tab switching, `markApplied`. Runs `announceSidebarOpen()` first. |
+| `sidebar_jobs.js` | Jobs tab: `loadJobs`, `renderJob`, letter badges, `fillDetail` (a card's expanded detail). |
+| `sidebar_letter_notes.js` | Under an expanded card: Quick Apply question help, letter notes, side outputs. |
+| `sidebar_letter_card.js` | The ask_user question card with its profile-row editors, and the letter editor. |
+| `sidebar_evidence.js` | `evidenceNote`, `csvEscape` (shared with `dashboard.js`), the Export evidence button. |
+| `sidebar_suggest.js` | Suggested-searches banner, `seekSearchUrl`. |
+| `sidebar_scan.js` | Scan Page: `SCAN_DELAY_MS`, `SCAN_PAGES_CEILING`, `scanPage`, and the two functions injected into Seek tabs (`pageCollectJobLinks`, `pageScrapeDetail`). |
+| `sidebar_personalise.js` | The Personalise panel: thresholds, letter limits, toggles, `loadPreferences`, bulk hide. |
+| `sidebar_profile.js` | Profile tab: the profile editor and the To work on list. |
+| `sidebar_seek_import.js` | Import from your own Seek profile (`seekProfileExtract`, injected) and profile export. |
+| `sidebar_events.js` | Live updates: `connectEvents` (SSE), `scheduleReload`, `typingIn`, the budget banner. |
+| `sidebar.js` | The env pill, zoom, and the `backendReady.then(...)` startup. |
+| `dashboard.js` | Overview and Applied tabs. Loaded last; relies on globals from the `sidebar_*.js` files (listed in its header). |
 | `screening_assist.js` | Draws Quick Apply help in two places (on-page overlay and sidebar card). |
 | `popup.html` / `popup.js` | Small popup: backend health, session count, "open side panel". |
 
@@ -535,7 +549,7 @@ Two measures. **Change frequency** = number of commits touching the file (only 7
 | `app/preferences.py` | 9 | **13** | Settings; changed whenever a feature gets a toggle. |
 | `app/llm/letter/guardrails.py` | 5 | **12** | The safety rules. |
 | `app/api/main.py` | **18** (before the split) | few (imported mainly by tests) | Was edited constantly because it held the endpoints and the loop. Since the split it is wiring only (95 lines); the churn moves to the router files. |
-| `extension/sidebar.js` | **22** | n/a | **The most-changed file in the repo.** Every UI feature touches it. |
+| `extension/sidebar.js` | **22** | n/a | **The most-changed file in the repo.** Every UI feature touches it. (Split into `sidebar_*.js` since, 5.4 #10.) |
 | `extension/sidebar.html` | 21 | n/a | Changes together with `sidebar.js`. |
 | `scripts/letter_lab.py` | 14 | n/a | Heavily edited dev tool. |
 | `extension/content_script.js` | 10 | n/a | Page capture and Quick Apply. |
@@ -589,7 +603,7 @@ Also: `PROGRESS.md`, `CLAUDE.md`, `README.md` change in nearly every commit (exc
 
 **B2 (optional): you click "Scan Page" in the sidebar.** This is how most listings get their full description without you opening each one.
 
-11. **`extension/sidebar.js::scanPage`**:
+11. **`extension/sidebar_scan.js::scanPage`**:
     - Checks the active tab is a Seek results page, then injects `pageCollectJobLinks` into it to collect every `/job/<id>` link **on the page you opened** (the "1 hop").
     - `GET /jobs/known-ids` (`jobs.py::known_job_ids`, `[DB read: job_listings]`) and drops jobs already captured. Keeps at most `scanMaxPages` (default 10, ceiling `SCAN_PAGES_CEILING = 25`).
     - **Producer** (`produce`): for each link, `chrome.tabs.create({active: false})` opens a **background tab**, waits for it to load, injects `pageScrapeDetail` to read the description, closes the tab, then `POST /ingest` (same as step 10). Then `sleep(SCAN_DELAY_MS)` = 5 s.
@@ -626,7 +640,7 @@ Each numbered item is one pass of `_processing_idle_loop`, roughly 20 s apart (`
       - `app/llm/prefilter.py::prefilter` `[no AI]` computes skill overlap, seniority and qualification signals, which go into the prompt as context.
       - `[AI small]` `complete_json(schema=MatchScore, task="match")` returns score, reasoning, gaps. The score is clamped to 0-100.
       - `[DB write: INSERT/UPDATE matches]` score, reasoning, gaps (as a JSON string), `status='new'`, `scored_at`.
-    - `broadcast_from_thread("job_processed")` pushes an SSE event. The sidebar's listener (`sidebar.js::connectEvents`) calls `loadJobs()` -> `GET /jobs` (`jobs.py::list_jobs`, `[DB read: matches JOIN job_listings, job_skills, letter_runs]`). **The job now appears in your sidebar with score 88.**
+    - `broadcast_from_thread("job_processed")` pushes an SSE event. The sidebar's listener (`sidebar_events.js::connectEvents`) calls `loadJobs()` -> `GET /jobs` (`jobs.py::list_jobs`, `[DB read: matches JOIN job_listings, job_skills, letter_runs]`). **The job now appears in your sidebar with score 88.**
     - If extraction failed (`extracted_at` still null), the loop waits 3 minutes before the next try.
 
 ## 4.4 Stage D: the cover letter is written
@@ -662,7 +676,7 @@ Each numbered item is one pass of `_processing_idle_loop`, roughly 20 s apart (`
 20. **`outcome.py::conclude`**: picks `guardrails.best_draft`, ranked by passed claims check, then fewest missing must-cover items, then passed style, then the later draft. `is_clean` = all three checks passed. Then **`runner.finish_run`** `[DB write: letter_runs.status='done' (or budget_stopped/failed), finished_at, final_draft_version]`.
 21. Back in **`production.py::_run_pipeline`** -> **`land_letter`** `[DB write: INSERT/UPDATE cover_letters.generated_content]`. `edited_content` (your edits) is never overwritten. Emits SSE `cover_letter_ready` and `letter_run_done` (with `clean` and `open_issues`).
     - Important for reviewers: if no draft passed, **the best draft still lands**, with its open issues shown in the sidebar. This can include one that failed `check_claims`. The flag is the only guard, by design.
-22. **Sidebar**: `connectEvents` hears the event -> `scheduleReload` -> `loadJobs` -> `GET /jobs`. Expanding the card calls `GET /jobs/{id}/letter-info` (`app/api/letters.py::letter_info` -> `app/llm/letter/view.py::letter_info`, `[DB read: letter_runs.state]`) to show open issues, what was left out and why, and eligibility notes.
+22. **Sidebar**: `connectEvents` (`sidebar_events.js`) hears the event -> `scheduleReload` -> `loadJobs` (`sidebar_jobs.js`) -> `GET /jobs`. Expanding the card calls `GET /jobs/{id}/letter-info` (`app/api/letters.py::letter_info` -> `app/llm/letter/view.py::letter_info`, `[DB read: letter_runs.state]`) to show open issues, what was left out and why, and eligibility notes.
 
 ## 4.5 Detour: the agent asks you a question
 
@@ -688,7 +702,7 @@ Only when a must-have requirement has no evidence in your profile and you have n
     - **Nothing is typed into Seek's form.** You copy and paste.
 30. **You submit the application on Seek.** No code from this project runs here.
 31. **Mark Applied**:
-    - From the Seek overlay: `content_script.js` `applyBtn` -> `PATCH /jobs/{id}/status {"status": "applied"}`. Or from the sidebar: `sidebar.js::markApplied` -> the same endpoint.
+    - From the Seek overlay: `content_script.js` `applyBtn` -> `PATCH /jobs/{id}/status {"status": "applied"}`. Or from the sidebar: `sidebar_shared.js::markApplied` -> the same endpoint.
     - **`job_actions.py::update_status`** `[DB write: matches.status='applied'; matches.applied_at = now, only if not already set]`.
     - Overlay only: `captureAndDownloadScreenshot` -> `background.js` `CAPTURE_SCREENSHOT` (`chrome.tabs.captureVisibleTab`) -> local download + `POST /jobs/{id}/screenshot` -> `evidence.py::upload_screenshot` (downscale, `[file write: app/screenshots_real/]`, `[DB write: matches.screenshot_path, screenshot_taken_at]`).
     - The Overview and Applied tabs (`dashboard.js`) then read `GET /obligation` (`app/api/obligation.py`) to count it towards this period's target.
@@ -801,7 +815,8 @@ Two parts:
 
 | If a diff touches… | Check… |
 |---|---|
-| `extension/sidebar.js::scanPage`, `pageCollectJobLinks` | Links come only from the page **you** opened, never from pages the scan visits. `SCAN_DELAY_MS` is still at least 5000 and `SCAN_PAGES_CEILING` still 25 (`sidebar.js:1124-1126`). The API's matching bound (`PreferencesUpdate`, `le=25`) agrees. |
+| `extension/sidebar_scan.js` (`scanPage`, `pageCollectJobLinks`, `pageScrapeDetail`) | Links come only from the page **you** opened, never from pages the scan visits. `SCAN_DELAY_MS` is still at least 5000 and `SCAN_PAGES_CEILING` still 25 (top of `sidebar_scan.js`; `tests/test_scan_policy.py` checks both, wherever they live). The API's matching bound (`PreferencesUpdate`, `le=25`) agrees. The injected functions use no panel globals (`scripts/js_globals.py --check`). |
+| `extension/sidebar.html` `<script>` tags, any `sidebar_*.js` / `sidebar.js` / `dashboard.js` | The panel's scripts are classic scripts sharing one global scope; load order is the contract. A new top-level name must not clash with another file's, and a name used at load time must come from an earlier file. Run `python scripts/js_globals.py --check` (also in pytest) and `python tests/e2e/sidebar_load_e2e.py` (no backend needed). |
 | `extension/content_script.js` | No code types into Seek's form, clicks Seek's buttons, or submits anything. Question capture reads question text only, never your answers. |
 | `extension/background.js` | The `BACKEND_FETCH` allow-list is still localhost ports 8000/8001 only. Otherwise any Seek page could use the extension to make arbitrary requests. The scan-tab set (`SCAN_TAB_ADD` / `SCAN_TAB_REMOVE` / `IS_SCAN_TAB`) must fail to "not a scan tab", so a normal Seek page is always captured. |
 | `extension/manifest.json` | Any new `permissions` / `host_permissions` entry needs a reason. |
@@ -844,12 +859,12 @@ Within a level, cheaper fixes come first. Size is rough: S = under an hour, M = 
 | 7 | **Two AI chains can overlap** (4.9, item 8) | The Scan Page quick screen runs on the request thread, outside the single worker. Two threads writing SQLite at once can cause "database is locked". | `job_actions.py::run_quick_screen` | Submit it to `_bg_executor` and wait for the result, or document why not. Reproduce first. | S | **Fixed (2026-10-12)** in `bb0b094`: `quick_screen` claims the job before its model call (D5 = B), so overlapping Scan Page / idle-loop calls make one model call; reproduced first in `tests/test_quickscreen_race.py`. "database is locked" was never reproduced and is **unverified** (owner hand check pending). |
 | 8 | **A failed score becomes a permanent 0** (4.9, item 2) | A network error or daily-quota stop writes `score=0, "Parse error"`, and the loop never retries it. | `match.py::match_job` (`except Exception`) | Don't write a row on transport or quota errors. | S | **Fixed (2026-10-12)** in `065e1a4` (`match_job` raises on failure; a forced re-score never replaces a real score) and `87d8390` (idle loop: 3 attempts, 180 s pause, then the 0 row; quota stops are not counted). Existing "Parse error" rows are left alone (D9). |
 | 9 | **`app/api/main.py` does too much** | 1,564 lines: endpoints, the background loop and helpers. Edited in 18 of 75 commits, so most branches touch it and conflict. | `app/api/main.py` | Move groups into routers (jobs, events/SSE, evidence and screenshots) and the idle loop into its own module, following `letters.py` / `obligation.py`. Pure moves, no behaviour change. | L | **Done on this branch (2026-10-13)**, plan `docs/refactor-9-10-plan.md` steps 9.0-9.16, one commit each: `f7f561d` (route-table, OpenAPI and scan-policy safety nets), `d38b433` (one `get_db`), `e62290c` (`paths`), `995c00e` (`events`), `5fdcbd7` (`worker`), `392b502` and `fb66b41` (`idle_loop`), `bf7c21c` (`profile`), `24d7b28` (`health`), `6d29fed` (`evidence`), `046e23a` (`search`), `9745b7b` (`ingest`), `36e9a1f` (`job_actions`), `a41bc43` (`jobs`), `3f0af65` (tidy: `main.py` is 95 lines), `e42c098` (routers import `get_db` from `deps`), and the guard-tests-and-docs commit. Pure moves: route table and OpenAPI unchanged apart from the `get_db` column. Hand check H-B1 (server starts, loop quiet for 30 s) passed. |
-| 10 | **`sidebar.js` is one 2,723-line file**, and `dashboard.js` relies on its globals | The most-changed file in the repo. Load order is the only contract between the two files. | `extension/sidebar.js`, `dashboard.js` | Split by tab (jobs list, scan, profile). No build step, so use more `<script>` files in a fixed order, or ES modules. | L | Open, low priority |
+| 10 | **`sidebar.js` is one 2,723-line file**, and `dashboard.js` relies on its globals | The most-changed file in the repo. Load order is the only contract between the two files. | `extension/sidebar.js`, `dashboard.js` | Split by tab (jobs list, scan, profile). No build step, so use more `<script>` files in a fixed order, or ES modules. | L | **Done on this branch (2026-10-13)**, plan `docs/refactor-9-10-plan.md` steps 10.0-10.12, one commit each, classic scripts (D4): `729caf8` (safety nets: `scripts/js_globals.py`, `tests/e2e/sidebar_load_e2e.py`, `test_selectors_sync` scans every script), `ebb1e96` (`sidebar_shared`), `6f81cf0` (`sidebar_jobs`), `35b6f6c` (`sidebar_letter_notes`), `91fafe4` (`sidebar_letter_card`), `203ead8` (`sidebar_evidence`), `8332355` (`sidebar_suggest`), `127a045` (`sidebar_scan`), `f565551` (`sidebar_personalise`), `6e5590d` (`sidebar_profile`), `ca3e619` (`sidebar_seek_import`), `bc9968b` (`sidebar_events`; `sidebar.js` is 83 lines), and the docs commit. Pure moves: each moved block is byte-identical. Hand checks H1-H3 passed; H4-H6 are in the owner's final check (PROGRESS.md). |
 | 11 | **Broad `except Exception`** | 27 in `app/` outside the dormant scraper (count by search). Many are deliberate fail-opens (usage logging, the budget guard's read, quick screen). #8 shows one that hides a real failure. | `app/**` | Audit each one: does it log, and does it let `BudgetExceededError` / `DailyQuotaError` through? | M | **Fixed (2026-10-12)** in `6e95050`: `_process_listing` now stops on quota/budget errors and broadcasts `llm_budget_blocked`; `tests/test_exception_audit.py` requires every `except Exception` to end in a bare `raise` or carry `# noqa: BLE001 - <reason>`. Tests only, no hand check needed. |
 | 12 | **Seek selectors in three places** (4.9, item 5) | One Seek layout change needs three edits; missing one breaks the scan quietly. | `selectors.js`, `app/scraper/selectors.py`, `sidebar.js::pageScrapeDetail` | Pass the selectors into the injected function as `args` to `chrome.scripting.executeScript`, which can't see content-script globals. | S | **Fixed (2026-10-12)** in `3c974de` (`test_selectors_sync.py`, `dashboard_e2e.py`). **Hand check passed** (owner, TEST backend, Scan Page: every job logged "captured ✓" with a real character count). |
 | 13 | **Probable double capture during a scan** (4.9, item 6) | The scan's background tab also runs `content_script.js`, so each job is ingested twice. Harmless (upsert), just extra work. | `content_script.js::main`, `sidebar.js::produce` | Confirm first. If true, skip auto-ingest in tabs the scan opened. | S | **Confirmed, then fixed (2026-10-12)** in `e9b8a53`: the pre-fix server log showed 2 ingests per scanned job. **Hand check passed** (owner, TEST backend): one ingest per scanned job, no scan-tab lookups, and a job page opened in a normal tab is still captured. |
 | 14 | **Documentation drift** | Misleads the next reader (and the AI assistant that reads `CLAUDE.md`). | See list below | One docs-only branch | S | **Fixed (2026-10-12)** in `5eeef4e` (comments and docs only; list below all done). |
-| 15 | **Hardcoded profile id 1** | Fine for one user per database. A blocker only if this becomes multi-user. | `app/api/idle_loop.py` and the routers, `sidebar.js` `PROFILE_ID`, others | Nothing now; remove before any hosted version. | L (later) | Deliberate for now |
+| 15 | **Hardcoded profile id 1** | Fine for one user per database. A blocker only if this becomes multi-user. | `app/api/idle_loop.py` and the routers, `sidebar_shared.js` `PROFILE_ID`, others | Nothing now; remove before any hosted version. | L (later) | Deliberate for now |
 
 **The drift list for #14:**
 - ~~`app/models.py` docstring says "Eleven tables" (there are 18).~~ Done.
@@ -913,7 +928,7 @@ Terms from 2.1 (backend, endpoint, ORM, migration, LLM, tier, SSE, Manifest V3) 
 | Single worker | The one-thread executor (`_bg_executor`) the idle loop runs AI work on, so loop calls never overlap. | `app/api/worker.py` |
 | Content script | JavaScript the extension injects into Seek pages. Reads the page; never submits. | `extension/content_script.js` |
 | Service worker | The extension's background script; relays calls from Seek pages to localhost. | `extension/background.js` |
-| Side panel | The extension's sidebar UI (Overview / Jobs / Applied / Profile). | `sidebar.html`, `sidebar.js`, `dashboard.js` |
+| Side panel | The extension's sidebar UI (Overview / Jobs / Applied / Profile). | `sidebar.html`, `sidebar_*.js`, `sidebar.js`, `dashboard.js` |
 | Shadow DOM | A sealed-off piece of a web page whose styles don't mix with the page's. Used for the on-Seek panels. | `content_script.js::buildQuickApplyPanel` |
 | JSON-LD | Structured job data Seek embeds in its pages; read in preference to CSS selectors. | `content_script.js::readJsonLdJobPosting` |
 | Selector | A CSS pattern that finds an element on a web page. Breaks when Seek changes its layout. | `extension/selectors.js` |
@@ -995,7 +1010,7 @@ The order follows the data: how it starts, what it stores, how a job arrives, ho
 | 9 | `workflow.py` | The same tools in fixed order; a good check that you understood step 7 | |
 | 10 | `gap_policy.py`, `answers.py`, `app/api/letters.py` | Pause and resume (Step 4.5) | |
 | 11 | `app/obligation.py`, `app/api/obligation.py`, `extension/dashboard.js` | Centrelink periods and the Applied tab | |
-| 12 | `extension/sidebar.js` by search, not top to bottom: `loadJobs`, `renderJob`, `connectEvents`, `scanPage` | How the UI reacts to SSE events | The profile editor parts |
+| 12 | `extension/sidebar_events.js` (`connectEvents`), then `sidebar_jobs.js` (`loadJobs`, `renderJob`) and `sidebar_scan.js` (`scanPage`); the `<script>` list in `sidebar.html` is the map | How the UI reacts to SSE events | `sidebar_profile.js`, `sidebar_seek_import.js` |
 | 13 | Only if working on Quick Apply: `app/screening/` in the order of 3.5, then `extension/screening_assist.js` | | |
 | 14 | Tests: for any file above, its test file | The examples in tests are the clearest statement of intended behaviour | |
 
