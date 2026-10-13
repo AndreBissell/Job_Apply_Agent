@@ -816,7 +816,8 @@ def run(headed: bool) -> int:
             # --- the side panel's job card shows the same help ---------------------
             ext_id = sw.url.split("/")[2]
             side = ctx.new_page()
-            side.on("pageerror", lambda e: print("   sidebar pageerror:", e))
+            side_errors: list[str] = []
+            side.on("pageerror", lambda e: (side_errors.append(str(e)), print("   sidebar pageerror:", e)))
             side.on("console", lambda m: m.type in ("error", "warning") and print("   sidebar console:", m.text))
             side.goto(f"chrome-extension://{ext_id}/sidebar.html")
             side.click("nav#tabs .tab[data-tab=jobs]")  # the panel opens on the Overview tab
@@ -869,6 +870,7 @@ def run(headed: bool) -> int:
             c.check(len(stub_calls(stub_log)) == calls_before, "help off: no model call")
             http_json("PUT", "/profile/1/preferences", {"screening_question_help_enabled": True})
             
+            c.check(not side_errors, f"sidebar: no page errors {side_errors[:3]}")
             # Close put here to stop race condition
             side.close()
 

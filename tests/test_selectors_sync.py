@@ -12,9 +12,9 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-JS_FILE = ROOT / "extension" / "selectors.js"
+EXTENSION = ROOT / "extension"
+JS_FILE = EXTENSION / "selectors.js"
 PY_FILE = ROOT / "app" / "scraper" / "selectors.py"
-SIDEBAR_JS = ROOT / "extension" / "sidebar.js"
 
 # If the shared set shrinks below this, the test would be passing by matching nothing.
 EXPECTED_SHARED = {
@@ -56,7 +56,13 @@ def test_js_and_python_selectors_agree():
 
 
 def test_sidebar_has_no_hardcoded_detail_selectors():
-    # pageScrapeDetail gets these from SELECTORS via executeScript `args`.
-    text = SIDEBAR_JS.read_text(encoding="utf-8")
-    assert "jobAdDetails" not in text
-    assert "job-detail-title" not in text
+    # pageScrapeDetail gets these from SELECTORS via executeScript `args`. Every
+    # extension script is scanned, not just sidebar.js: the panel is split across
+    # several sidebar_*.js files, and checking one file would pass while checking nothing.
+    scripts = sorted(p for p in EXTENSION.glob("*.js") if p.name != JS_FILE.name)
+    texts = {p.name: p.read_text(encoding="utf-8") for p in scripts}
+    # Not vacuous: the file holding the scan's injected scraper is among those checked.
+    assert any("function pageScrapeDetail(" in t for t in texts.values()), sorted(texts)
+    for name, text in texts.items():
+        assert "jobAdDetails" not in text, f"hardcoded detail selector in {name}"
+        assert "job-detail-title" not in text, f"hardcoded detail selector in {name}"
