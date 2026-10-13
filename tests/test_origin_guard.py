@@ -12,8 +12,11 @@ from app.api.main import app
 EVIL = "https://example.com"
 
 
-def test_no_cors_header_for_another_website():
-    r = TestClient(app).get("/health", headers={"Origin": EVIL})
+def test_no_cors_header_for_another_website(guarded):
+    # /health reads the profiles table, so it needs the in-memory DB from `guarded`:
+    # CI has no app.db, and a test must not depend on one.
+    client, _ = guarded
+    r = client.get("/health", headers={"Origin": EVIL})
     assert r.status_code == 200
     assert "access-control-allow-origin" not in r.headers
 
