@@ -482,6 +482,17 @@
       ],
       "title": "Auto Cover Letter Min Score"
      },
+     "availability_checks_enabled": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Availability Checks Enabled"
+     },
      "learning_suggestions_enabled": {
       "anyOf": [
        {
@@ -1229,6 +1240,24 @@
     ],
     "title": "ValidationError",
     "type": "object"
+   },
+   "Verdict": {
+    "properties": {
+     "verdict": {
+      "enum": [
+       "live",
+       "missing",
+       "unknown"
+      ],
+      "title": "Verdict",
+      "type": "string"
+     }
+    },
+    "required": [
+     "verdict"
+    ],
+    "title": "Verdict",
+    "type": "object"
    }
   }
  },
@@ -1238,6 +1267,111 @@
  },
  "openapi": "3.1.0",
  "paths": {
+  "/availability/next": {
+   "get": {
+    "description": "The next listing to re-check, or ``job: null``.\n\n``exclude`` is a comma-separated list of internal job ids the panel already looked at\nthis session. ``remaining_today`` is the rolling 24-hour allowance left; at 0 (or with\nthe checks switched off) no job is offered.",
+    "operationId": "next_check_availability_next_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "profile_id",
+      "required": false,
+      "schema": {
+       "default": 1,
+       "title": "Profile Id",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "exclude",
+      "required": false,
+      "schema": {
+       "default": "",
+       "title": "Exclude",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Next Check Availability Next Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Next Check"
+   }
+  },
+  "/availability/{job_id}": {
+   "post": {
+    "description": "Record what a re-check found: ``live``, ``missing`` (no description) or ``unknown``.\n\nThe second ``missing`` in a row flags the job expired; ``live`` un-expires it. An applied\njob is never flagged (the response carries ``note: \"applied\"``).",
+    "operationId": "record_check_availability__job_id__post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "job_id",
+      "required": true,
+      "schema": {
+       "title": "Job Id",
+       "type": "integer"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/Verdict"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Record Check Availability  Job Id  Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Record Check"
+   }
+  },
   "/events": {
    "get": {
     "description": "Server-Sent Events stream. Pushes job_processed and cover_letter_ready events.",
@@ -2005,7 +2139,7 @@
   },
   "/jobs/{job_id}/expired": {
    "patch": {
-    "description": "Flag a listing as no longer available.\n\nCalled by content_script.js when a revisit to a job's detail page finds no\ndescription where one was previously captured (see main()'s waitFor-timeout\nbranch) \u2014 the only compliant signal available, since the Seek Access Policy\nforbids the backend from checking listings on its own. Idempotent: stamps\nexpired_detected_at only the first time.",
+    "description": "Flag a listing as no longer available.\n\nCalled by content_script.js when a revisit to a job's detail page finds no\ndescription where one was previously captured (see main()'s waitFor-timeout\nbranch) \u2014 the only compliant signal available, since the Seek Access Policy\nforbids the backend from checking listings on its own. Idempotent: stamps\nexpired_detected_at only the first time. A job the user has applied to is never\nflagged (Centrelink evidence): the call is then a no-op and ``expired_detected_at``\ncomes back null. The side panel's background re-checks report through\nPOST /availability/{job_id} instead, which adds the two-strike rule.",
     "operationId": "mark_expired_jobs__job_id__expired_patch",
     "parameters": [
      {

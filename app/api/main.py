@@ -18,6 +18,7 @@ This file only wires the app together; the code lives in app/api/:
   idle_loop.py   the idle loop, the letters phase and their helpers
   health.py      /health, /llm/usage
   ingest.py      POST /ingest
+  availability.py the side panel's background availability checks
   evidence.py    evidence export and screenshot upload
   search.py      search performance and suggestions
   job_actions.py quick screen, status, expired, cover letter, regenerate, delete
@@ -38,6 +39,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from app.api import events, idle_loop, paths
+from app.api.availability import router as availability_router
 from app.api.deps import get_db  # re-exported: tests key dependency_overrides on it
 from app.api.evidence import router as evidence_router
 from app.api.health import router as health_router
@@ -85,6 +87,7 @@ app.include_router(obligation_router)
 app.include_router(health_router)
 app.include_router(events.router)
 app.include_router(ingest_router)
+app.include_router(availability_router)
 app.include_router(evidence_router)
 app.include_router(search_router)
 app.include_router(job_actions_router)

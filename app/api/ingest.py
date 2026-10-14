@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app import availability
 from app.api.deps import get_db
 from app.models import JobListing
 
@@ -85,7 +86,7 @@ def ingest(
             db.add(job)
             db.flush()  # assign job.id before we report it back
             new += 1
-            job_ids.append(job.id)
+            job_ids.append(job.id)  # last_seen_live_at defaults to now: it was just captured
         else:
             # A listing is typically ingested twice — once as a search-results
             # card (which carries discovered_query but no description or
@@ -113,6 +114,12 @@ def ingest(
                     changed = True
             if changed:
                 updated += 1
+            # A capture that carries a description is proof the ad is live right now (the
+            # page was open with its description on it): un-expire a job flagged closed,
+            # clear its strikes and refresh the "seen live" stamp the LLM gate reads. A
+            # card or a "NO DESCRIPTION" scan proves nothing and changes none of this.
+            if (item.raw_description or "").strip():
+                availability.mark_live(existing)
             job_ids.append(existing.id)
 
     db.commit()

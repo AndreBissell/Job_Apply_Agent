@@ -33,6 +33,7 @@ from typing import Callable
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app import availability
 from app.db import SessionLocal
 from app.llm.client import BudgetExceededError, DailyQuotaError
 from app.llm.cover_letter import generate_cover_letter
@@ -140,10 +141,15 @@ def next_work(db: Session, profile_id: int, *, now: datetime.datetime | None = N
     """The one thing the worker does on this pass, or None when there is no letter work."""
     now = now or _now()
 
+    # Neither a resumed run nor a new letter is paid for unless the ad is not flagged closed
+    # and was seen live recently (app/availability.py): a letter for a dead ad is wasted money.
+    gate = availability.llm_gate(db, profile_id, now)
     resumable = db.execute(
         select(LetterRun.id, Match.job_id)
         .join(Match, Match.id == LetterRun.match_id)
+        .join(JobListing, JobListing.id == Match.job_id)
         .where(LetterRun.status == "answered", Match.user_id == profile_id, Match.hidden_at.is_(None))
+        .where(gate)
         .order_by(LetterRun.id)
         .limit(1)
     ).first()
@@ -158,6 +164,7 @@ def next_work(db: Session, profile_id: int, *, now: datetime.datetime | None = N
         .where(CoverLetter.id.is_(None))
         .where(Match.user_id == profile_id)
         .where(Match.hidden_at.is_(None))  # never write a letter for a hidden job
+        .where(gate)
         .where(Match.score >= settings["auto_min_score"])
         .where(JobListing.extracted_at.isnot(None))
         .order_by(Match.score.desc())

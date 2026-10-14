@@ -17,12 +17,23 @@ function tellSeekTabs(type) {
   });
 }
 
-// Tabs the side panel's scan opened (sidebar.js produce()). The scan reads and
-// ingests those pages itself, so content_script.js asks IS_SCAN_TAB and skips its
-// own capture there. Lost if the worker restarts, which only brings back the
-// harmless double capture (an upsert), never a missed one.
+// Tabs the side panel opened in the background: the scan's job pages (sidebar_scan.js
+// produce()) and the availability re-checks (sidebar_availability.js). The panel reads those
+// pages itself, so content_script.js asks IS_SCAN_TAB and skips its own capture and its own
+// "looks closed" flagging there. MV3 kills an idle service worker, so the set is mirrored
+// into chrome.storage.session (kept until the browser closes) and reloaded on wake-up;
+// every handler waits for that reload first. Without it a restart mid-check would let the
+// content script run in a check tab and flag a job on a single, uncorroborated miss.
 const scanTabs = new Set();
-chrome.tabs.onRemoved.addListener((id) => scanTabs.delete(id));
+const scanTabsReady = chrome.storage.session.get('scanTabs')
+  .then(({ scanTabs: saved }) => { for (const id of saved || []) scanTabs.add(id); })
+  .catch(() => {});
+function saveScanTabs() {
+  return chrome.storage.session.set({ scanTabs: [...scanTabs] }).catch(() => {});
+}
+chrome.tabs.onRemoved.addListener((id) => {
+  scanTabsReady.then(() => { if (scanTabs.delete(id)) return saveScanTabs(); });
+});
 
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== 'sidebar') return;
@@ -41,13 +52,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     chrome.action.setBadgeBackgroundColor({ color: '#2557a7' });
     console.log('[SeekAssistant BG] Ingest done:', msg);
   } else if (msg && msg.type === 'SCAN_TAB_ADD') {
-    scanTabs.add(msg.tabId);
-    sendResponse({ ok: true });
+    // Stored before the reply: the panel waits for it before the page finishes loading.
+    scanTabsReady.then(() => { scanTabs.add(msg.tabId); return saveScanTabs(); })
+      .then(() => sendResponse({ ok: true }));
   } else if (msg && msg.type === 'SCAN_TAB_REMOVE') {
-    scanTabs.delete(msg.tabId);
-    sendResponse({ ok: true });
+    scanTabsReady.then(() => { scanTabs.delete(msg.tabId); return saveScanTabs(); })
+      .then(() => sendResponse({ ok: true }));
   } else if (msg && msg.type === 'IS_SCAN_TAB') {
-    sendResponse({ scan: scanTabs.has(sender.tab?.id) });
+    scanTabsReady.then(() => sendResponse({ scan: scanTabs.has(sender.tab?.id) }));
   } else if (msg && msg.type === 'GET_SESSION_COUNT') {
     sendResponse({ count: capturedThisSession });
   } else if (msg && msg.type === 'BACKEND_FETCH') {

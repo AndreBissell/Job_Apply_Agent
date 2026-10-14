@@ -829,6 +829,19 @@
           roughly 5s × this number. Already-captured jobs are skipped and don't count.
         </p>
         <div class="pref-row">
+          <label class="pref-check" for="availability-checks">
+            <input id="availability-checks" type="checkbox" checked>
+            <span>Check in the background that jobs are still advertised</span>
+          </label>
+        </div>
+        <p class="pref-note">
+          While this panel is open, it quietly re-opens a few saved job pages (one at a time,
+          15 seconds apart, at most 8 per session and 24 a day, never during a Scan) and hides
+          ads that have closed. Matching and cover letters only run for an ad seen live in the
+          last 24 hours, so an old backlog waits for a check first. Applied jobs are never
+          touched. Off = no checks and no wait.
+        </p>
+        <div class="pref-row">
           <label class="pref-check" for="llm-suggest">
             <input id="llm-suggest" type="checkbox">
             <span>Use AI to refine search suggestions</span>
@@ -979,6 +992,7 @@
   <script src="sidebar_evidence.js"></script>
   <script src="sidebar_suggest.js"></script>
   <script src="sidebar_scan.js"></script>
+  <script src="sidebar_availability.js"></script>
   <script src="sidebar_personalise.js"></script>
   <script src="sidebar_profile.js"></script>
   <script src="sidebar_seek_import.js"></script>

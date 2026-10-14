@@ -41,6 +41,16 @@ function scanNotice(msg) {
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
+// One Seek page at a time, spaced out, across the scan AND the background availability
+// checks (sidebar_availability.js): both wait here before opening a tab, so the gap holds
+// whichever of them opened the last page. The scan also stamps it when it finishes.
+let lastSeekPageAt = 0;
+async function seekPace(gapMs) {
+  const wait = lastSeekPageAt + gapMs - Date.now();
+  if (wait > 0) await sleep(wait);
+  lastSeekPageAt = Date.now();
+}
+
 // Runs inside the Seek page — collect all /job/<id> hrefs already on it.
 function pageCollectJobLinks() {
   const out = [], seen = new Set();
@@ -115,6 +125,9 @@ async function scanPage() {
   scanBtn.disabled = true;
   scanLogEl.textContent = '';
   try {
+    // A scan always wins over a background availability check: close its tab now, and the
+    // checker waits until this scan is done (sidebar_availability.js).
+    await cancelAvailabilityCheck();
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab || !/^https:\/\/(au\.seek\.com|www\.seek\.com\.au)\/[^?#]*jobs/i.test(tab.url || '')) {
       scanNotice('Open a Seek search results page in this tab first, then click Scan Page.');
@@ -166,6 +179,7 @@ async function scanPage() {
         scanLog(`${label} opening job page…`);
         let bgTab;
         try {
+          await seekPace(SCAN_DELAY_MS);
           bgTab = await chrome.tabs.create({ url: urls[i], active: false });
           // Tell the worker this is a scan tab, so the content script running in it
           // doesn't also capture the job (this scan ingests it below). The page can't
@@ -249,6 +263,7 @@ async function scanPage() {
     loadJobs();
     refreshDashboard();
   } finally {
+    lastSeekPageAt = Date.now(); // the checker leaves its own full gap after the scan's last page
     scanning = false;
     scanBtn.disabled = false;
   }

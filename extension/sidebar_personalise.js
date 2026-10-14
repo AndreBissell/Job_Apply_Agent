@@ -69,6 +69,9 @@ const sideOutputToggles = {
   resume_advice_enabled: document.getElementById('side-resume'),
   // Not a side output (it runs outside the letter run), but the same on/off shape.
   screening_question_help_enabled: document.getElementById('qa-question-help'),
+  // Likewise not a side output: the panel's background "is it still advertised?" checks
+  // (sidebar_availability.js) and the freshness gate on the AI work (app/availability.py).
+  availability_checks_enabled: document.getElementById('availability-checks'),
 };
 
 // The full cover-letter pipeline (docs/cover-letter-loop-plan.md §6). Stored server-side

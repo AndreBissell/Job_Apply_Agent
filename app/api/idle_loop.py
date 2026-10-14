@@ -17,7 +17,7 @@ import time
 
 from sqlalchemy import select
 
-from app import retention
+from app import availability, retention
 from app.api import events, paths, worker
 from app.db import SessionLocal
 from app.llm.client import BudgetExceededError, DailyQuotaError
@@ -185,11 +185,16 @@ async def _processing_idle_loop() -> None:
             # cost/conservatism rationale. Runs once per job; on pass it stamps
             # quick_screen_at and Phase 1 below picks it up next; on skip it writes
             # a terminal low-score Match row and Phase 1 never sees it.
+            # Every phase below (and the letters phase) only picks a job that is not flagged
+            # expired and was seen live recently (app/availability.py llm_gate): a stale
+            # backlog job waits for the side panel to re-check it, and is skipped, not
+            # blocked on, so fresh jobs keep flowing.
             screen_id: int | None = None
             with SessionLocal() as db:
                 job = db.scalar(
                     select(JobListing)
                     .where(JobListing.raw_description.isnot(None))
+                    .where(availability.llm_gate(db, 1))
                     .where(JobListing.extracted_at.is_(None))
                     .where(JobListing.quick_screen_at.is_(None))
                     .order_by(JobListing.date_scraped.asc())
@@ -236,6 +241,7 @@ async def _processing_idle_loop() -> None:
                 candidates = db.scalars(
                     select(JobListing)
                     .where(JobListing.raw_description.isnot(None))
+                    .where(availability.llm_gate(db, 1))
                     .where(JobListing.extracted_at.is_(None))
                     .where(JobListing.quick_screen_at.isnot(None))
                     .where(~JobListing.matches.any())
@@ -270,6 +276,7 @@ async def _processing_idle_loop() -> None:
                 job = db.scalar(
                     select(JobListing)
                     .where(JobListing.extracted_at.isnot(None))
+                    .where(availability.llm_gate(db, 1))
                     .where(~JobListing.matches.any())
                     .order_by(JobListing.date_scraped.asc())
                     .limit(1)

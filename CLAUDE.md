@@ -62,6 +62,24 @@ Keep it paced and capped. If the scan ever draws Cloudflare / anti-bot attention
 pull it back to user-initiated opens only.
 
 
+Availability re-checks (2026-10-13, owner-accepted): the side panel may re-visit the
+`/job/{id}` page of a listing already stored in the database, to see whether it is still
+advertised. This is a second kind of traffic, so it has its own caps; the 1-hop rule is unchanged.
+Every stored URL came from a page the user opened (or the 1-hop scan from one); a re-check
+opens only that listing's own page, rebuilt from its id on Seek's own host (`checkUrlFor`), and reads only whether the description is
+there and the page title. It never reads or follows a link found on it: no second hop.
+Caps, all in code and pinned by tests/test_scan_policy.py: side panel only (never the backend, never
+background.js); one background tab at a time (`active: false`) and one Seek page at a time across
+scans and checks together (`seekPace`); ≥ `CHECK_DELAY_MS` (15s, never below `SCAN_DELAY_MS`) apart;
+≤ `CHECK_SESSION_CAP` (8) pages per session, one session per 30 min while the panel is open and
+≤ `DAILY_CAP` (24, app/availability.py) per rolling 24 hours; never while a scan runs (a scan
+cancels the check in flight); a toggle in Personalise (`availability_checks_enabled`). Hard stop:
+a challenge page, or `CHECK_MISS_STREAK_LIMIT` (5) empty pages in a row, pauses checks for 6 hours.
+A closed ad is never concluded from one empty page: it takes two separate visits (≥1 day apart)
+and a live page seen in the same session each time, so a blocked or logged-out browser cannot flag
+anything. Applied jobs are never re-checked or flagged. The same freshness (`FRESH_FOR`, 24h)
+gates all LLM work: no matching, ranking or letter for a job not seen live recently.
+
 Why this is defensible at this volume: it runs in the user's real browser/session
 for their own personal job search, opens a handful of listings the user could have
 clicked themselves, spaced like normal browsing. It is low-volume, non-commercial, and
@@ -511,6 +529,24 @@ Parked fast-follows. Both need a live Seek session rather than guesswork:
    job page, check job_listings.classification is populated, and fix the
    selectors if the JSON-LD path ever stops covering it.
 
+
+✅ COMPLETED: Availability checks + freshness gate — 2026-10-13 (branch `centrelink-ease-apply`)
+
+Closed Seek ads now drop out of the list without a button, and no AI money is spent on one.
+Backend: `app/availability.py` (candidate choice, verdicts, `llm_ready` gate), `app/api/availability.py`
+(`GET /availability/next`, `POST /availability/{id}`), migration `b7e2d9a4c601`
+(`job_listings.last_seen_live_at` / `availability_checked_at` / `availability_misses`). Side panel:
+`extension/sidebar_availability.js` (paced, capped, scan cancels it; policy in the Seek Access Policy
+above). Rules that matter: a job is flagged only after TWO misses on separate visits, each in a session
+that also saw a live page (canary), so a blocked browser flags nothing; a capture with a description
+(`/ingest`) un-expires; applied jobs are never visited or flagged (also `PATCH /jobs/{id}/expired`);
+quick screen, extraction, matching and `next_work` (letters, resumes) skip flagged jobs and, while
+`availability_checks_enabled` is on, jobs not seen live in 24h (Regenerate and the Scan's own quick
+screen are not gated). `background.js` now mirrors its scan-tab set into `chrome.storage.session`
+so a service-worker restart can't let the content script flag from a check tab. 1600 tests; e2e
+`tests/e2e/availability_e2e.py` 48/48 (tabs and scripting stubbed). NOT verified in the user's own
+Chrome: what a closed Seek ad really looks like (blank, redirect or banner) and the Cloudflare-title
+test; the console logs the evidence for every check.
 
 ✅ COMPLETED: Rolling retention + post-profile-update weighting — 2026-09-21
 

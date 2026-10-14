@@ -105,3 +105,64 @@ def test_detail_scraper_is_injected_only_into_scan_tabs():
     assert {m.group(1) for _, m in injections} == {"bgTab.id"}
     uses = _find_all(r"\bpageScrapeDetail\b")
     assert len(uses) == 1 + len(injections), "pageScrapeDetail is referenced outside its injection"
+
+
+# ---------------------------------------------------------------------------
+# Availability re-checks (CLAUDE.md, "Availability re-checks"): the side panel re-visits stored
+# listings in the background. Same stance as the scan: paced, capped, one page at a time, one hop.
+# ---------------------------------------------------------------------------
+def _const(name: str) -> int:
+    found = _find_all(rf"\bconst\s+{name}\s*=\s*(\d+)\s*;")
+    assert len(found) == 1, f"{name} must be defined exactly once, found {len(found)}"
+    return int(found[0][1].group(1))
+
+
+def test_check_delay_is_at_least_the_scan_delay():
+    assert _const("CHECK_DELAY_MS") >= _const("SCAN_DELAY_MS") >= 5000
+
+
+def test_check_session_cap_stays_a_trickle():
+    assert 1 <= _const("CHECK_SESSION_CAP") <= 10
+
+
+def test_backend_daily_cap_is_bounded():
+    from app import availability
+
+    assert 1 <= availability.DAILY_CAP <= 30
+    assert availability.MISSES_TO_EXPIRE >= 2  # one miss is never enough to flag a job
+
+
+def test_checks_open_only_background_tabs_for_stored_listings():
+    text = _sources()["sidebar_availability.js"]
+    calls = [_call_args(text, m.end() - 1) for m in re.finditer(r"chrome\.tabs\.create\(", text)]
+    assert len(calls) == 1, "the checker opens its one page in one place"
+    assert re.search(r"\bactive:\s*false\b", calls[0]), calls[0]
+    assert re.search(r"\burl\b", calls[0])
+    # The URL is rebuilt from the listing's own id on Seek's own host (checkUrlFor), never a link
+    # read off a page.
+    assert "checkUrlFor(job)" in text and "CHECK_HOSTS.includes(u.hostname)" in text
+
+
+def test_checks_never_read_links_off_a_page():
+    """One hop only: the checker injects a function that reads the description and title, and
+    nothing else, so no link on a checked page can ever be followed (no second hop)."""
+    text = _sources()["sidebar_availability.js"]
+    injections = re.findall(r"injectFn\(\s*(\w+(?:\.\w+)*)\s*,\s*(\w+)", text)
+    assert injections == [("tab.id", "pageCheckListing")]
+    body = text[text.index("async function pageCheckListing"):text.index("function classifyCheck")]
+    assert "href" not in body and "querySelectorAll" not in body and "pageCollectJobLinks" not in text
+
+
+def test_checks_wait_their_turn_behind_the_scan_and_the_shared_pace():
+    text = _sources()["sidebar_availability.js"]
+    run = text[text.index("async function runAvailabilitySession"):text.index("function armAvailabilityChecks")]
+    assert "scanning" in run
+    assert run.index("seekPace(CHECK_DELAY_MS)") < run.index("checkOne(job)")
+    scan = _sources()["sidebar_scan.js"]
+    assert "cancelAvailabilityCheck()" in scan and "seekPace(SCAN_DELAY_MS)" in scan
+
+
+def test_background_keeps_scan_tabs_across_a_service_worker_restart():
+    # Raw text: _strip_comments would read the "/*" in background.js's host patterns as a comment.
+    text = (EXT / "background.js").read_text(encoding="utf-8")
+    assert "chrome.storage.session" in text and text.count("scanTabsReady.then") >= 4

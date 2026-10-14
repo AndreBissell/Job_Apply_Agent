@@ -1,6 +1,7 @@
 DELETE /jobs | bulk_hide_jobs | dict | app.api.deps.get_db
 DELETE /jobs/{job_id} | delete_job | dict | app.api.deps.get_db
 DELETE /profile-ui/data | delete_profile_data | dict | app.api.deps.get_db
+GET /availability/next | next_check | dict | app.api.deps.get_db
 GET /events | sse_events | - | -
 GET /gaps/to-work-on | to_work_on | dict | app.api.deps.get_db
 GET /health | health | dict | app.api.deps.get_db
@@ -35,6 +36,7 @@ PATCH /jobs/{job_id}/expired | mark_expired | dict | app.api.deps.get_db
 PATCH /jobs/{job_id}/interview | set_interview | dict | app.api.deps.get_db
 PATCH /jobs/{job_id}/status | update_status | dict | app.api.deps.get_db
 PATCH /screening-questions/{question_id} | review_screening_question | dict | app.api.deps.get_db
+POST /availability/{job_id} | record_check | dict | app.api.deps.get_db
 POST /gaps/{gap_id}/clear | clear_gap | dict | app.api.deps.get_db
 POST /ingest | ingest | dict | app.api.deps.get_db
 POST /jobs/{job_id}/quick-screen | run_quick_screen | dict | app.api.deps.get_db

@@ -357,7 +357,10 @@ CREATE TABLE job_listings (
     requirements_checklist_at   TIMESTAMPTZ,            -- when that analysis ran
     quick_screen_at             TIMESTAMPTZ,            -- set after the pre-extraction screen runs (NULL = pending)
     quick_screen_score          INTEGER,                -- 0-100 screen verdict; NULL + quick_screen_at set = screen errored, failed open
-    expired_detected_at         TIMESTAMPTZ,            -- set opportunistically when a revisit finds the listing gone (NULL = not observed closed)
+    expired_detected_at         TIMESTAMPTZ,            -- set when the listing looks closed (see below); cleared by any capture with a description (NULL = not observed closed)
+    last_seen_live_at           TIMESTAMPTZ,            -- last time the ad was seen live (capture with its page open, or a re-check that found the description); defaults to creation
+    availability_checked_at     TIMESTAMPTZ,            -- last background re-check verdict of any kind (drives "due" and the daily cap)
+    availability_misses         INTEGER NOT NULL DEFAULT 0, -- consecutive "description gone" verdicts; 2 flag the job
     date_scraped                TIMESTAMPTZ NOT NULL DEFAULT now(),
     created_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (source, source_job_id)                      -- dedup key
@@ -399,15 +402,39 @@ the screen itself errors (LLM failure, not a skip verdict), it fails open:
 proceeds to extraction as if nothing had run — that NULL-with-timestamp state is
 how to tell "screen errored" apart from "screen genuinely scored low."
 
-`expired_detected_at` is set by `PATCH /jobs/{id}/expired`, called from
-`extension/content_script.js` when a revisit to a job's detail page finds no
-description where one was previously captured — the only Seek Access Policy
--compliant signal available, since the backend may never check a listing's
-status on its own. It's inherently opportunistic (only jobs the user's browser
-happens to revisit ever get checked), never a full sweep. `GET /jobs` excludes
-anything with this set from its default (no-`status`) response; `status`-filtered
-queries (e.g. the Applied tab) ignore it, since a listing closing after the user
-already applied doesn't invalidate that application as Centrelink evidence.
+**Closed listings (`expired_detected_at`, `last_seen_live_at`, `availability_*`).** The backend never
+checks Seek (Seek Access Policy). A listing is flagged `expired_detected_at` two ways, both in
+the user's own browser:
+1. *Manually*: `extension/content_script.js` finds no description on a `/job/{id}` page the user
+   opened, where one was captured before, and calls `PATCH /jobs/{id}/expired` (one miss is enough:
+   a person is looking at the page).
+2. *Background re-checks*: the side panel (`extension/sidebar_availability.js`) re-visits stored
+   listings a few at a time and reports `live` / `missing` / `unknown` to
+   `POST /availability/{job_id}` (`app/availability.py`). One `missing` only raises
+   `availability_misses`; the second, on a separate visit at least a day later, sets
+   `expired_detected_at`. The panel only sends `missing` when the same session also saw a live
+   page, so a blocked or logged-out browser flags nothing. `GET /availability/next` picks the
+   job: first those the LLM pipeline is waiting on (unmatched, or matched at the auto-letter score
+   with no letter, and not seen live in 24h), then listed matches (score >= 60, letter-ready
+   first) not seen or checked within 3 days (1 day after a strike). At most 24 verdicts per rolling
+   24 hours, counted from `availability_checked_at`.
+
+Any capture that carries a description (`POST /ingest`) is proof the ad is live: it sets
+`last_seen_live_at`, zeroes `availability_misses` and clears `expired_detected_at` (a card or an
+empty "NO DESCRIPTION" capture changes none of them). A job with an applied match is never
+flagged and never re-checked, and marking a job applied lifts an earlier flag. `GET /jobs` excludes
+flagged jobs from its default (no-`status`) response; `status`-filtered queries (e.g. the Applied
+tab) ignore the flag, since a listing closing after the user already applied doesn't invalidate
+that application as Centrelink evidence.
+
+**The gate on AI work.** The idle loop's quick screen, extraction and matching, and the letter
+picker (`production.next_work`, including resuming an answered run) only take a job with
+`expired_detected_at IS NULL` and, while `availability_checks_enabled` is on,
+`last_seen_live_at` within 24 hours (`availability.llm_ready`). A stale job is skipped, not blocked
+on, and waits for the panel to re-check it. `last_seen_live_at` is NULL-able only for legacy
+reasons: the ORM defaults it to creation time, and the migration backfilled it from `date_scraped`
+for every row with a description. A user-initiated Regenerate and the Scan's own quick screen are
+not gated.
 
 ---
 
@@ -1012,15 +1039,14 @@ CREATE INDEX idx_job_screening_questions_question ON job_screening_questions(que
    default `user_cvs` entry. The user edits (`status -> 'edited'`), applies on Seek,
    marks the match `applied` (optionally recording `cv_used_id`).
 
-8. **Expire (opportunistic).** There's no compliant way to poll Seek for whether
-   a listing is still live (see the Seek Access Policy in CLAUDE.md — no
-   backend-initiated requests). Instead, if the user's own browsing revisits a
-   job's detail page and its description is now missing where one was
-   previously captured, the extension calls `PATCH /jobs/{id}/expired`, which
-   stamps `job_listings.expired_detected_at`. The default (no-`status`) job
-   listing query then excludes it, so a closed listing stops appearing as
-   something to act on — while jobs already marked `applied` stay visible
-   regardless, since they remain valid Centrelink evidence.
+8. **Expire.** The backend never polls Seek (Seek Access Policy in CLAUDE.md). A closed
+   listing is flagged either when the user's own visit finds its description gone
+   (`PATCH /jobs/{id}/expired`), or by the side panel's paced background re-checks
+   (`POST /availability/{job_id}`, two separate misses). Either stamps
+   `job_listings.expired_detected_at`; the default (no-`status`) job listing query then excludes
+   it and the AI pipeline skips it. A later capture with a description un-expires it. Jobs
+   already marked `applied` are never flagged and stay visible regardless, since they remain
+   valid Centrelink evidence.
 
 This walkthrough touches every table, which is a good sign the model is complete
 for the core pipeline.

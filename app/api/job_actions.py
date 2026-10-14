@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
+from app import availability
 from app.api import paths, worker
 from app.api.deps import get_db
 from app.llm.client import DailyQuotaError
@@ -95,8 +96,15 @@ def update_status(
         )
 
     match.status = body.status
-    if body.status == "applied" and match.applied_at is None:
-        match.applied_at = datetime.now(timezone.utc)
+    if body.status == "applied":
+        if match.applied_at is None:
+            match.applied_at = datetime.now(timezone.utc)
+        # An applied job is evidence, never "closed": a flag that arrived before the user
+        # applied is lifted, so the job stays on the Jobs tab beside its "Applied" mark.
+        job = db.get(JobListing, job_id)
+        if job is not None:
+            job.expired_detected_at = None
+            job.availability_misses = 0
     db.commit()
 
     return {
@@ -114,17 +122,22 @@ def mark_expired(job_id: int, db: Session = Depends(get_db)) -> dict:
     description where one was previously captured (see main()'s waitFor-timeout
     branch) — the only compliant signal available, since the Seek Access Policy
     forbids the backend from checking listings on its own. Idempotent: stamps
-    expired_detected_at only the first time.
+    expired_detected_at only the first time. A job the user has applied to is never
+    flagged (Centrelink evidence): the call is then a no-op and ``expired_detected_at``
+    comes back null. The side panel's background re-checks report through
+    POST /availability/{job_id} instead, which adds the two-strike rule.
     """
     job = db.get(JobListing, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    if job.expired_detected_at is None:
-        job.expired_detected_at = datetime.now(timezone.utc)
+    if availability.flag_expired(db, job):
         db.commit()
 
-    return {"job_id": job_id, "expired_detected_at": job.expired_detected_at.isoformat()}
+    return {
+        "job_id": job_id,
+        "expired_detected_at": job.expired_detected_at.isoformat() if job.expired_detected_at else None,
+    }
 
 
 @router.patch("/jobs/{job_id}/cover-letter")
