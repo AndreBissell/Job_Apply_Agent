@@ -83,16 +83,35 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // captureVisibleTab only works from an extension page (not a content script
     // directly), and only captures whichever tab is currently active in the
     // given window — that's why this is relayed through the background worker
-    // rather than called straight from content_script.js. Covered by the
-    // existing au.seek.com/www.seek.com.au host_permissions, no extra grant needed.
-    const windowId = sender.tab ? sender.tab.windowId : chrome.windows.WINDOW_ID_CURRENT;
-    chrome.tabs.captureVisibleTab(windowId, { format: 'png' }, (dataUrl) => {
-      if (chrome.runtime.lastError) {
-        sendResponse({ error: chrome.runtime.lastError.message });
-      } else {
-        sendResponse({ dataUrl });
-      }
-    });
+    // rather than called straight from content_script.js. Chrome allows it only with
+    // "<all_urls>" or activeTab (a Seek host permission is NOT enough; activeTab needs a
+    // toolbar click), so the manifest has "<all_urls>" FOR THIS CALL ONLY (owner decision
+    // 2026-10-14, docs/centrelink-ease-apply-plan.md). Content scripts still run on Seek
+    // only; tests/test_extension_permissions.py pins both.
+    // Only for the tab that asked, and only while it is the active tab in its window:
+    // otherwise the capture would be of some other page (apply_flow.js waits for its tab
+    // to be visible, but the user can switch tabs in between).
+    const capture = () => {
+      const windowId = sender.tab ? sender.tab.windowId : chrome.windows.WINDOW_ID_CURRENT;
+      chrome.tabs.captureVisibleTab(windowId, { format: 'png' }, (dataUrl) => {
+        if (chrome.runtime.lastError) {
+          sendResponse({ error: chrome.runtime.lastError.message });
+        } else {
+          sendResponse({ dataUrl });
+        }
+      });
+    };
+    if (!sender.tab) {
+      sendResponse({ error: 'no sender tab' });
+    } else {
+      chrome.tabs.get(sender.tab.id, (tab) => {
+        if (chrome.runtime.lastError || !tab || !tab.active) {
+          sendResponse({ error: 'that tab is not the one on screen' });
+        } else {
+          capture();
+        }
+      });
+    }
   }
   return true; // keep the message channel open for async sendResponse
 });

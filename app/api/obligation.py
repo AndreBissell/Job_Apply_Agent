@@ -64,6 +64,7 @@ def get_obligation(profile_id: int = 1, db: Session = Depends(get_db)) -> dict:
         .order_by(Match.applied_at.desc(), Match.id.desc())
     ).all()
     costs = _job_costs(db, [job.id for _, job in rows])
+    reported = retention.reported_match_ids(db, [match.id for match, _ in rows])
 
     periods: dict[tuple, list[dict]] = {current: []}
     for match, job in rows:
@@ -76,9 +77,10 @@ def get_obligation(profile_id: int = 1, db: Session = Depends(get_db)) -> dict:
             "url": job.url,
             "score": float(match.score) if match.score is not None else None,
             "applied_at": retention.utc(match.applied_at).isoformat(),
+            "applied_via": match.applied_via,
             "interview_at": retention.utc(match.interview_at).isoformat() if match.interview_at else None,
             "cost_usd": round(cost, 4) if cost is not None else None,
-            **retention.screenshot_fields(match, ttl),
+            **retention.screenshot_fields(match, ttl, match.id in reported),
         })
 
     out = []

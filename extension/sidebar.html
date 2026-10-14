@@ -103,6 +103,7 @@
     .job-meta { font-size: 12px; color: #6b7280; margin-top: 2px; }
     .evidence-note { font-size: 11px; color: #6b7280; margin-top: 2px; }
     .evidence-note.soon { color: #b45309; font-weight: 600; }
+    .evidence-note .evidence-view { color: #2557a7; }
     .del-btn {
       background: none; border: none; cursor: pointer; color: #9ca3af;
       padding: 3px; border-radius: 5px; line-height: 0; flex: none;
@@ -455,6 +456,37 @@
     .ov-search .where { font-size: 12px; color: #6b7280; white-space: nowrap; }
     .ov-search .chev { color: #9ca3af; font-size: 16px; }
     .ov-hint { font-size: 11px; color: #9ca3af; margin: 2px 0 0; }
+    /* Centrelink evidence card: unreported Quick Apply screenshots -> one PDF */
+    .ov-evidence { margin-top: 10px; }
+    .ov-evidence h3 {
+      margin: 0 0 6px; font-size: 11px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .05em; color: #374151;
+    }
+    .ev-count { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; font-size: 13px; color: #374151; }
+    .ev-count .big { font-size: 22px; font-weight: 700; line-height: 1; color: #1c2330; font-variant-numeric: tabular-nums; }
+    .ev-count.done { color: #059669; font-weight: 600; }
+    .ev-collate {
+      margin-top: 10px; width: 100%; padding: 7px 10px; font-size: 13px; font-weight: 600;
+      border: none; border-radius: 6px; background: #2557a7; color: #fff; cursor: pointer; font-family: inherit;
+    }
+    .ev-collate:hover:not(:disabled) { background: #1d4687; }
+    .ev-collate:disabled { background: #cbd5e1; cursor: default; }
+    .ev-msg { margin-top: 8px; font-size: 12px; line-height: 1.45; color: #065f46; background: #ecfdf5;
+      border: 1px solid #a7f3d0; border-radius: 6px; padding: 6px 8px; }
+    .ev-msg.err { color: #991b1b; background: #fef2f2; border-color: #fecaca; }
+    .ev-warn { margin-top: 6px; font-size: 11px; color: #92400e; }
+    .ev-list { margin-top: 10px; border-top: 1px solid #eef0f3; padding-top: 6px; }
+    .ev-list-head { font-size: 11px; color: #6b7280; margin-bottom: 2px; }
+    .ev-row { display: flex; align-items: center; gap: 6px; padding: 4px 0; font-size: 12px; }
+    .ev-row .ev-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #1c2330; }
+    .ev-row .ev-meta { color: #6b7280; white-space: nowrap; font-size: 11px; }
+    .ev-row button {
+      flex: none; padding: 2px 7px; font-size: 11px; border: 1px solid #d1d5db; border-radius: 5px;
+      background: #fff; color: #374151; cursor: pointer; font-family: inherit;
+    }
+    .ev-row button:hover:not(:disabled) { border-color: #2557a7; color: #2557a7; }
+    .ev-row button.confirm, .ev-row button.confirm:hover { background: #b91c1c; border-color: #b91c1c; color: #fff; }
+    .ev-row button:disabled { opacity: .5; cursor: default; }
 
     /* ── Applied tab ──────────────────────────────────────── */
     #applied-bar {
@@ -695,6 +727,7 @@
   <div id="overview-section">
     <div id="ov-status"></div>
     <section class="ov-card" id="ov-progress" aria-live="polite"></section>
+    <section class="ov-card ov-evidence" id="ov-evidence" aria-live="polite"></section>
     <section class="ov-block">
       <div class="ov-head">
         <div>

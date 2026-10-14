@@ -41,7 +41,8 @@ sys.path.insert(0, str(ROOT / "scripts"))
 EXTENSION = ROOT / "extension"
 PORT = 8001
 SSE_EVENTS = ["job_processed", "cover_letter_ready", "letter_run_started", "letter_run_waiting",
-              "letter_run_done", "letter_run_failed", "llm_budget_blocked"]
+              "letter_run_done", "letter_run_failed", "llm_budget_blocked", "job_applied",
+              "evidence_changed"]
 
 # Runs in every page before its own scripts. Only the panel's names are touched.
 INIT_SCRIPT = """

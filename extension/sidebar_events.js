@@ -69,6 +69,14 @@ function connectEvents() {
   // and "ready" badge states, and jobs lists are small enough that it's cheap.
   source.addEventListener('cover_letter_ready', () => scheduleReload());
 
+  // A Quick Apply was recorded from Seek's "application sent" page (apply_flow.js):
+  // the Overview count, the Applied tab and the job's card all change.
+  source.addEventListener('job_applied', () => scheduleReload());
+
+  // A screenshot was saved, or a Centrelink PDF made or undone: the Overview's evidence
+  // card and the Applied tab's notes change.
+  source.addEventListener('evidence_changed', () => refreshDashboard());
+
   // A cover-letter run started, is waiting on a question, finished or failed: move the
   // card between "Writing…", "Needs your answer" and "Ready".
   for (const name of ['letter_run_started', 'letter_run_waiting', 'letter_run_done', 'letter_run_failed']) {

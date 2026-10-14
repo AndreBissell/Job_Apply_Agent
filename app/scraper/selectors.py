@@ -50,6 +50,9 @@ DETAIL_TITLE = '[data-automation="job-detail-title"]'
 DETAIL_COMPANY = '[data-automation="advertiser-name"]'
 DETAIL_LOCATION = '[data-automation="job-detail-location"]'
 DETAIL_WORK_TYPE = '[data-automation="job-detail-work-type"]'
+# The Apply button (mirrors extension/selectors.js). Verified on two real ads 2026-10-14:
+# text "Quick apply" = Seek's Quick Apply flow, "Apply" = the employer's site.
+DETAIL_APPLY_BUTTON = 'a[data-automation="job-detail-apply"]'
 
 # Defence-in-depth: if a future layout nests noise *inside* the description
 # container, these selectors are stripped from the extracted node before reading

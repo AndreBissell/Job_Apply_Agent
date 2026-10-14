@@ -78,11 +78,15 @@ async function pageScrapeDetail(sel) {
     await new Promise(r => setTimeout(r, 400));
   }
   const titleEl = document.querySelector(sel.title);
+  // Same rule as selectors.js detectApplyType: the Apply button's text only.
+  const applyBtn = document.querySelector(sel.applyButton);
+  const applyText = (applyBtn?.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
   return {
     source_job_id: m[1],
     url: location.href,
     title: (titleEl?.innerText || document.title || 'Untitled').replace(/\s*[|-]\s*SEEK.*$/i, '').trim(),
     raw_description: descEl?.innerText.trim() || null,
+    apply_type: sel.applyButtonText[applyText] || null,
   };
 }
 
@@ -201,6 +205,8 @@ async function scanPage() {
           payload = await injectFn(bgTab.id, pageScrapeDetail, [{
             description: SELECTORS.DETAIL_DESCRIPTION,
             title: SELECTORS.DETAIL_TITLE,
+            applyButton: SELECTORS.DETAIL_APPLY_BUTTON,
+            applyButtonText: APPLY_BUTTON_TEXT,
           }]);
         }
         catch (e) { scanLog(`${label} could not scrape: ${e.message}`); }

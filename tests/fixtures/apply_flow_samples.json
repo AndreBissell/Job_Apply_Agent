@@ -1,0 +1,37 @@
+{
+  "_about": "Seek Apply-button and 'application sent' markup, from outerHTML the user copied from their own browser on 2026-10-14 (docs/quick-apply-samples.md). Scrubbed: generated class names dropped, the sol tracking token replaced, the user's first name replaced with NAME, job ids, titles and employers replaced. Structure, attributes, text and the external-link icon are as seen.",
+  "apply_buttons": [
+    {
+      "id": "quick",
+      "expected": "quick",
+      "job_id": "90000001",
+      "html": "<a href=\"/job/90000001/apply?sol=fixture\" data-automation=\"job-detail-apply\" aria-label=\"Apply for Graduate Engineer at Example Automation\" target=\"_blank\"><span><span></span><span></span><span><span>Quick apply</span></span></span></a>"
+    },
+    {
+      "id": "external",
+      "expected": "external",
+      "job_id": "90000002",
+      "html": "<a href=\"/job/90000002/apply?sol=fixture\" data-automation=\"job-detail-apply\" aria-label=\"Apply for Software Engineer at Example Org\" target=\"_blank\"><span><span></span><span></span><span><span>Apply<span aria-hidden=\"true\"><span><svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" focusable=\"false\" fill=\"currentColor\" width=\"16\" height=\"16\" aria-hidden=\"true\"><path d=\"M19 11c-.6 0-1 .4-1 1v5c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V7c0-.6.4-1 1-1h5c.6 0 1-.4 1-1s-.4-1-1-1H7C5.3 4 4 5.3 4 7v10c0 1.7 1.3 3 3 3h10c1.7 0 3-1.3 3-3v-5c0-.6-.4-1-1-1\"></path><path d=\"M21 3v-.4l-.1-.1c0-.1-.1-.1-.1-.2 0 0-.1 0-.1-.1-.1 0-.1-.1-.2-.1h-4.3c-.6 0-1 .4-1 1s.4 1 1 1H18l-6.5 7.3c-.4.4-.3 1 .1 1.4.2.2.4.3.7.3s.6-.1.7-.3l6.3-7V7c0 .6.4 1 1 1s1-.4 1-1z\"></path></svg></span></span></span></span></span></a>"
+    },
+    {
+      "id": "unknown_text",
+      "expected": null,
+      "job_id": "90000003",
+      "html": "<a href=\"/job/90000003/apply?sol=fixture\" data-automation=\"job-detail-apply\" aria-label=\"Apply for Example Role at Example Co\" target=\"_blank\"><span><span>Apply now</span></span></a>"
+    },
+    {
+      "id": "no_button",
+      "expected": null,
+      "job_id": "90000004",
+      "html": "<div>This job is no longer advertised</div>"
+    }
+  ],
+  "sent_page": {
+    "job_id": "90000005",
+    "review_path": "/job/90000005/apply/review",
+    "success_path": "/job/90000005/apply/success",
+    "title": "Application sent | SEEK",
+    "employer": "Example Recruitment",
+    "html": "<div><div><div><div><div><svg width=\"60\" height=\"60\" viewBox=\"0 0 129 128\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M68.8 35.4a5.4 5.4 0 1 1-10.7 0 5.4 5.4 0 0 1 10.7 0Z\" fill=\"#FDC221\"></path></svg><h1 id=\"applicationSent\">Keep it up, NAME</h1></div><span>Your application has been sent to Example Recruitment</span></div></div></div></div>"
+  }
+}

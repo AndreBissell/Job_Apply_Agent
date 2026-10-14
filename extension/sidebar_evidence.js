@@ -6,21 +6,34 @@
 // exports live in dashboard.js; the helpers below are shared with it.
 // ---------------------------------------------------------------------------
 
-// Screenshot files are deleted after a fixed TTL (30 days by default) while the
+// Screenshot files are deleted ~5 months (150 days by default) after they are taken,
+// but only once reported (in a Centrelink PDF from the Overview), while the
 // application record stays. Say so on the card rather than letting the image
-// vanish silently: an expiry date, a warning inside the last week, and a
-// distinct 'expired' state (screenshot_taken_at kept, no file).
+// vanish silently: "waiting to be reported", an expiry date, a warning inside the
+// last week, and a distinct 'expired' state (screenshot_taken_at kept, no file).
 function evidenceNote(job) {
   const fmt = iso => new Date(iso).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
   const note = document.createElement('div');
   note.className = 'evidence-note';
-  if (job.screenshot_url && job.screenshot_expires_at) {
-    const daysLeft = (new Date(job.screenshot_expires_at) - Date.now()) / 86400000;
-    note.textContent = `Screenshot kept until ${fmt(job.screenshot_expires_at)}`;
-    if (daysLeft <= 7) {
-      note.classList.add('soon');
-      note.textContent += ' — export it first';
+  if (job.screenshot_url && (job.screenshot_expires_at || job.screenshot_reported === false)) {
+    if (!job.screenshot_expires_at) {
+      note.textContent = 'Screenshot saved · not yet reported';
+    } else {
+      const daysLeft = (new Date(job.screenshot_expires_at) - Date.now()) / 86400000;
+      note.textContent = `Reported · screenshot kept until ${fmt(job.screenshot_expires_at)}`;
+      if (daysLeft <= 7) {
+        note.classList.add('soon');
+        note.textContent += ' — export it first';
+      }
     }
+    // The saved file, served by the backend under /screenshots.
+    const view = document.createElement('a');
+    view.className = 'evidence-view';
+    view.href = `${BACKEND}${job.screenshot_url}`;
+    view.target = '_blank';
+    view.textContent = 'View';
+    view.addEventListener('click', (e) => e.stopPropagation()); // the row itself opens the ad
+    note.append(' · ', view);
     return note;
   }
   if (job.screenshot_taken_at) {

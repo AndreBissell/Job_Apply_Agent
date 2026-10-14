@@ -29,7 +29,9 @@ from app.api import paths
 from app.api.main import app, get_db
 from app.db import Base
 from app.llm import search_refine
-from app.models import CoverLetter, JobListing, JobSkill, Match, Profile, Skill
+from app.models import (
+    CoverLetter, EvidenceBundle, EvidenceBundleItem, JobListing, JobSkill, Match, Profile, Skill,
+)
 from app.preferences import set_preferences
 from app.screenshots import downscale_png, expire_screenshots
 
@@ -105,7 +107,7 @@ def _gone(db, model, pk) -> bool:
 
 
 def _match(db, title="Data Analyst", score=80, age=0, *, user=1, job=None, status="new",
-           applied_at=None, scored_at=None, screenshot=None, shot_age=None):
+           applied_at=None, scored_at=None, screenshot=None, shot_age=None, reported=False):
     if job is None:
         job = JobListing(
             source="seek", source_job_id=f"j{db.query(JobListing).count() + 1}",
@@ -121,6 +123,12 @@ def _match(db, title="Data Analyst", score=80, age=0, *, user=1, job=None, statu
     )
     db.add(m)
     db.commit()
+    if reported:  # its screenshot went into a Centrelink bundle
+        bundle = EvidenceBundle(user_id=user, filename=f"b{m.id}.pdf", job_count=1, size_bytes=1)
+        db.add(bundle)
+        db.flush()
+        db.add(EvidenceBundleItem(bundle_id=bundle.id, match_id=m.id))
+        db.commit()
     return m
 
 
@@ -433,7 +441,7 @@ class TestScreenshotExpiry:
         _profile(db)
         (shots / "a.png").write_bytes(b"png")
         m = _match(db, status="applied", applied_at=days_ago(40), age=40,
-                   screenshot="a.png", shot_age=40)
+                   screenshot="a.png", shot_age=40, reported=True)
         n = expire_screenshots(db, shots, NOW - timedelta(days=30))
         assert n == 1
         assert not (shots / "a.png").exists()
@@ -442,10 +450,21 @@ class TestScreenshotExpiry:
         assert m.screenshot_taken_at is not None  # "captured, since expired"
         assert m.status == "applied" and m.applied_at is not None
 
+    def test_an_unreported_screenshot_never_expires(self, db, shots):
+        """Not yet in a Centrelink bundle = the only copy of evidence still to report."""
+        _profile(db)
+        (shots / "u.png").write_bytes(b"png")
+        m = _match(db, status="applied", applied_at=days_ago(400), age=400,
+                   screenshot="u.png", shot_age=400)
+        assert expire_screenshots(db, shots, NOW - timedelta(days=30)) == 0
+        assert (shots / "u.png").exists()
+        db.refresh(m)
+        assert m.screenshot_path is not None
+
     def test_screenshot_inside_the_ttl_is_kept(self, db, shots):
         _profile(db)
         (shots / "b.png").write_bytes(b"png")
-        m = _match(db, screenshot="b.png", shot_age=10)
+        m = _match(db, screenshot="b.png", shot_age=10, reported=True)
         assert expire_screenshots(db, shots, NOW - timedelta(days=30)) == 0
         assert (shots / "b.png").exists()
         db.refresh(m)
@@ -453,15 +472,28 @@ class TestScreenshotExpiry:
 
     def test_a_missing_file_does_not_break_the_sweep(self, db, shots):
         _profile(db)
-        _match(db, screenshot="ghost.png", shot_age=90)
+        _match(db, screenshot="ghost.png", shot_age=90, reported=True)
         assert expire_screenshots(db, shots, NOW - timedelta(days=30)) == 1
+
+    def test_month_folder_files_expire_and_the_empty_folder_goes(self, db, shots):
+        _profile(db)
+        month = shots / "evidence" / "2026-05"
+        month.mkdir(parents=True)
+        (month / "0900_01-05-2026_Acme.png").write_bytes(b"png")
+        _match(db, screenshot="evidence/2026-05/0900_01-05-2026_Acme.png", shot_age=160, reported=True)
+        assert expire_screenshots(db, shots, NOW - timedelta(days=150)) == 1
+        assert not month.exists()
+        assert (shots / "evidence").is_dir()
 
     def test_sweep_expires_screenshots_using_the_configured_ttl(self, db, shots):
         _profile(db, screenshot_ttl_days=5)
         (shots / "c.png").write_bytes(b"png")
-        _match(db, screenshot="c.png", shot_age=6)
+        _match(db, screenshot="c.png", shot_age=6, reported=True)
         result = retention.run_sweep(db, 1, shots, NOW)
         assert result.screenshots_expired == 1
+
+    def test_default_window_is_about_five_months(self):
+        assert retention.screenshot_ttl_days({}) == 150
 
 
 def _png(width: int, height: int = 100) -> bytes:
@@ -494,7 +526,7 @@ class TestDownscale:
             json={"data_url": "data:image/png;base64," + base64.b64encode(big).decode()},
         )
         assert res.status_code == 200
-        stored = next(shots.iterdir()).read_bytes()
+        stored = next(shots.rglob("*.png")).read_bytes()
         assert Image.open(io.BytesIO(stored)).width == 1200
 
 
@@ -554,11 +586,22 @@ class TestEvidenceExport:
     def test_jobs_endpoint_reports_when_the_screenshot_expires(self, client, db, shots):
         _profile(db)
         (shots / "x.png").write_bytes(b"png")
-        _match(db, status="applied", applied_at=days_ago(1), screenshot="x.png", shot_age=1)
+        _match(db, status="applied", applied_at=days_ago(1), screenshot="x.png", shot_age=1,
+               reported=True)
         job = client.get("/jobs?profile_id=1&status=applied").json()[0]
         taken = retention.utc(datetime.fromisoformat(job["screenshot_taken_at"]))
         expires = retention.utc(datetime.fromisoformat(job["screenshot_expires_at"]))
-        assert (expires - taken).days == 30
+        assert (expires - taken).days == 150
+        assert job["screenshot_reported"] is True
+
+    def test_an_unreported_screenshot_has_no_expiry_date(self, client, db, shots):
+        _profile(db)
+        (shots / "y.png").write_bytes(b"png")
+        _match(db, status="applied", applied_at=days_ago(1), screenshot="y.png", shot_age=1)
+        job = client.get("/jobs?profile_id=1&status=applied").json()[0]
+        assert job["screenshot_url"] == "/screenshots/y.png"
+        assert job["screenshot_reported"] is False
+        assert job["screenshot_expires_at"] is None
 
 
 # --------------------------------------------------------------------------

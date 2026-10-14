@@ -70,13 +70,15 @@ let ovSeq = 0;         // drops a slow response that a newer load has overtaken
 
 async function loadOverview() {
   const seq = ++ovSeq;
-  let obligation, ready, suggestions;
+  let obligation, ready, suggestions, evidence;
   try {
-    [obligation, ready, suggestions] = await Promise.all([
+    [obligation, ready, suggestions, evidence] = await Promise.all([
       getJson(`${BACKEND}/obligation?profile_id=${PROFILE_ID}`),
       getJson(`${BACKEND}/jobs?profile_id=${PROFILE_ID}&ready=true&limit=200`),
       // A nicety: the rest of the tab still works without it.
       getJson(`${BACKEND}/jobs/suggested-searches?profile_id=${PROFILE_ID}`).catch(() => null),
+      // So is this (an older backend has no /evidence/status).
+      getJson(`${BACKEND}/evidence/status?profile_id=${PROFILE_ID}`).catch(() => null),
     ]);
   } catch {
     if (seq !== ovSeq) return;
@@ -87,6 +89,7 @@ async function loadOverview() {
   ovStatusEl.textContent = '';
   ovData = obligation;
   if (!ovEditing) renderProgress();
+  renderEvidence(evidence);
   // A letter being rewritten, or paused on a question, isn't ready to send yet.
   renderReady(ready.filter(job => coverLetterState(job) === 'ready'));
   renderSuggestions(suggestions);
@@ -146,6 +149,160 @@ function renderProgress() {
     waiting.title = 'Open the Jobs tab, where the questions are';
     waiting.addEventListener('click', () => showTab('jobs'));
     el.appendChild(waiting);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Centrelink evidence card: Centrelink takes one file per upload (under 3 MB) and asks how
+// many applications it covers. Quick Apply screenshots wait here as "not yet reported"
+// until Collate turns them into one PDF (GET/POST /evidence/..., app/api/evidence.py),
+// saved in the app's centrelink_ready folder and downloaded. Plain code, no AI.
+// ---------------------------------------------------------------------------
+const ovEvidenceEl = document.getElementById('ov-evidence');
+let evMessage = null; // {text, err}: the last collate/undo result, kept across reloads
+let evBusy = false;
+let evArmed = null;   // {id, timer}: the bundle whose Undo is waiting for its second click
+
+function fmtBytes(n) {
+  return n >= 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1e3))} KB`;
+}
+
+function renderEvidence(status) {
+  const el = ovEvidenceEl;
+  el.innerHTML = '';
+  if (!status) return; // no backend support: the card stays hidden (.ov-card:empty)
+  el.appendChild(mk('h3', null, 'Centrelink evidence'));
+
+  const n = status.unreported;
+  const count = mk('div', n ? 'ev-count' : 'ev-count done');
+  if (n) {
+    count.append(mk('span', 'big', String(n)),
+      mk('span', null, `Quick Apply ${n === 1 ? 'application' : 'applications'} not yet reported`));
+    count.title = status.jobs.map(j => [j.title, j.company].filter(Boolean).join(' — ')).join('\n');
+  } else {
+    count.textContent = status.bundles.length
+      ? 'All Quick Apply applications reported ✓'
+      : 'Quick Apply screenshots collect here until you report them.';
+  }
+  el.appendChild(count);
+
+  if (status.missing_files) {
+    el.appendChild(mk('div', 'ev-warn',
+      `${plural(status.missing_files, 'screenshot')} missing from the folder, so not included.`));
+  }
+
+  const btn = mk('button', 'ev-collate', evBusy ? 'Making the PDF…'
+    : n ? `📄 Collate ${plural(n, 'screenshot')} into a PDF` : '📄 Collate evidence PDF');
+  btn.disabled = !n || evBusy;
+  btn.title = `Saved in ${status.folder} and downloaded, ready to upload to Centrelink`;
+  btn.addEventListener('click', () => collateEvidence(btn));
+  el.appendChild(btn);
+
+  if (evMessage) el.appendChild(mk('div', evMessage.err ? 'ev-msg err' : 'ev-msg', evMessage.text));
+
+  if (status.bundles.length) {
+    const list = mk('div', 'ev-list');
+    list.appendChild(mk('div', 'ev-list-head', 'Recent PDFs'));
+    for (const b of status.bundles.slice(0, 5)) list.appendChild(renderBundleRow(b));
+    el.appendChild(list);
+  }
+}
+
+function renderBundleRow(b) {
+  const row = mk('div', 'ev-row');
+  const name = mk('span', 'ev-name', b.filename);
+  name.title = b.filename;
+  row.append(name, mk('span', 'ev-meta', `${plural(b.job_count, 'job')} · ${fmtBytes(b.size_bytes)}`));
+
+  const dl = mk('button', null, 'Download');
+  dl.disabled = !b.on_disk;
+  dl.title = b.on_disk ? 'Download this PDF again' : 'The file is no longer in the folder';
+  dl.addEventListener('click', async () => {
+    dl.disabled = true;
+    try { await downloadBundle(b); } catch { evMessage = { text: 'Could not download the PDF.', err: true }; loadOverview(); }
+    dl.disabled = false;
+  });
+
+  // Two clicks: Undo deletes the PDF and puts its applications back as unreported. The
+  // first click's "Sure?" is kept in evArmed, not on the button, so a live reload of the
+  // card (one per scanned job during a scan) doesn't reset it between the two clicks.
+  const undo = mk('button', 'ev-undo', 'Undo');
+  undo.title = `Delete this PDF and put its ${plural(b.job_count, 'application')} back as not yet reported`;
+  const paintArmed = () => {
+    const on = evArmed && evArmed.id === b.id;
+    undo.classList.toggle('confirm', !!on);
+    undo.textContent = on ? 'Sure?' : 'Undo';
+  };
+  paintArmed();
+  undo.addEventListener('click', async () => {
+    if (!(evArmed && evArmed.id === b.id)) {
+      if (evArmed) clearTimeout(evArmed.timer);
+      evArmed = { id: b.id, timer: setTimeout(disarmUndo, 4000) };
+      paintArmed();
+      return;
+    }
+    clearTimeout(evArmed.timer);
+    evArmed = null;
+    undo.disabled = true;
+    try {
+      const res = await fetch(`${BACKEND}/evidence/bundles/${b.id}?profile_id=${PROFILE_ID}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      evMessage = { text: `Undone: ${b.filename} deleted, ${plural(b.job_count, 'application')} back to not yet reported.` };
+    } catch {
+      evMessage = { text: 'Could not undo — is the backend running?', err: true };
+    }
+    loadOverview();
+  });
+  row.append(dl, undo);
+  return row;
+}
+
+// The 4 s "Sure?" ran out: repaint whichever Undo buttons the card holds now.
+function disarmUndo() {
+  evArmed = null;
+  for (const btn of ovEvidenceEl.querySelectorAll('.ev-undo')) {
+    btn.classList.remove('confirm');
+    btn.textContent = 'Undo';
+  }
+}
+
+async function downloadBundle(b) {
+  const res = await fetch(`${BACKEND}${b.download_url}?profile_id=${PROFILE_ID}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = b.filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function collateEvidence(btn) {
+  evBusy = true;
+  btn.disabled = true;
+  btn.textContent = 'Making the PDF…';
+  try {
+    const res = await fetch(`${BACKEND}/evidence/bundles?profile_id=${PROFILE_ID}`, { method: 'POST' });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
+    const { bundles } = await res.json();
+    try {
+      for (const b of bundles) await downloadBundle(b);
+    } catch {
+      evMessage = { text: 'The PDF is saved in the app, but the download failed: press Download below.', err: true };
+      return;
+    }
+    evMessage = {
+      text: bundles.length === 1
+        ? `Saved ${bundles[0].filename} (${fmtBytes(bundles[0].size_bytes)}) to Downloads and the app. `
+          + `Upload it to Centrelink and enter ${bundles[0].job_count} as the number of applications.`
+        : `Too big for one upload, so it was split into ${bundles.length} PDFs (in Downloads and the app): `
+          + bundles.map(b => `${b.filename} = ${plural(b.job_count, 'application')}`).join('; ') + '.',
+    };
+  } catch (err) {
+    evMessage = { text: `Could not make the PDF: ${err.message}`, err: true };
+  } finally {
+    evBusy = false;
+    loadOverview();
   }
 }
 
@@ -490,6 +647,8 @@ function renderPeriodJob(job) {
   const main = mk('div', 'pj-main');
   main.appendChild(mk('div', 'pj-title', job.title || '(untitled)'));
   const meta = [job.company, `Applied ${fmtDay(localDay(job.applied_at))}`];
+  // Recorded by the extension on Seek's "application sent" page, not by a click.
+  if (job.applied_via === 'auto') meta.push('recorded from Seek');
   if (job.cost_usd != null) meta.push(`≈ US$${job.cost_usd.toFixed(2)}`);
   main.appendChild(mk('div', 'pj-meta', meta.filter(Boolean).join(' · ')));
   const evidence = evidenceNote(job);
@@ -574,7 +733,8 @@ async function toggleInterview(job, btn) {
 
 // CSV for Centrelink: one row per application (the same columns as before the periods).
 function appliedCsv(jobs) {
-  const rows = [['Date Applied', 'Job Title', 'Employer', 'Location', 'Source URL', 'Screenshot Evidence']];
+  const rows = [['Date Applied', 'Job Title', 'Employer', 'Location', 'Source URL', 'Screenshot Evidence',
+    'Recorded']];
   for (const job of jobs) {
     rows.push([
       job.applied_at ? localDay(job.applied_at) : '',
@@ -585,6 +745,8 @@ function appliedCsv(jobs) {
       // taken_at outlives the file, so distinguish expired from never-captured.
       job.screenshot_url ? job.screenshot_taken_at.slice(0, 10)
         : job.screenshot_taken_at ? `${job.screenshot_taken_at.slice(0, 10)} (file expired)` : 'No',
+      // Same wording as the evidence zip's CSV (app/api/evidence.py _RECORDED).
+      { auto: 'Seek confirmation page', manual: 'Marked by hand' }[job.applied_via] || '',
     ]);
   }
   return rows.map(r => r.map(csvEscape).join(',')).join('\r\n');

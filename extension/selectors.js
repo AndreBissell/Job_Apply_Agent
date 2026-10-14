@@ -32,6 +32,11 @@ const SELECTORS = {
   DETAIL_COMPANY:   '[data-automation="advertiser-name"]',
   DETAIL_LOCATION:  '[data-automation="job-detail-location"]',
   DETAIL_WORK_TYPE: '[data-automation="job-detail-work-type"]',
+  // The detail page's Apply button. Seen on two real ads 2026-10-14
+  // (docs/quick-apply-samples.md, "Apply button and confirmation page"): the SAME <a>, href
+  // (/job/{id}/apply?sol=...) and target for Quick Apply and external ads. Only the text
+  // differs ("Quick apply" vs "Apply"), so detectApplyType reads the text.
+  DETAIL_APPLY_BUTTON: 'a[data-automation="job-detail-apply"]',
 
   // Quick Apply "Answer employer questions" step (/job/{id}/apply/role-requirements).
   // Settled from 5 outerHTML samples the user copied from their own browser
@@ -45,7 +50,23 @@ const SELECTORS = {
   QUESTION_NAME_PREFIX: 'questionnaire.',
   // Seek's own session-replay mask (the user's name in the header): never read.
   PERSONAL_DATA_MASK:   '[data-adora-mask]',
+  // Quick Apply's "application sent" page (/job/{id}/apply/success). A hand-written id,
+  // seen 2026-10-14. Its TEXT holds the user's first name ("Nice work, Andre"): only
+  // its presence is ever checked, never its text.
+  APPLY_SENT_HEADING:   'h1#applicationSent',
 };
+
+// The Apply button's text, lower-cased, per apply type. Anything else is unknown (null),
+// which every feature treats like an external ad: manual Mark Applied only.
+const APPLY_BUTTON_TEXT = { 'quick apply': 'quick', 'apply': 'external' };
+
+// 'quick' | 'external' | null for the detail page under `root`. Reads only the button's
+// visible text (the external one adds an icon, which has no text).
+function detectApplyType(root = document) {
+  const btn = root.querySelector(SELECTORS.DETAIL_APPLY_BUTTON);
+  const text = (btn && btn.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  return APPLY_BUTTON_TEXT[text] || null;
+}
 
 // Extract the Seek numeric job id from a /job/{id} href or path.
 function extractJobId(href) {
@@ -57,5 +78,13 @@ function extractJobId(href) {
 // the URL only; the questions markup doesn't carry it.
 function extractApplyJobId(path) {
   const match = path && path.match(/^\/job\/(\d+)\/apply(?:\/|$)/);
+  return match ? match[1] : null;
+}
+
+// The job id of Quick Apply's "application sent" page (/job/{id}/apply/success), else
+// null. NOT proof on its own: apply_flow.js also needs SELECTORS.APPLY_SENT_HEADING.
+// (/job/{id}/apply alone proves nothing: external ads' Apply buttons go there too.)
+function extractApplySentJobId(path) {
+  const match = path && path.match(/^\/job\/(\d+)\/apply\/success\/?$/);
   return match ? match[1] : null;
 }

@@ -97,7 +97,7 @@ DEFAULTS: dict = {
     # to its default rather than breaking the sweep).
     "retention_window_days": 122,
     "retention_floor_matches": 150,
-    "screenshot_ttl_days": 30,
+    "screenshot_ttl_days": 150,
     "stale_profile_weight": 0.35,
     # ISO timestamp of the last completed sweep; written by the sweep itself.
     "retention_last_run": None,

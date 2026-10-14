@@ -109,7 +109,7 @@ paused. The daily / total caps `llm_daily_budget_usd` ($5) and `llm_total_budget
 ($200) are read by the budget guard in `app/llm/client.py`.
 Retention keys (validated on read in `app/retention.py`; bad values fall back
 to the default): `retention_window_days` (122), `retention_floor_matches`
-(150), `screenshot_ttl_days` (30), `stale_profile_weight` (0.35), plus
+(150), `screenshot_ttl_days` (150), `stale_profile_weight` (0.35), plus
 `retention_last_run`, an ISO timestamp the sweep writes itself.
 
 `profile_revised_at` exists because the miner derives "when did the profile
@@ -361,6 +361,7 @@ CREATE TABLE job_listings (
     last_seen_live_at           TIMESTAMPTZ,            -- last time the ad was seen live (capture with its page open, or a re-check that found the description); defaults to creation
     availability_checked_at     TIMESTAMPTZ,            -- last background re-check verdict of any kind (drives "due" and the daily cap)
     availability_misses         INTEGER NOT NULL DEFAULT 0, -- consecutive "description gone" verdicts; 2 flag the job
+    apply_type                  TEXT,                   -- 'quick' (Seek's Quick Apply) | 'external' (employer's site); NULL = not known yet (see below)
     date_scraped                TIMESTAMPTZ NOT NULL DEFAULT now(),
     created_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (source, source_job_id)                      -- dedup key
@@ -436,6 +437,16 @@ reasons: the ORM defaults it to creation time, and the migration backfilled it f
 for every row with a description. A user-initiated Regenerate and the Scan's own quick screen are
 not gated.
 
+**How the ad takes applications (`apply_type`, migration `c4e8a2f6b913`).** Read from the detail
+page's Apply button (`a[data-automation="job-detail-apply"]`) by the content script and by the
+scan: text "Quick apply" = `'quick'`, "Apply" = `'external'`, anything else = NULL. The button's
+`href` can't tell them apart (both are `/job/{id}/apply?sol=...`; samples in
+docs/quick-apply-samples.md). `POST /ingest` stores the latest non-NULL reading; a capture that
+couldn't read the button never erases one. `POST /jobs/{id}/quick-apply-sent` sets `'quick'`
+(Seek's own "application sent" page is proof). NULL is treated like `'external'`: manual Mark
+Applied only. A stub row created from a Quick Apply page (placeholder title) takes the ad page's
+title the first time a capture with a description arrives.
+
 ---
 
 ### job_skills
@@ -486,6 +497,14 @@ same `applied_at IS NOT NULL` rule, and so does the `GET /jobs?status=applied` f
 `force=True`, e.g. Regenerate) updates the score but never changes `status`; only a
 new row starts at `'new'`.
 
+`applied_via` says how `applied_at` was recorded, and is set with it (never changed after):
+`'auto'` when the extension saw Seek's Quick Apply "application sent" page
+(`/job/{id}/apply/success` with `h1#applicationSent`; `POST /jobs/{id}/quick-apply-sent`,
+extension/apply_flow.js), `'manual'` when the user pressed Mark Applied. That endpoint creates
+the match if the job was never scored (score NULL, status `'applied'`): the application counts
+either way, and the idle loop never scores a job that already has a match, so it costs no AI
+call. The Applied tab shows "recorded from Seek", and both CSVs have a `Recorded` column.
+
 `interview_at` records that an application got an interview (the Applied tab's
 "+ Interview", `PATCH /jobs/{id}/interview`, only for an applied match; clicking
 again clears it). It deliberately does **not** move `status` to
@@ -493,13 +512,16 @@ again clears it). It deliberately does **not** move `status` to
 `applied_at`, so it stays in the `GET /jobs?status=applied` list either way.
 
 `screenshot_path`/`screenshot_taken_at` are further Centrelink evidence: a
-screenshot of the actual applied-to page, captured client-side by the extension
-(`chrome.tabs.captureVisibleTab`) and persisted server-side via
-`POST /jobs/{id}/screenshot` so it's durable and exportable rather than living
-only in the user's Downloads folder. `screenshot_path` is relative to the app
-directory, served under `/screenshots`; a repeat capture deletes the previous
+screenshot of Seek's "application sent" page, taken automatically by the extension
+(`chrome.tabs.captureVisibleTab`, extension/apply_flow.js; Retake on its panel) right after
+it records a Quick Apply, and persisted via `POST /jobs/{id}/screenshot`. Since 2026-10-14
+there is no Downloads copy and no screenshot from the ad page or from Mark Applied; external
+applications have none. `screenshot_path` is relative to the app
+directory, served under `/screenshots`: `screenshots/evidence/<YYYY-MM>/<HHMM>_<DD-MM-YYYY>_<Company>.png`
+since 2026-10-14 (older rows: `screenshots/<name>.png`, still valid); a repeat capture deletes the previous
 file and overwrites both columns - one screenshot per match, latest wins, not a
-history of every capture.
+history of every capture. Whether it has been reported to Centrelink lives in
+`evidence_bundle_items` (below), not on the match.
 
 `hidden_at` is a **soft delete**, and the reason it is soft matters. The
 sidebar's bulk "hide jobs below score" action (`DELETE /jobs?below_score=`)
@@ -553,8 +575,10 @@ coexist: the sweep deletes hidden and visible matches alike.
 - Batched (500/run); a full batch leaves the sweep un-stamped so the next
   loop iteration continues the backlog instead of waiting a day.
 
-**Screenshots** expire on a shorter clock: the *file* is deleted
-`screenshot_ttl_days` (30) after `screenshot_taken_at` and `screenshot_path`
+**Screenshots** expire on their own clock: the *file* is deleted
+`screenshot_ttl_days` (150, ~5 months; 30 before 2026-10-14) after `screenshot_taken_at`,
+**but only once it is in a Centrelink bundle** (an unreported screenshot is the only copy of
+evidence still to report, so it never expires), and `screenshot_path`
 is nulled, but `screenshot_taken_at` is **kept** - "path NULL, taken_at set"
 means "captured, since expired", so the Applied tab and exports still record
 that evidence once existed. The match row and `applied_at` are never touched.
@@ -588,6 +612,7 @@ CREATE TABLE matches (
     screenshot_path      TEXT,                        -- relative path under /screenshots (NULL = none captured)
     screenshot_taken_at  TIMESTAMPTZ,                 -- set on each (re)capture
     applied_at           TIMESTAMPTZ,                 -- set once, on first transition to 'applied'
+    applied_via          TEXT,                        -- how applied_at was recorded: 'auto' | 'manual'; NULL = before c4e8a2f6b913
     interview_at         TIMESTAMPTZ,                 -- an interview recorded for this application; status unchanged
     scored_at            TIMESTAMPTZ,                 -- when score was last written; NULL = read as created_at
     hidden_at            TIMESTAMPTZ,                 -- soft delete; NULL = visible. Kept so the score still feeds the suggestion baseline
@@ -600,6 +625,38 @@ CREATE TABLE matches (
 
 On a re-scrape, an existing `(user_id, job_id)` row is **updated**, not
 duplicated.
+
+---
+
+### evidence_bundles / evidence_bundle_items
+
+Centrelink takes one file per upload (under 3 MB) and asks how many applications it covers.
+"Collate" on the Overview (`POST /evidence/bundles`, app/api/evidence.py + app/evidence_pdf.py,
+no LLM) puts every **unreported** Quick Apply screenshot into a PDF, one captioned page each,
+saved as `<screenshots folder>/centrelink_ready/<filename>` (kept forever) and downloaded.
+Unreported = `applied_at` set, `screenshot_path` set, and no `evidence_bundle_items` row. Undo
+(`DELETE /evidence/bundles/{id}`) deletes the PDF and the bundle; its items cascade, so those
+applications are unreported again. A separate table rather than a column on `matches` so the
+migration (`d8f3b6a1c527`) never rebuilds `matches` on SQLite.
+
+```sql
+CREATE TABLE evidence_bundles (
+    id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    user_id     BIGINT      NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    filename    TEXT        NOT NULL,   -- (time)_(date)_(n)_jobs.pdf, e.g. 1312_14-10-2026_5_jobs.pdf
+    job_count   INTEGER     NOT NULL,
+    size_bytes  INTEGER     NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE evidence_bundle_items (
+    id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    bundle_id  BIGINT NOT NULL REFERENCES evidence_bundles(id) ON DELETE CASCADE,
+    match_id   BIGINT NOT NULL REFERENCES matches(id)          ON DELETE CASCADE,
+    UNIQUE (match_id)                    -- an application is reported once
+);
+CREATE INDEX idx_evidence_bundle_items_bundle ON evidence_bundle_items (bundle_id);
+```
 
 ---
 

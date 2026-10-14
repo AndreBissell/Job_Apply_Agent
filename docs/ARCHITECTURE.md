@@ -426,7 +426,7 @@ Descriptions come from reading each file's header docstring and, for the central
 | `idle_loop.py` | `_processing_idle_loop` (retention, letters, quick screen, extract + match), `_letters_phase` and their helpers (`_match_attempt`, `_retention_tick`, `_recover_orphaned_runs`, `_raw_relevance_score`). |
 | `health.py` | `GET /health` and `GET /llm/usage`. |
 | `ingest.py` | `POST /ingest`. |
-| `evidence.py` | `GET /jobs/evidence-export` and `POST /jobs/{id}/screenshot`. |
+| `evidence.py` | `GET /jobs/evidence-export`, `POST /jobs/{id}/screenshot`, and the Centrelink PDF bundles (`/evidence/status`, `/evidence/bundles`, download, undo). |
 | `search.py` | `GET /jobs/search-performance` and `GET /jobs/suggested-searches`. |
 | `job_actions.py` | The job write endpoints: quick screen, status, expired, cover letter, regenerate, bulk hide, delete. |
 | `jobs.py` | The job read endpoints: known-ids, pending-count, by-source-id, `GET /jobs`, `GET /jobs/{job_id}` (which must stay last). |
@@ -497,7 +497,8 @@ Descriptions come from reading each file's header docstring and, for the central
 |---|---|
 | `preferences.py` | Settings stored as JSON in `profiles.preferences`: defaults, bounds, and typed getters (`letter_settings`, `obligation_settings`). |
 | `retention.py` | Deletes old unapplied matches (age-based, never score-based) and shapes the data the search miner uses. Applied matches are never purged. |
-| `screenshots.py` | Downscales and expires screenshot evidence files. |
+| `screenshots.py` | Where screenshot evidence files go (`evidence/<YYYY-MM>/`), downscaling, and expiry (never before they are reported). |
+| `evidence_pdf.py` | Builds the Centrelink upload PDFs from screenshots: a caption per page, kept under 3 MB. Pure Pillow, no DB, no LLM. |
 | `search_suggest.py` | Mines "what to search next" from your score history, no AI. |
 | `gaps.py` | Remembered "no" answers and the to-work-on list. |
 | `obligation.py` | Centrelink period date maths. Pure functions, no DB. |
@@ -506,7 +507,8 @@ Descriptions come from reading each file's header docstring and, for the central
 
 | File | Responsibility |
 |---|---|
-| `manifest.json` | Declares permissions, which sites the content scripts run on (`au.seek.com`, `www.seek.com.au`), and which localhost ports are reachable. |
+| `manifest.json` | Declares permissions, which sites the content scripts run on (`au.seek.com`, `www.seek.com.au`), and which localhost ports are reachable. `<all_urls>` (2026-10-14) is there only so `captureVisibleTab` can take the Quick Apply screenshot (tests/test_extension_permissions.py). |
+| `apply_flow.js` | Content script, loaded before `content_script.js`. On Quick Apply's "application sent" page it records the application (`POST /jobs/{id}/quick-apply-sent`) and saves a screenshot of the page in the app. |
 | `config.js` | Picks backend URL (real:8000 or test:8001) from `chrome.storage.local`; loaded first everywhere. |
 | `selectors.js` | The CSS selectors for Seek's page elements (must be kept in sync with `app/scraper/selectors.py`). |
 | `content_script.js` | Runs on Seek pages. `parseSearchPage` / `parseDetailPage` read the DOM, `ingest` sends data, `maybeInjectQuickApply` shows the letter panel, `parseQuestionnaire` captures Quick Apply questions, `main` is the page-type router. |
@@ -591,7 +593,7 @@ Also: `PROGRESS.md`, `CLAUDE.md`, `README.md` change in nearly every commit (exc
 
 **B1: You open a Seek search results page.**
 
-6. **`extension/manifest.json`** injects `config.js`, `selectors.js`, `screening_assist.js`, `content_script.js` into the page. `config.js` resolves `BACKEND` (real = `http://localhost:8000`) from `chrome.storage.local`. Then `backendReady.then(main)`.
+6. **`extension/manifest.json`** injects `config.js`, `selectors.js`, `screening_assist.js`, `apply_flow.js`, `content_script.js` into the page. `config.js` resolves `BACKEND` (real = `http://localhost:8000`) from `chrome.storage.local`. Then `backendReady.then(main)`.
 7. **`content_script.js::main`**: the path contains `-jobs`, so it treats the page as a search page and calls `waitFor(parseSearchPage, SELECTORS.JOB_CARD, 8000)`. This polls every 400 ms for up to 8 s, because Seek renders with React and the cards may not exist yet.
 8. **`content_script.js::parseSearchPage`** `[no AI]`: for every `[data-testid="job-card"]` it reads title, link, company, location, work type, salary, plus `discovered_query` from the URL (`currentSearchQuery`). No description yet (`raw_description: null`).
 9. **`content_script.js::ingest`** -> **`backendFetch`** -> `chrome.runtime.sendMessage({type: 'BACKEND_FETCH'})` -> **`extension/background.js`** (the `onMessage` listener). That listener only allows `http://localhost|127.0.0.1` on ports 8000/8001, then performs the `fetch`. This detour exists because Chrome blocks a public page from calling localhost directly.

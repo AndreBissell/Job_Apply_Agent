@@ -10,7 +10,8 @@
     "http://localhost:8000/*",
     "http://127.0.0.1:8000/*",
     "http://localhost:8001/*",
-    "http://127.0.0.1:8001/*"
+    "http://127.0.0.1:8001/*",
+    "<all_urls>"
   ],
   "background": {
     "service_worker": "background.js"
@@ -18,7 +19,7 @@
   "content_scripts": [
     {
       "matches": ["https://au.seek.com/*", "https://www.seek.com.au/*"],
-      "js": ["config.js", "selectors.js", "screening_assist.js", "content_script.js"],
+      "js": ["config.js", "selectors.js", "screening_assist.js", "apply_flow.js", "content_script.js"],
       "run_at": "document_idle"
     }
   ],

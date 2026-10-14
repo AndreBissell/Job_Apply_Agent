@@ -173,6 +173,21 @@ job will tell.
    by question id + option value (values repeat across questions in S5); trim labels; skip
    empty-value placeholder options; never read `checked`, `selected` or typed values.
 
+## Apply button and confirmation page (2026-10-14)
+
+Collected for docs/centrelink-ease-apply-plan.md (Quick Apply detection, auto-register,
+screenshot). Scrubbed copies, used by the tests: `tests/fixtures/apply_flow_samples.json`.
+
+| What | Seen | Notes |
+|---|---|---|
+| Detail-page Apply button, Quick Apply ad | `<a href="/job/{id}/apply?sol=…" data-automation="job-detail-apply" aria-label="Apply for <title> at <employer>" target="_blank">` … `Quick apply` | Opens the apply flow in a **new tab** |
+| Detail-page Apply button, external ad | the **same** `<a>`, href shape, target and aria-label pattern; text `Apply` + an aria-hidden "opens elsewhere" SVG | Clicking goes to the employer's own site (user, 2026-10-14). **The `href` can't tell the two apart; only the text can** |
+| Review step URL | `/job/{id}/apply/review?sol=…` | |
+| After Submit | `/job/{id}/apply/success?sol=…` (the path changes); tab title `Application sent \| SEEK` | |
+| Confirmation heading | `<h1 id="applicationSent">` (hand-written id) | Text varies ("Nice work, <first name>", "Keep it up, <first name>"): **personal, never read** |
+| Employer line | `<span>Your application has been sent to <employer></span>` beside the heading | Used only for a never-captured job's stub |
+| Below | "You might also like…" list of other jobs | Never read or followed |
+
 ## Still unknown (none blocks 9a)
 
 - The rest of S2's languages list and anything after it.

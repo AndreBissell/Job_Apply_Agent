@@ -80,6 +80,11 @@ and a live page seen in the same session each time, so a blocked or logged-out b
 anything. Applied jobs are never re-checked or flagged. The same freshness (`FRESH_FOR`, 24h)
 gates all LLM work: no matching, ranking or letter for a job not seen live recently.
 
+Extension permissions (2026-10-14): the manifest has `<all_urls>` ONLY so `captureVisibleTab` can
+screenshot Seek's Quick Apply "application sent" page automatically. It changes no Seek traffic:
+content scripts still match Seek only and the extension makes no request it didn't make before.
+Don't use the grant for anything else; tests/test_extension_permissions.py pins this.
+
 Why this is defensible at this volume: it runs in the user's real browser/session
 for their own personal job search, opens a handful of listings the user could have
 clicked themselves, spaced like normal browsing. It is low-volume, non-commercial, and
@@ -190,6 +195,7 @@ job-app-assistant/
       worker.py        # the ONE background worker thread + _process_listing
       idle_loop.py     # the idle loop, the letters phase and their helpers
       health.py ingest.py evidence.py search.py job_actions.py jobs.py profile.py   # routers
+      (app/evidence_pdf.py: the Centrelink upload PDFs; app/screenshots.py: evidence file layout)
       letters.py obligation.py profile_ui.py screening.py origin_guard.py          # (older routers)
       Patch the module that OWNS a name (worker._bg_executor, idle_loop._letters_phase, ...), never main;
       main re-exports only app and get_db. GET /jobs/{job_id} (jobs.py) must be matched after every other
@@ -204,6 +210,7 @@ job-app-assistant/
     scraper/           # RETAINED but not in the active pipeline (selector logic reused)
   extension/           # Manifest V3 Chrome extension
     content_script.js background.js popup.js config.js selectors.js screening_assist.js
+    apply_flow.js      # Quick Apply "application sent" page: auto-register + screenshot
     sidebar.html       # side panel; its <script> tags load the panel's CLASSIC scripts in order:
     sidebar_shared.js sidebar_jobs.js sidebar_letter_notes.js sidebar_letter_card.js
     sidebar_evidence.js sidebar_suggest.js sidebar_scan.js sidebar_personalise.js
@@ -521,14 +528,41 @@ never hits (cached_tokens 0); the writer still copies one stock line from the wr
 sample (future_work/voice-toggle-and-comparison.md).
 
 Parked fast-follows. Both need a live Seek session rather than guesswork:
-1. §5.2's apply-flow detection (see the extension-revamp entry below). Now also
-   the prerequisite for Phase 9 (live screening questions, plan §10.1).
+1. §5.2's apply-flow detection (see the extension-revamp entry below). The Apply button,
+   review step and "application sent" page are now settled from real samples and used by
+   Quick Apply evidence (2026-10-14, above); auto-FILLING Seek's form stays out of scope.
 2. Verify the classification capture added 2026-09-21. readJsonLdJobPosting()
    is the primary source and should work, but SELECTORS.DETAIL_CLASSIFICATION /
    DETAIL_SUBCLASSIFICATION (the fallback) are UNVERIFIED guesses. Open a real
    job page, check job_listings.classification is populated, and fix the
    selectors if the JSON-LD path ever stops covering it.
 
+
+🔄 BUILT, AWAITING THE USER'S LIVE CHECK: Quick Apply evidence — 2026-10-14 (branch `centrelink-ease-apply`)
+
+docs/centrelink-ease-apply-plan.md (design, samples, Decision log, live-check steps). The detail
+page's Apply button text sets `job_listings.apply_type` ("Quick apply" = quick, "Apply" = external,
+else NULL; the href is the SAME `/job/{id}/apply` for both, so the bare `/apply` URL is never proof).
+`extension/apply_flow.js`: on `/job/{id}/apply/success` with `h1#applicationSent` (its text greets
+the user by name: never read), `POST /jobs/{id}/quick-apply-sent` records `applied_at` with
+`matches.applied_via='auto'` (creating an unscored match if the job was never scored), then the page
+is screenshotted BEFORE the panel is drawn and stored in the app (no Downloads copy; Retake on the
+panel). Mark Applied records `'manual'` and takes no screenshot; external ads stay manual. Migration
+`c4e8a2f6b913`; SSE `job_applied`; `APP_SCREENSHOTS_DIR` moves the TEST screenshots folder only.
+The manifest now has `<all_urls>` (owner decision 2026-10-14) because Chrome refuses
+`captureVisibleTab` without it or a toolbar click: it is for the screenshot only, pinned by
+tests/test_extension_permissions.py (content scripts Seek-only, relay localhost-only). The old
+screenshot code had never had that permission, so it most likely never saved anything. LIVE CHECK
+PASSED 2026-10-14 (a real Quick Apply on REAL was recorded and screenshotted).
+Part 2, Centrelink-ready PDFs (2026-10-14, same plan doc): Centrelink takes one file (<3 MB) per
+upload, so the Overview's "Centrelink evidence" card collates every UNREPORTED Quick Apply screenshot
+into one PDF (captioned pages, Pillow, NO LLM), saved in `<screenshots>/centrelink_ready/
+(time)_(date)_(n)_jobs.pdf` (kept forever) and downloaded; two-click Undo. Screenshots are stored ONCE
+in `evidence/<YYYY-MM>/(time)_(date)_(company).png`; "reported" is the `evidence_bundle_items` table
+(migration `d8f3b6a1c527`), not a second folder. `screenshot_ttl_days` 30 -> 150, and an unreported
+screenshot never expires. Endpoints `/evidence/status|bundles|bundles/{id}/download`, SSE
+`evidence_changed`. 1655 tests; e2e `apply_sent_e2e.py` 51/51 (+ dashboard 92, sidebar_load 58).
+Part 2 NOT yet checked in the user's own Chrome.
 
 ✅ COMPLETED: Availability checks + freshness gate — 2026-10-13 (branch `centrelink-ease-apply`)
 

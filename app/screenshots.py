@@ -1,4 +1,4 @@
-"""Screenshot file handling: downscale on capture, expire after a fixed TTL.
+"""Screenshot file handling: where files go, downscale on capture, expire after a TTL.
 
 Screenshots are Centrelink evidence, so the rules are asymmetric on purpose:
 anything that could lose evidence errs toward *keeping the original bytes*
@@ -11,13 +11,14 @@ from __future__ import annotations
 
 import io
 import logging
+import re
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Match
+from app.models import EvidenceBundleItem, Match
 
 logger = logging.getLogger(__name__)
 
@@ -53,10 +54,57 @@ def downscale_png(png_bytes: bytes, max_width: int = MAX_WIDTH) -> bytes:
         return png_bytes
 
 
+# Every screenshot lives once, under evidence/<YYYY-MM>/ (the month it was taken, local
+# time), named <HHMM>_<DD-MM-YYYY>_<Company>.png. Older rows hold a bare
+# "screenshots/<name>.png" at the folder's top level; both forms resolve below.
+EVIDENCE_DIR = "evidence"
+
+
+def safe_name_part(text: str | None, max_len: int = 40) -> str:
+    """``text`` reduced to letters, digits and hyphens: safe in a file name on any OS,
+    in a URL, and on an upload form. "Acme Pty. Ltd." -> "Acme-Pty-Ltd"."""
+    cleaned = re.sub(r"[^A-Za-z0-9]+", "-", text or "").strip("-")
+    return cleaned[:max_len].rstrip("-")
+
+
+def evidence_relpath(taken_local: datetime, company: str | None, job_id: int) -> str:
+    """Where a new screenshot goes, relative to the screenshots folder (posix form)."""
+    name = safe_name_part(company) or f"job-{job_id}"
+    stamp = taken_local.strftime("%H%M_%d-%m-%Y")
+    return f"{EVIDENCE_DIR}/{taken_local:%Y-%m}/{stamp}_{name}.png"
+
+
+def screenshot_relpath(screenshot_path: str | None) -> str | None:
+    """``matches.screenshot_path`` ("screenshots/evidence/2026-10/x.png" or the older
+    "screenshots/x.png") as a path inside the screenshots folder, or None if it is empty
+    or tries to leave the folder."""
+    if not screenshot_path:
+        return None
+    parts = list(PurePosixPath(screenshot_path.replace("\\", "/")).parts)
+    if parts and parts[0] == "screenshots":
+        parts = parts[1:]
+    if not parts or any(p in ("", ".", "..", "/") or ":" in p for p in parts):
+        return None
+    return "/".join(parts)
+
+
+def screenshot_file(screenshots_dir: Path, screenshot_path: str | None) -> Path | None:
+    rel = screenshot_relpath(screenshot_path)
+    return screenshots_dir.joinpath(*rel.split("/")) if rel else None
+
+
 def unlink_screenshot(screenshots_dir: Path, screenshot_path: str | None) -> None:
-    """Remove one screenshot file. Uses only the basename, like the upload path."""
-    if screenshot_path:
-        (screenshots_dir / Path(screenshot_path).name).unlink(missing_ok=True)
+    """Remove one screenshot file (and its month folder, once empty)."""
+    path = screenshot_file(screenshots_dir, screenshot_path)
+    if path is None:
+        return
+    path.unlink(missing_ok=True)
+    month_dir = path.parent
+    if month_dir.parent.name == EVIDENCE_DIR and month_dir.parent.parent == screenshots_dir:
+        try:
+            month_dir.rmdir()  # only succeeds when empty
+        except OSError:
+            pass
 
 
 def expire_screenshots(
@@ -70,12 +118,15 @@ def expire_screenshots(
     match row and ``applied_at`` are never touched — the application record is
     permanent, only the image expires.
 
-    Applies to applied matches too; that is the whole point of the TTL.
+    A screenshot not yet in a Centrelink bundle (``evidence_bundle_items``) never
+    expires: it is the only copy of evidence the user still has to report.
     """
+    reported = select(EvidenceBundleItem.id).where(EvidenceBundleItem.match_id == Match.id)
     query = (
         select(Match)
         .where(Match.screenshot_path.isnot(None))
         .where(Match.screenshot_taken_at < cutoff)
+        .where(reported.exists())
     )
     if profile_id is not None:
         query = query.where(Match.user_id == profile_id)

@@ -174,6 +174,7 @@ def list_jobs(
     rows = db.execute(query.limit(limit).offset(offset)).all()
     ttl = timedelta(days=retention.screenshot_ttl_days(get_preferences(db, profile_id)))
     runs = letter_view.latest_runs(db, [match.id for match, _ in rows])
+    reported = retention.reported_match_ids(db, [match.id for match, _ in rows])
 
     return [
         {
@@ -187,8 +188,10 @@ def list_jobs(
             "gaps": _gaps_to_list(match.gaps),
             "status": match.status,
             "applied_at": match.applied_at.isoformat() if match.applied_at else None,
+            "applied_via": match.applied_via,
+            "apply_type": job.apply_type,
             "has_cover_letter": match.cover_letter is not None,
-            **retention.screenshot_fields(match, ttl),
+            **retention.screenshot_fields(match, ttl, match.id in reported),
             "extracted_at": job.extracted_at.isoformat() if job.extracted_at else None,
             "top_skills": [
                 js.name for js in job.job_skills if js.skill_type == "hard"
@@ -226,6 +229,7 @@ def get_job(job_id: int, profile_id: int = 1, db: Session = Depends(get_db)) -> 
         "subclassification": job.subclassification,
         "work_type": job.work_type,
         "salary": job.salary,
+        "apply_type": job.apply_type,
         "raw_description": job.raw_description,
         "eligibility_notes": _eligibility_notes(job),
         "date_scraped": job.date_scraped.isoformat() if job.date_scraped else None,
@@ -236,6 +240,7 @@ def get_job(job_id: int, profile_id: int = 1, db: Session = Depends(get_db)) -> 
                 "gaps": _gaps_to_list(match.gaps),
                 "status": match.status,
                 "applied_at": match.applied_at.isoformat() if match.applied_at else None,
+                "applied_via": match.applied_via,
             }
             if match is not None
             else None

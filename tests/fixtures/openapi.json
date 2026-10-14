@@ -325,6 +325,21 @@
    },
    "IngestListing": {
     "properties": {
+     "apply_type": {
+      "anyOf": [
+       {
+        "enum": [
+         "quick",
+         "external"
+        ],
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Apply Type"
+     },
      "classification": {
       "anyOf": [
        {
@@ -1389,6 +1404,201 @@
     "summary": "Sse Events"
    }
   },
+  "/evidence/bundles": {
+   "post": {
+    "description": "Collate every unreported Quick Apply screenshot into PDF(s) for Centrelink.\n\nUsually one PDF; more only when one would pass the 3 MB upload limit. Each is saved\nin ``centrelink_ready/`` and its applications count as reported from then on (their\nscreenshots stay in ``evidence/<month>/`` until the normal expiry). Undo is\n``DELETE /evidence/bundles/{id}``. No LLM call anywhere in this path.",
+    "operationId": "create_bundles_evidence_bundles_post",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "profile_id",
+      "required": false,
+      "schema": {
+       "default": 1,
+       "title": "Profile Id",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Create Bundles Evidence Bundles Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Create Bundles"
+   }
+  },
+  "/evidence/bundles/{bundle_id}": {
+   "delete": {
+    "description": "Undo a collate: delete the PDF and put its applications back as unreported.\n\nTheir screenshots were never moved, so nothing else changes.",
+    "operationId": "undo_bundle_evidence_bundles__bundle_id__delete",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "bundle_id",
+      "required": true,
+      "schema": {
+       "title": "Bundle Id",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "profile_id",
+      "required": false,
+      "schema": {
+       "default": 1,
+       "title": "Profile Id",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Undo Bundle Evidence Bundles  Bundle Id  Delete",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Undo Bundle"
+   }
+  },
+  "/evidence/bundles/{bundle_id}/download": {
+   "get": {
+    "operationId": "download_bundle_evidence_bundles__bundle_id__download_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "bundle_id",
+      "required": true,
+      "schema": {
+       "title": "Bundle Id",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "profile_id",
+      "required": false,
+      "schema": {
+       "default": 1,
+       "title": "Profile Id",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Download Bundle"
+   }
+  },
+  "/evidence/status": {
+   "get": {
+    "description": "What the Overview's Centrelink card shows: applications not yet reported, and\nthe most recent bundles (newest first).",
+    "operationId": "evidence_status_evidence_status_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "profile_id",
+      "required": false,
+      "schema": {
+       "default": 1,
+       "title": "Profile Id",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 10,
+       "title": "Limit",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Evidence Status Evidence Status Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Evidence Status"
+   }
+  },
   "/gaps/to-work-on": {
    "get": {
     "operationId": "to_work_on_gaps_to_work_on_get",
@@ -2290,6 +2500,58 @@
      }
     },
     "summary": "Letter Info"
+   }
+  },
+  "/jobs/{job_id}/quick-apply-sent": {
+   "post": {
+    "description": "The extension saw Seek's Quick Apply \"application sent\" page for this job.\n\nCalled by extension/apply_flow.js on ``/job/{id}/apply/success`` once\n``h1#applicationSent`` is on the page (docs/centrelink-ease-apply-plan.md): Seek has\naccepted the application, so it is recorded with no click. Marks the job\n``apply_type='quick'`` (the flow itself is the proof) and stamps ``applied_at`` with\n``applied_via='auto'``.\n\nIdempotent: a refresh or a return to the page keeps the first date (and a manual mark\nmade earlier stays ``'manual'``); ``newly_applied`` says whether this call recorded it.\n\nCreates the match when there is none yet (a job the user applied to before it was\nscored): unscored, status ``applied``. An application counts whether or not the app\nscored the job, and the idle loop never scores a job that already has a match, so this\ncosts no AI call.",
+    "operationId": "quick_apply_sent_jobs__job_id__quick_apply_sent_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "job_id",
+      "required": true,
+      "schema": {
+       "title": "Job Id",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "profile_id",
+      "required": false,
+      "schema": {
+       "default": 1,
+       "title": "Profile Id",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Quick Apply Sent Jobs  Job Id  Quick Apply Sent Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Quick Apply Sent"
    }
   },
   "/jobs/{job_id}/quick-screen": {
