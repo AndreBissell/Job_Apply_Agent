@@ -534,8 +534,10 @@ window.addEventListener('resize', updateArrows);
 
 // ---------------------------------------------------------------------------
 // No letter yet: scored jobs below the auto-letter score, one thin card per 5-point band
-// (GET /jobs/letter-bands, docs/overview-applied-rework-plan.md D3-D6). Only the top band
-// has "+ letters": one-shot letters for its best jobs (at most 10), after a confirming click.
+// (GET /jobs/letter-bands, docs/overview-applied-rework-plan.md D3-D6). One card has
+// "+ letters": the highest band with jobs it can write now (the user, 2026-10-15), so after a
+// click it stays on that band while the band has more, then moves down. One-shot letters for
+// its best jobs (at most 10), after a confirming click.
 // ---------------------------------------------------------------------------
 let bandArmed = null;  // {key, timer}: the "+ letters" waiting for its confirming click
 let bandNotice = '';   // the last write's result, when it queued nothing
@@ -546,7 +548,10 @@ function renderBands(data) {
   ovBandsEl.hidden = !bands.length;
   if (!bands.length) return;
   ovBandsSub.textContent = `${data.total} scored below ${data.bar}`;
-  bands.forEach((band, i) => ovBandGrid.appendChild(renderBandCard(band, i === 0 ? data : null)));
+  // Jobs being written have left the bands, and jobs waiting for an availability check
+  // can't be written yet, so `ready` is what a click can write.
+  const writable = bands.find(b => b.ready > 0);
+  for (const band of bands) ovBandGrid.appendChild(renderBandCard(band, band === writable ? data : null));
 
   const waiting = bands.reduce((n, b) => n + b.waiting_check, 0);
   const notes = [];
@@ -558,7 +563,7 @@ function renderBands(data) {
   ovBandNote.hidden = !notes.length;
 }
 
-// `top`: the bands payload, passed only for the top band, which gets the button.
+// `top`: the bands payload, passed only for the band that gets the button.
 function renderBandCard(band, top) {
   const card = mk('div', 'band-card');
   card.dataset.tier = tierOf(band.lo);

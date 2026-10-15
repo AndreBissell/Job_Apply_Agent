@@ -617,6 +617,29 @@ def run_band_checks(c: Checks, side) -> None:
         state["queued"] = 0
         side.unroute(ready_url, on_ready)
 
+    # The button sits on the highest band it can write: a band left with only jobs waiting for
+    # an availability check keeps its card but passes the button down to the next band.
+    held_back = {"bar": 100, "width": 5, "total": 4, "writing": 0, "est_usd_per_letter": 0.12, "est_basis": "draft",
+                 "bands": [{"lo": 95, "hi": 99, "count": 1, "ready": 0, "waiting_check": 1},
+                           {"lo": 90, "hi": 94, "count": 2, "ready": 2, "waiting_check": 0},
+                           {"lo": 70, "hi": 74, "count": 1, "ready": 1, "waiting_check": 0}]}
+
+    def on_held_back(r):
+        return r.fulfill(status=200, content_type="application/json", body=json.dumps(held_back))
+
+    side.route("**/jobs/letter-bands?**", on_held_back)  # the latest route is tried first
+    try:
+        side.click("nav#tabs .tab[data-tab=jobs]")
+        side.click("nav#tabs .tab[data-tab=overview]")
+        c.check(wait_for(lambda: cards.count() == 3 and cards.first.locator(".bc-range").inner_text() == "99–95"),
+                "bands: a band with only held-back jobs keeps its card")
+        c.check(cards.first.locator(".bc-btn").count() == 0
+                and cards.nth(1).locator(".bc-btn").count() == 1
+                and side.locator("#ov-band-grid .bc-btn").count() == 1,
+                "bands: ...and the button moves to the next band that can be written (94–90)")
+    finally:
+        side.unroute("**/jobs/letter-bands?**", on_held_back)
+
     # nothing to show: the section is hidden
     def on_empty(r):
         return r.fulfill(status=200, content_type="application/json",

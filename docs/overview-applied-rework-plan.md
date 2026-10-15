@@ -335,6 +335,9 @@ The user chose (2026-10-15) to do every manual check together after the last ste
   leave "No letter yet" (an emptied band disappears) and appear in Keep Applying as "✍ Writing…"
   cards (Open ad, no Copy), with "· N being written" in the count; each turns into a normal card
   when its letter lands.
+- [ ] Step 5d: after "+ letters", the button stays on that card while its range still has jobs to
+  write, and moves to the next card when the range is used up (or only has jobs waiting for an
+  availability check).
 
 ## Follow-ups (not in this plan)
 
@@ -414,3 +417,7 @@ The user chose (2026-10-15) to do every manual check together after the last ste
   gone; top-level `writing` counts them); GET /jobs gains `letter_queued`, and `ready=true` also
   returns jobs being written (band-queued, or a pipeline run running/answered); Keep Applying shows
   them as "✍ Writing…" cards and reloads every 15 s while any is writing.
+- 2026-10-15: USER: after a "+ letters" click the button must stay available: on the same card while
+  that range has more to write, else on the next. So "+ letters" now sits on the highest band with
+  `ready > 0` (not always the first card): a band left with only jobs waiting for an availability
+  check keeps its card and passes the button down. Updates D3's "button on the top band".
