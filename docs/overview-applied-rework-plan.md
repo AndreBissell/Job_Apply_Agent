@@ -324,10 +324,12 @@ The user chose (2026-10-15) to do every manual check together after the last ste
 - [ ] Step 5 (known-ids fix): Scan Page on the same "software developer" search no longer says
   "All jobs on this page already captured"; it opens new job pages (1 per scan on REAL, where
   Job pages per Scan is 1). real.db had 17 card-only jobs the old rule hid from the scan.
-- [ ] Step 5, TEST (pill on TEST, port 8001): Overview → Scan more: one Seek search tab opens in
-  front, the panel stays on the Overview, "Scanning 1/N…" then "Done: N new jobs captured…" (or a
-  clear "All N jobs on this page are already in your list."); switching tabs while it opens says
-  "You switched tabs…"; the header Scan Page still works and still jumps to the Jobs tab.
+- [ ] Step 5, TEST (pill on TEST, port 8001): Overview → "Scan more jobs" lists the top 3 searches,
+  each with its own Scan more. Click one: that search opens in a tab in front, the panel stays on the
+  Overview, "<search>: Scanning 1/N…" then "Done: N new jobs captured…" (or "All N jobs on this
+  page are already in your list."). Switching to another tab straight after the click does NOT
+  stop it. The header Scan Page still works and still jumps to the Jobs tab.
+- [ ] Step 5b: the "No letter yet" cards sit in one row, one card tall, and scroll sideways.
 
 ## Follow-ups (not in this plan)
 
@@ -389,3 +391,11 @@ The user chose (2026-10-15) to do every manual check together after the last ste
   `scanning` is set. The header handler needed no change: Scan more calls `scanPage` directly, so
   the handler's `showTab('jobs')` never runs for it. CLAUDE.md has the Scan more policy line;
   tests/test_scan_policy.py pins one `seekSearchUrl` tab, `active: true`, no loop.
+- 2026-10-15: USER UPDATED D7 and D8 after Step 5, plus the band layout (commit "Step 5b"):
+  (1) Scan more reads the search tab its click opened by id (`chrome.tabs.get(tabId)`), so the user
+  need not stay on it; the header's Scan Page still reads the active tab. The "You switched tabs"
+  stop is gone; a closed tab or one no longer on a Seek search stops with its own notice. CLAUDE.md's
+  policy line and tests/test_scan_policy.py now say so (`tabId` only from Scan more's own new tab).
+  (2) The top 3 suggested searches are back as rows, each with its own Scan more (one search per
+  click, still no loop); the status line names the search. (3) The "No letter yet" cards are one
+  row, one card tall, scrolling sideways (still the 6 highest non-empty bands).

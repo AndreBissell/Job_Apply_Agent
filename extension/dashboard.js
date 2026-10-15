@@ -63,7 +63,7 @@ const ovScroller = document.getElementById('ov-scroller');
 const ovNav = document.getElementById('ov-nav');
 const ovPrev = document.getElementById('ov-prev');
 const ovNext = document.getElementById('ov-next');
-const ovScanMoreBtn = document.getElementById('ov-scan-more');
+const ovSearchesEl = document.getElementById('ov-searches');
 const ovScanLine = document.getElementById('ov-scan-line');
 const ovScanStatus = document.getElementById('ov-scan-status');
 const ovBandsEl = document.getElementById('ov-bands');
@@ -602,53 +602,66 @@ function renderBandButton(band) {
   return btn;
 }
 
-// Scan More Jobs (D7, D8): one button that opens the TOP suggested search in a new foreground
-// tab and scans it, staying on this tab. One search per click: it never moves on to the next
-// suggestion or to Seek's page 2 by itself. The tab is opened by the user's click and shown
-// to them, so it is the page the user opened (CLAUDE.md, Seek access policy); the scan
-// then reads that active tab as Scan Page always does. Ignores the Jobs-tab banner's 7-day
-// dismissal: this tab is where you come to pick the next search.
-let ovTopSearch = null; // {phrase, where}: what Scan more searches next
+// Scan More Jobs: the top 3 suggested searches, one row each with its own Scan more button
+// (the user's update to D7/D8, 2026-10-15). A click opens THAT search in a new tab and scans it.
+// One search per click: it never moves on to another suggestion or to Seek's page 2 by itself.
+// The tab is opened by the user's click, so it is the page the user opened (CLAUDE.md, Seek
+// access policy); the scan reads it by its id, so the user can move to another tab at once.
+// Ignores the Jobs-tab banner's 7-day dismissal: this tab is where you come to pick a search.
 let scanMoreBusy = false; // from the click until its scan ends (scanPage sets `scanning` later)
 
 function renderSuggestions(data) {
-  const phrase = data?.suggestions?.[0];
-  ovTopSearch = phrase ? { phrase, where: data.location || '' } : null;
-  ovScanMoreBtn.disabled = !ovTopSearch || scanning || scanMoreBusy;
-  if (!ovTopSearch) {
+  ovSearchesEl.innerHTML = '';
+  const list = (data?.suggestions || []).slice(0, 3);
+  const where = data?.location || '';
+  if (!list.length) {
     ovScanLine.textContent = 'No suggestions yet. They come from the jobs you match well: search Seek '
       + 'yourself, then press Scan Page.';
     return;
   }
-  const where = ovTopSearch.where ? ` in ${ovTopSearch.where}` : '';
-  ovScanLine.textContent = `Searches "${phrase}"${where}, up to ${plural(scanMaxPages, 'new job')}.`;
-  ovScanMoreBtn.title = `Open a Seek search for "${phrase}"${where} and scan it`;
+  ovScanLine.textContent = `Each opens a Seek search${where ? ` in ${where}` : ''} and scans up to `
+    + `${plural(scanMaxPages, 'new job')}.`;
+  for (const phrase of list) ovSearchesEl.appendChild(renderSearchRow(phrase, where));
 }
 
-async function scanMore() {
-  if (scanning || scanMoreBusy || !ovTopSearch) return;
-  // Busy and both buttons off at once: a double click, or a live reload re-enabling the
-  // button while the search page loads, must not open a second search before scanPage
+function renderSearchRow(phrase, where) {
+  const row = mk('div', 'ov-search');
+  row.append(mk('span', null, '🔍'), mk('span', 'q', phrase));
+  if (where) row.appendChild(mk('span', 'where', where));
+  const btn = mk('button', 'btn btn-sm ov-scan-more', 'Scan more');
+  btn.title = `Open a Seek search for "${phrase}"${where ? ` in ${where}` : ''} and scan it`;
+  btn.disabled = scanning || scanMoreBusy;
+  btn.addEventListener('click', () => scanMore(phrase, where));
+  row.appendChild(btn);
+  return row;
+}
+
+async function scanMore(phrase, where) {
+  if (scanning || scanMoreBusy) return;
+  // Busy and every button off at once: a double click, or a live reload re-enabling the
+  // buttons while the search page loads, must not open a second search before scanPage
   // sets `scanning`.
   scanMoreBusy = true;
-  ovScanMoreBtn.disabled = true;
+  setScanMoreButtons(true);
   scanBtn.disabled = true;
-  const { phrase, where } = ovTopSearch;
-  ovScanStatus.textContent = 'Opening the search…';
+  const say = msg => { ovScanStatus.textContent = `${phrase}: ${msg}`; };
+  say('Opening the search…');
   try {
     const tab = await chrome.tabs.create({ url: seekSearchUrl(phrase, where), active: true });
     await waitForTabComplete(tab.id, 15000);
-    await scanPage({ expectTabId: tab.id, onStatus: msg => { ovScanStatus.textContent = msg; } });
+    await scanPage({ tabId: tab.id, onStatus: say });
   } catch (e) {
-    ovScanStatus.textContent = `Could not open the search: ${e.message}`;
+    say(`Could not open the search (${e.message}).`);
   } finally {
     scanMoreBusy = false;
     scanBtn.disabled = scanning;
-    ovScanMoreBtn.disabled = scanning || !ovTopSearch;
+    setScanMoreButtons(scanning);
   }
 }
 
-ovScanMoreBtn.addEventListener('click', scanMore);
+function setScanMoreButtons(off) {
+  for (const btn of ovSearchesEl.querySelectorAll('.ov-scan-more')) btn.disabled = off;
+}
 
 // Scan Page from the Overview: the Jobs list is the scan's progress display (and where
 // its notices appear), so go there. (Scan more stays here: it calls scanPage itself.)

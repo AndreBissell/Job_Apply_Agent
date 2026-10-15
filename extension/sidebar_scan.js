@@ -136,10 +136,10 @@ async function ingestListing(listing) {
   } catch { return null; }
 }
 
-// The header's Scan Page calls this with no options. The Overview's Scan more passes the
-// search tab it just opened (expectTabId: the scan still reads the ACTIVE tab, and stops if
-// the user has switched away from it) and a status line for its notices and progress.
-async function scanPage({ expectTabId = null, onStatus = null } = {}) {
+// The header's Scan Page calls this with no options: it reads the tab in front of the user.
+// The Overview's Scan more passes `tabId`, the search tab its click just opened, which is read
+// even after the user has moved to another tab, plus a status line for notices and progress.
+async function scanPage({ tabId = null, onStatus = null } = {}) {
   if (scanning) return;
   scanning = true;
   scanBtn.disabled = true;
@@ -149,13 +149,17 @@ async function scanPage({ expectTabId = null, onStatus = null } = {}) {
     // A scan always wins over a background availability check: close its tab now, and the
     // checker waits until this scan is done (sidebar_availability.js).
     await cancelAvailabilityCheck();
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (expectTabId != null && tab?.id !== expectTabId) {
-      scanNotice('You switched tabs: open the search tab and press Scan Page.');
-      return;
+    let tab;
+    if (tabId != null) {
+      tab = await chrome.tabs.get(tabId).catch(() => null);
+      if (!tab) { scanNotice('The search tab was closed before it could be scanned.'); return; }
+    } else {
+      [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     }
     if (!tab || !/^https:\/\/(au\.seek\.com|www\.seek\.com\.au)\/[^?#]*jobs/i.test(tab.url || '')) {
-      scanNotice('Open a Seek search results page in this tab first, then click Scan Page.');
+      scanNotice(tabId != null
+        ? 'The search tab no longer shows a Seek search, so it was not scanned.'
+        : 'Open a Seek search results page in this tab first, then click Scan Page.');
       return;
     }
     let allUrls;

@@ -73,18 +73,24 @@ def test_api_caps_scan_pages_at_25():
     assert caps == [25]
 
 
-def test_job_links_come_only_from_the_users_active_tab():
-    # pageCollectJobLinks is injected once, into `tab`: the tab the user has open.
+def test_job_links_come_only_from_a_page_the_user_opened():
+    # pageCollectJobLinks is injected once, into `tab`: either the tab the user has in front
+    # of them (the header's Scan Page), or the search tab their Scan more click opened, read by
+    # its id (`tabId`), so they can move to another tab while it loads (user, 2026-10-15).
     injections = _find_all(r"injectFn\(\s*(\w+(?:\.\w+)*)\s*,\s*pageCollectJobLinks\b")
     assert [m.group(1) for _, m in injections] == ["tab.id"]
     name, _ = injections[0]
     text = _sources()[name]
     assert re.search(
-        r"const\s+\[\s*tab\s*\]\s*=\s*await\s+chrome\.tabs\.query\(\s*\{\s*active:\s*true", text
-    ), "`tab` must be the user's active tab (chrome.tabs.query({ active: true, ... }))"
+        r"\[\s*tab\s*\]\s*=\s*await\s+chrome\.tabs\.query\(\s*\{\s*active:\s*true", text
+    ), "without a tabId, `tab` must be the user's active tab (chrome.tabs.query({ active: true, ... }))"
+    assert re.search(r"\btab\s*=\s*await\s+chrome\.tabs\.get\(\s*tabId\s*\)", text)
     # And it is never handed to the browser any other way (no second, hidden injection).
     uses = _find_all(r"\bpageCollectJobLinks\b")
     assert len(uses) == 2, "pageCollectJobLinks: expected its definition plus one injection"
+    # `tabId` only ever comes from Scan more's own new search tab: every other call passes none.
+    calls = [m.group(1).strip() for _, m in _find_all(r"(?<!function )\bscanPage\(([^)]*)\)")]
+    assert sorted(calls) == ["", "{ tabId: tab.id, onStatus: say }"], calls
 
 
 def test_scan_opens_job_pages_in_background_tabs():
@@ -107,24 +113,27 @@ def test_detail_scraper_is_injected_only_into_scan_tabs():
     assert len(uses) == 1 + len(injections), "pageScrapeDetail is referenced outside its injection"
 
 
-def test_scan_more_opens_one_search_in_a_foreground_tab():
-    """The Overview's Scan more (CLAUDE.md, Seek access policy; D7 of
-    docs/overview-applied-rework-plan.md) opens ONE Seek search per click, the top suggestion,
-    in a foreground tab (active: true: the user clicked and sees it, so it is the page the user
-    opened), then scans that tab with the same scanPage. It never loops over the suggestions
-    or moves on to another search by itself."""
+def test_scan_more_opens_one_search_per_click():
+    """The Overview's Scan more buttons (CLAUDE.md, Seek access policy; D7/D8 of
+    docs/overview-applied-rework-plan.md as the user updated them 2026-10-15): one per suggested
+    search (the top 3). A click opens THAT ONE Seek search in a foreground tab (active: true:
+    the user clicked and sees it, so it is the page the user opened), then scans that tab by its
+    id with the same scanPage. It never loops over the suggestions or moves on by itself."""
     text = _sources()["dashboard.js"]
-    body = text[text.index("async function scanMore("):text.index("ovScanMoreBtn.addEventListener")]
+    body = text[text.index("async function scanMore("):text.index("function setScanMoreButtons(")]
     calls = [_call_args(body, m.end() - 1) for m in re.finditer(r"chrome\.tabs\.create\(", body)]
     assert len(calls) == 1, "Scan more opens exactly one tab"
-    assert re.search(r"\burl:\s*seekSearchUrl\(", calls[0]), calls[0]
+    assert re.search(r"\burl:\s*seekSearchUrl\(\s*phrase\s*,\s*where\s*\)", calls[0]), calls[0]
     assert re.search(r"\bactive:\s*true\b", calls[0]), f"the search tab must be in the foreground: {calls[0]}"
-    assert re.search(r"scanPage\(\s*\{\s*expectTabId:\s*tab\.id\b", body), "it scans the tab it opened"
+    assert re.search(r"scanPage\(\s*\{\s*tabId:\s*tab\.id\b", body), "it scans the tab it opened"
     loop = r"\bfor\s*\(|\bwhile\s*\(|\.forEach\(|\.map\("
     assert not re.search(loop, body), "no loop: one search per click"
-    # The search is the top suggestion only, and dashboard.js builds a Seek search nowhere else.
-    pick = text[text.index("function renderSuggestions("):text.index("async function scanMore(")]
-    assert "suggestions?.[0]" in pick and not re.search(loop + r"|\.slice\(", pick)
+    # It runs only from a row's own click, with that row's search; at most 3 rows; and
+    # dashboard.js builds a Seek search nowhere else.
+    assert len(re.findall(r"\bscanMore\(", text)) == 2, "scanMore: its definition plus one click handler"
+    assert re.search(r"addEventListener\(\s*'click',\s*\(\)\s*=>\s*scanMore\(\s*phrase\s*,\s*where\s*\)\s*\)", text)
+    pick = text[text.index("function renderSuggestions("):text.index("function renderSearchRow(")]
+    assert ".slice(0, 3)" in pick and "scanMore(" not in pick and "chrome.tabs" not in pick
     assert len(re.findall(r"\bseekSearchUrl\(", text)) == 1
 
 
