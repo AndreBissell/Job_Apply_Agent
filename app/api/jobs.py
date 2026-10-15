@@ -23,7 +23,7 @@ from app.api import worker
 from app.api.deps import get_db
 from app.api.ingest import SOURCE
 from app.llm.letter import view as letter_view
-from app.models import CoverLetter, JobListing, Match
+from app.models import CoverLetter, JobListing, LetterRun, Match
 from app.preferences import get_preferences
 
 router = APIRouter()
@@ -181,9 +181,10 @@ def list_jobs(
     still feed the suggestion baseline and the search-performance yield — see
     DELETE /jobs for why they are kept rather than deleted.
 
-    ``ready=true`` (the Overview's Keep Applying row): only jobs with a cover letter
-    that aren't applied yet, by score. Filtered here rather than in the sidebar so the
-    ``limit`` can't drop ready jobs behind letter-less ones.
+    ``ready=true`` (the Overview's Keep Applying row): jobs not applied yet that have a
+    cover letter OR are having one written (a pipeline run ``running`` / ``answered``, or
+    queued by the Overview's "+ letters": ``letter_queued``), by score. Filtered here rather
+    than in the sidebar so the ``limit`` can't drop them behind letter-less ones.
     """
     query = (
         select(Match, JobListing)
@@ -193,10 +194,17 @@ def list_jobs(
         .where(Match.hidden_at.is_(None))
         .where(Match.score >= min_score)
     )
+    band_queue = letter_bands.queued_ids()
     if ready:
-        query = query.where(Match.applied_at.is_(None)).where(
-            select(CoverLetter.id).where(CoverLetter.match_id == Match.id).exists()
-        )
+        writing = [
+            select(CoverLetter.id).where(CoverLetter.match_id == Match.id).exists(),
+            select(LetterRun.id)
+            .where(LetterRun.match_id == Match.id, LetterRun.status.in_(("running", "answered")))
+            .exists(),
+        ]
+        if band_queue:
+            writing.append(Match.job_id.in_(band_queue))
+        query = query.where(Match.applied_at.is_(None)).where(or_(*writing))
     if status is not None:
         # "Applied" means applied_at is set (same rule as the dashboard and the export).
         if status == "applied":
@@ -228,6 +236,8 @@ def list_jobs(
             "applied_via": match.applied_via,
             "apply_type": job.apply_type,
             "has_cover_letter": match.cover_letter is not None,
+            # Queued for a one-pass letter by the Overview's "+ letters" (app/letter_bands.py).
+            "letter_queued": job.id in band_queue,
             **retention.screenshot_fields(match, ttl, match.id in reported),
             "extracted_at": job.extracted_at.isoformat() if job.extracted_at else None,
             "top_skills": [

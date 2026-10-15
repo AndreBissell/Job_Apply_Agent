@@ -131,6 +131,7 @@ function coverLetterState(job) {
   const run = job.letter_run;
   if (run?.status === 'waiting_user') return 'question';
   if (run?.status === 'running' || run?.status === 'answered') return 'writing';
+  if (job.letter_queued) return 'writing'; // queued by the Overview's "+ letters"
   if (job.has_cover_letter) return 'ready';
   if (run?.status === 'failed' || run?.status === 'budget_stopped') return 'failed';
   if (job.score != null && job.score >= autoLetterMin) return 'pending';

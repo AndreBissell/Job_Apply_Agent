@@ -186,7 +186,10 @@ class TestBandOf:
 # ---------------------------------------------------------------------------
 class TestGetBands:
     def test_empty(self, client, db):
-        assert bands_of(client) == {"bar": 75, "width": 5, "total": 0, "bands": []}
+        assert bands_of(client) == {
+            "bar": 75, "width": 5, "total": 0, "writing": 0,
+            "est_usd_per_letter": letter_bands.ESTIMATE_DEFAULT_USD, "est_basis": "default", "bands": [],
+        }
 
     def test_the_d3_real_db_example(self, client, db):
         for s in (60, 62, 64, 55, 56, 57, 58, 47, 42, 37):
@@ -196,7 +199,7 @@ class TestGetBands:
         assert ranges(data) == [(60, 64), (55, 59), (45, 49), (40, 44), (35, 39)]
         assert [b["count"] for b in data["bands"]] == [3, 4, 1, 1, 1]
         # every key the card reads
-        assert data["bands"][0] == {"lo": 60, "hi": 64, "count": 3, "ready": 3, "waiting_check": 0, "queued": 0}
+        assert data["bands"][0] == {"lo": 60, "hi": 64, "count": 3, "ready": 3, "waiting_check": 0}
 
     def test_empty_bands_are_skipped(self, client, db):
         seed(db, 72)
@@ -248,12 +251,19 @@ class TestGetBands:
         data = bands_of(client)
         assert ranges(data) == [(0, 1)] and data["bands"][0]["count"] == 2
 
-    def test_queued_shows_on_its_band(self, client, db):
+    def test_a_queued_job_leaves_its_band(self, client, db):
+        """Being written, it shows in Keep Applying instead (GET /jobs ``letter_queued``)."""
         a, _ = seed(db, 62)
         seed(db, 61)
         letter_bands.queued.add(a.id)
-        b = bands_of(client)["bands"][0]
-        assert b["count"] == 2 and b["queued"] == 1
+        data = bands_of(client)
+        assert data["bands"][0]["count"] == 1 and data["total"] == 1 and data["writing"] == 1
+
+    def test_a_band_whose_jobs_are_all_queued_disappears(self, client, db):
+        a, _ = seed(db, 77)
+        seed(db, 62)
+        letter_bands.queued.add(a.id)
+        assert ranges(bands_of(client)) == [(60, 64)]
 
     def test_profile_id_param_selects_the_profile(self, client, db):
         seed(db, 62, user_id=2)
@@ -400,8 +410,8 @@ class TestWrite:
         assert fn is worker._write_band_letters
         assert args == ([high.id, mid.id, low.id], 1) and kwargs == {}
         assert letter_bands.queued == {low.id, mid.id, high.id}
-        band = bands_of(client)["bands"][0]
-        assert band["queued"] == 3 and band["count"] == 3
+        data = bands_of(client)
+        assert data["bands"] == [] and data["writing"] == 3  # all three moved to Keep Applying
 
     def test_profile_id_query_param_is_passed_on(self, client, db, fake_exec):
         job, _ = seed(db, 62, user_id=2)
@@ -701,3 +711,75 @@ class TestRunOneshotBelowBar:
         monkeypatch.setattr("app.llm.letter.production.generate_cover_letter", lambda *a, **k: None)
         landed = production._run_oneshot(db, 7, 1, None, below_bar=True)
         assert landed.status == "failed"
+
+
+# ---------------------------------------------------------------------------
+# The "Write 3? ≈ X" estimate, from what letters really cost here
+# ---------------------------------------------------------------------------
+class TestEstimate:
+    def _usage(self, db, task, *costs):
+        from app.models import LlmUsage
+        for c in costs:
+            db.add(LlmUsage(task=task, tier="strong", model="stub", cost_usd=c))
+        db.commit()
+
+    def test_default_with_no_letter_logged(self, db):
+        assert letter_bands.letter_cost_estimate(db) == (letter_bands.ESTIMATE_DEFAULT_USD, "default")
+
+    def test_the_pipeline_draft_call_until_there_are_one_pass_letters(self, db):
+        self._usage(db, "generate_letter", 0.10, 0.12, 0.14)
+        self._usage(db, "cover_letter", 0.05, 0.05)  # fewer than ESTIMATE_MIN: not used yet
+        assert letter_bands.letter_cost_estimate(db) == (pytest.approx(0.12), "draft")
+
+    def test_one_pass_letters_once_there_are_enough(self, db):
+        self._usage(db, "generate_letter", 0.10, 0.12, 0.14)
+        self._usage(db, "cover_letter", 0.06, 0.08, 0.10)
+        assert letter_bands.letter_cost_estimate(db) == (pytest.approx(0.08), "one_pass")
+
+    def test_only_the_latest_calls_count(self, db):
+        self._usage(db, "cover_letter", *([1.00] * 5 + [0.10] * letter_bands.ESTIMATE_SAMPLE))
+        assert letter_bands.letter_cost_estimate(db)[0] == pytest.approx(0.10)
+
+    def test_the_endpoint_carries_it(self, client, db):
+        self._usage(db, "generate_letter", 0.12, 0.12, 0.12)
+        data = bands_of(client)
+        assert data["est_usd_per_letter"] == pytest.approx(0.12) and data["est_basis"] == "draft"
+
+
+# ---------------------------------------------------------------------------
+# GET /jobs: a job being written shows in Keep Applying (ready=true)
+# ---------------------------------------------------------------------------
+class TestKeepApplyingShowsWriting:
+    def _ids(self, client):
+        return {j["job_id"]: j for j in client.get("/jobs", params={"ready": "true"}).json()}
+
+    def test_a_band_queued_job_is_listed_and_flagged(self, client, db):
+        job, _ = seed(db, 62)
+        assert job.id not in self._ids(client)
+        letter_bands.queued.add(job.id)
+        row = self._ids(client)[job.id]
+        assert row["letter_queued"] is True and row["has_cover_letter"] is False
+
+    def test_a_running_pipeline_job_is_listed(self, client, db):
+        job, m = seed(db, 88)
+        db.add(LetterRun(match_id=m.id, engine="agent", status="running"))
+        db.commit()
+        row = self._ids(client)[job.id]
+        assert row["letter_queued"] is False and row["letter_run"]["status"] == "running"
+
+    def test_a_job_waiting_on_a_question_is_not_listed(self, client, db):
+        job, m = seed(db, 88)
+        db.add(LetterRun(match_id=m.id, engine="agent", status="waiting_user"))
+        db.commit()
+        assert job.id not in self._ids(client)
+
+    def test_an_applied_job_is_not_listed_even_if_queued(self, client, db):
+        job, m = seed(db, 62)
+        m.applied_at = now_utc()
+        db.commit()
+        letter_bands.queued.add(job.id)
+        assert job.id not in self._ids(client)
+
+    def test_letter_queued_is_false_elsewhere(self, client, db):
+        job, _ = seed(db, 62)
+        assert client.get("/jobs").json()[0]["letter_queued"] is False

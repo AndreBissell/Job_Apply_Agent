@@ -11,7 +11,8 @@ Not collected by pytest (needs Chromium and a server). What it does:
    jobs across three monthly periods (one hidden, one with no logged AI spend), seven jobs
    with a letter ready (one with your edits), one job whose letter run waits on a question,
    one high scorer with no letter, eight more letter-less jobs across seven score bands
-   (one not seen live for 3 days), and some ``llm_usage`` rows. Dates are relative to
+   (one not seen live for 3 days), and some ``llm_usage`` rows (match costs on applied jobs,
+   three job-less ``generate_letter`` costs for the letter estimate). Dates are relative to
    today, so the run works on any day. The letter bars are set to 100 and no job has a
    description, so the idle loop has no LLM work; the server runs with LLM_PROVIDER=stub
    anyway, so a stray call would fail instead of costing money.
@@ -23,9 +24,12 @@ Not collected by pytest (needs Chromium and a server). What it does:
    Keep Applying row and its arrows, Copy / Open / Mark applied, the
    ✎ editor), the "No letter yet" bands (the 6 highest of 7 bands in ONE row that scrolls
    sideways inside its box while the page does not, the
-   top card's "+ letters" two-click confirm and its POST {lo, hi}, "Writing 1..." after it,
-   the availability-check note, the section hidden when there are no bands; the write
-   endpoint is intercepted, so nothing is queued), "Scan more" (up to 3 suggested-search
+   top card's "+ letters" two-click confirm ("Write 1? ≈ 12¢": the estimate comes from three
+   seeded `generate_letter` costs, its basis named in the button's title) and its POST {lo, hi},
+   then the queued band leaving the bands and its job showing in Keep Applying as a "✍ Writing…"
+   card (Open ad and Mark applied, no Copy; "1 being written" in the ready count), the
+   availability-check note, the section hidden when there are no bands; the write endpoint is
+   intercepted and the band / ready lists are served from here, so nothing is queued), "Scan more" (up to 3 suggested-search
    rows, each with its own button; the one line "Each opens a Seek search in <where>...";
    a click opens THAT search in a foreground tab and scans that tab by id, even though the
    stubbed active tab is another page: one injection, "<phrase>: All 2 jobs ... already in
@@ -56,6 +60,7 @@ import datetime as dt
 import io
 import json
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -200,6 +205,11 @@ def seed(url: str) -> None:
                              ("Band 41", 41), ("Band 33", 33), ("Band 12", 12)]:
             job(title, score)
         job("Band 56", 56, record={"last_seen_live_at": dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=3)})
+        # What letters cost: three pipeline draft calls (no job_id, so no applied job's cost
+        # changes) and no one-pass `cover_letter` call, so the "Write N?" estimate is the mean of
+        # these, 12 cents each, from the "draft" basis (letter_bands.letter_cost_estimate).
+        for _ in range(3):
+            s.add(LlmUsage(task="generate_letter", tier="strong", model="stub", cost_usd=Decimal("0.12")))
         s.commit()
     engine.dispose()
 
@@ -467,7 +477,8 @@ def run(headed: bool, keep: bool = False) -> int:
 def run_band_checks(c: Checks, side) -> None:
     """The "No letter yet" section (bar 100): seven bands, the six highest shown, two columns,
     "+ letters" on the top card only. The write endpoint is intercepted (nothing is queued on
-    the real server) and the band list is served from here for the "Writing" and empty cases."""
+    the real server); the band and ready lists are served from here for the "queued" (band leaves,
+    Keep Applying shows a "Writing…" card) and empty cases, and un-routed before later checks."""
     print("No letter yet")
     c.check(side.is_visible("#ov-bands"), "bands: the section shows")
     c.check(side.inner_text("#ov-bands h2").strip().lower() == "no letter yet", "bands: heading 'No letter yet'")
@@ -519,6 +530,11 @@ def run_band_checks(c: Checks, side) -> None:
     # The write is intercepted: the real server never queues anything.
     posts: list[tuple[str, str | None]] = []
     state = {"queued": 0}
+    real = json.load(urllib.request.urlopen(f"{BACKEND}/jobs/letter-bands?profile_id=1", timeout=10))
+    c.check(real.get("est_usd_per_letter") == 0.12 and real.get("est_basis") == "draft" and real.get("writing") == 0
+            and all("queued" not in b for b in real["bands"]),
+            f"bands: the API estimates 12¢ from the draft calls, nothing writing, no 'queued' on a band "
+            f"({real.get('est_usd_per_letter')}, {real.get('est_basis')}, {real.get('writing')})")
 
     def on_write(r):
         posts.append((r.request.method, r.request.post_data))
@@ -526,18 +542,35 @@ def run_band_checks(c: Checks, side) -> None:
                          body=json.dumps({"queued": 1, "waiting_check": 0, "skipped": 0}))
 
     def on_get(r):
+        # Once the write is "queued", the top band leaves the bands and counts as writing.
         if not state["queued"]:
             return r.fallback()
         data = json.load(urllib.request.urlopen(r.request.url, timeout=10))
-        data["bands"][0]["queued"] = 1
+        data["bands"] = data["bands"][1:]
+        data["total"] -= 1
+        data["writing"] = 1
         return r.fulfill(status=200, content_type="application/json", body=json.dumps(data))
 
+    def on_ready(r):
+        # ...and its job joins the Keep Applying list with letter_queued, like the real /jobs does.
+        if not state["queued"]:
+            return r.fallback()
+        data = json.load(urllib.request.urlopen(r.request.url, timeout=10))
+        every = json.load(urllib.request.urlopen(f"{BACKEND}/jobs?profile_id=1&limit=500", timeout=10))
+        job = next(j for j in every if j["title"] == "No Letter Yet")
+        data.append({**job, "letter_queued": True})
+        return r.fulfill(status=200, content_type="application/json", body=json.dumps(data))
+
+    ready_url = re.compile(r"/jobs\?[^#]*\bready=true\b")
     side.route("**/jobs/letter-bands?**", on_get)
     side.route("**/jobs/letter-bands/write**", on_write)
+    side.route(ready_url, on_ready)
     try:
         btn.click()
-        c.check(btn.inner_text() == "Write 1? ≈ 3¢" and "confirm" in (btn.get_attribute("class") or "").split(),
-                f"bands: the first click asks 'Write 1? ≈ 3¢' ({btn.inner_text()!r})")
+        c.check(btn.inner_text() == "Write 1? ≈ 12¢" and "confirm" in (btn.get_attribute("class") or "").split(),
+                f"bands: the first click asks 'Write 1? ≈ 12¢' ({btn.inner_text()!r})")
+        c.check("draft" in (btn.get_attribute("title") or ""),
+                f"bands: the button's title names the estimate's basis ({btn.get_attribute('title')!r})")
         c.check(not posts, "bands: nothing is posted by the first click")
         fits = side.evaluate("(() => { const c = document.querySelector('.band-card').getBoundingClientRect(); "
                              "const b = document.querySelector('.bc-btn').getBoundingClientRect(); "
@@ -554,14 +587,35 @@ def run_band_checks(c: Checks, side) -> None:
         c.check(wait_for(lambda: len(posts) == 1), f"bands: the second click posts once ({len(posts)})")
         c.check(bool(posts) and posts[0][0] == "POST" and json.loads(posts[0][1] or "{}") == {"lo": 95, "hi": 99},
                 f"bands: ...as POST {{lo: 95, hi: 99}} ({posts[:1]})")
-        busy = side.locator("#ov-band-grid .bc-btn")
-        c.check(wait_for(lambda: busy.count() == 1 and busy.first.inner_text() == "Writing 1…"),
-                f"bands: 'Writing 1…' after the reload ({busy.first.inner_text() if busy.count() else None!r})")
-        c.check(busy.first.is_disabled(), "bands: ...and it is disabled")
+
+        # the queued band leaves the bands; the next one is on top and offers "+ letters"
+        def first_range():
+            return cards.first.locator(".bc-range").inner_text() if cards.count() else None
+        c.check(wait_for(lambda: first_range() == "94–90"),
+                f"bands: the 99–95 card is gone, 94–90 is first ({first_range()!r})")
+        c.check(cards.first.locator(".bc-btn").count() == 1 and cards.first.locator(".bc-btn").inner_text() == "+ letters",
+                "bands: ...and it has the '+ letters' button (no 'Writing…' state)")
+        c.check(side.locator("#ov-band-grid .bc-btn:disabled").count() == 0, "bands: no disabled button")
+
+        # Keep Applying shows the job being written
+        writing = side.locator("#ov-scroller .mini-card.writing")
+        c.check(wait_for(lambda: writing.count() == 1), f"writing: one 'writing' card in Keep Applying ({writing.count()})")
+        w = side.locator("#ov-scroller .mini-card", has_text="No Letter Yet")
+        c.check(w.count() == 1 and "writing" in (w.get_attribute("class") or "").split(),
+                "writing: it is the 'No Letter Yet' job")
+        c.check(w.locator(".mc-writing").count() == 1 and w.locator(".mc-writing").inner_text() == "✍ Writing…",
+                f"writing: it says '✍ Writing…' ({w.locator('.mc-writing').all_inner_texts()})")
+        c.check(w.locator("button", has_text="Letter").count() == 0, "writing: no '⧉ Letter' copy button")
+        c.check(w.locator("button", has_text="Open ad").count() == 1, "writing: 'Open ad' is there")
+        c.check(w.locator(".mc-applied").count() == 1, "writing: 'Mark applied' is there")
+        count_text = side.inner_text("#ov-ready-count")
+        c.check("6 letters ready to send" in count_text and "1 being written" in count_text,
+                f"writing: the ready count is '6 letters ready to send · 1 being written' ({count_text!r})")
         time.sleep(0.5)
         c.check(len(posts) == 1, "bands: still exactly one POST")
     finally:
         state["queued"] = 0
+        side.unroute(ready_url, on_ready)
 
     # nothing to show: the section is hidden
     def on_empty(r):
@@ -581,6 +635,11 @@ def run_band_checks(c: Checks, side) -> None:
     side.click("nav#tabs .tab[data-tab=overview]")
     c.check(wait_for(lambda: side.is_visible("#ov-bands") and side.locator("#ov-band-grid .band-card").count() == 6),
             "bands: the real data is back after un-routing")
+    c.check(side.locator("#ov-band-grid .band-card .bc-range").first.inner_text() == "99–95",
+            "bands: ...with 99–95 first again")
+    c.check(wait_for(lambda: side.locator("#ov-scroller .mini-card.writing").count() == 0
+                     and side.inner_text("#ov-ready-count") == "6 letters ready to send"),
+            f"writing: the real data has no writing card ({side.inner_text('#ov-ready-count')!r})")
 
 
 SCAN_STUBS = """() => {

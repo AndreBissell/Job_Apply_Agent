@@ -7,7 +7,8 @@ them as 5-point score bands anchored on that bar (bar 80 -> 79-75, 74-70, ...; b
 on the single worker (``worker._write_band_letters``).
 
 Pure queries and band maths, plus ``queued``: the in-process set of job ids waiting for that
-worker, so the card can say "Writing 3..." and a second click can't queue them twice. No LLM.
+worker. A queued job leaves the bands and shows in Keep Applying as being written (GET /jobs
+``letter_queued``), and a second click can't queue it twice. No LLM.
 """
 
 from __future__ import annotations
@@ -20,12 +21,18 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import availability
-from app.models import CoverLetter, JobListing, LetterRun, Match
+from app.models import CoverLetter, JobListing, LetterRun, LlmUsage, Match
 from app.preferences import letter_settings
 
 WIDTH = 5       # points per band
-MAX_BANDS = 6   # the card grid: 2 columns x 3 rows
+MAX_BANDS = 6   # the cards shown, highest bands first
 WRITE_CAP = 10  # letters queued per click
+# The "Write 3? ≈ X" estimate per letter: the mean of the latest ESTIMATE_SAMPLE one-pass letter
+# calls; before there are ESTIMATE_MIN of them, the pipeline's draft call (the same strong model
+# writing a comparable letter); before either, ESTIMATE_DEFAULT_USD.
+ESTIMATE_SAMPLE = 20
+ESTIMATE_MIN = 3
+ESTIMATE_DEFAULT_USD = 0.10
 
 # Runs that already hold a match (production.LIVE_STATUSES): a one-shot must not land
 # underneath one. Repeated here so this module stays free of the letter engines.
@@ -56,26 +63,54 @@ def _eligible(profile_id: int, bar: int):
     )
 
 
+def queued_ids() -> set[int]:
+    """A snapshot of the job ids waiting for (or being written by) the band writer."""
+    with _lock:
+        return set(queued)
+
+
+def letter_cost_estimate(db: Session) -> tuple[float, str]:
+    """(USD per one-pass letter, basis) from what letters really cost here (``llm_usage``).
+
+    basis ``one_pass``: the latest one-pass letters (task ``cover_letter``); ``draft``: none
+    yet, so the full pipeline's draft call (``generate_letter``: the same strong model writing
+    a comparable letter); ``default``: no letter logged at all.
+    """
+    for task, basis in (("cover_letter", "one_pass"), ("generate_letter", "draft")):
+        costs = db.scalars(
+            select(LlmUsage.cost_usd)
+            .where(LlmUsage.task == task, LlmUsage.cost_usd.is_not(None))
+            .order_by(LlmUsage.id.desc())
+            .limit(ESTIMATE_SAMPLE)
+        ).all()
+        if len(costs) >= ESTIMATE_MIN:
+            return round(sum(float(c) for c in costs) / len(costs), 4), basis
+    return ESTIMATE_DEFAULT_USD, "default"
+
+
 def summary(db: Session, profile_id: int, now: datetime | None = None) -> dict:
-    """GET /jobs/letter-bands: ``{bar, width, total, bands: [{lo, hi, count, ready,
-    waiting_check, queued}]}``. ``ready`` passes the freshness gate (D6); the rest wait for
-    an availability check."""
+    """GET /jobs/letter-bands: ``{bar, width, total, writing, est_usd_per_letter, est_basis,
+    bands: [{lo, hi, count, ready, waiting_check}]}``. ``ready`` passes the freshness gate
+    (D6); the rest wait for an availability check. Jobs queued for a letter are left out of
+    the bands (they show in Keep Applying as being written) and counted in ``writing``."""
     bar = letter_settings(db, profile_id)["auto_min_score"]
-    rows = db.execute(_eligible(profile_id, bar)).all()
+    writing = queued_ids()
+    rows = [r for r in db.execute(_eligible(profile_id, bar)).all() if r.job_id not in writing]
     gate = availability.llm_gate(db, profile_id, now)
     ready = {r.job_id for r in db.execute(_eligible(profile_id, bar).where(gate))}
-    with _lock:
-        waiting = set(queued)
 
     bands: dict[tuple[int, int], dict] = {}
     for job_id, score in rows:
         lo, hi = band_of(math.floor(float(score)), bar)
-        b = bands.setdefault((lo, hi), {"lo": lo, "hi": hi, "count": 0, "ready": 0, "waiting_check": 0, "queued": 0})
+        b = bands.setdefault((lo, hi), {"lo": lo, "hi": hi, "count": 0, "ready": 0, "waiting_check": 0})
         b["count"] += 1
         b["ready" if job_id in ready else "waiting_check"] += 1
-        b["queued"] += job_id in waiting
     top = sorted(bands.values(), key=lambda b: b["hi"], reverse=True)[:MAX_BANDS]
-    return {"bar": bar, "width": WIDTH, "total": len(rows), "bands": top}
+    est, basis = letter_cost_estimate(db)
+    return {
+        "bar": bar, "width": WIDTH, "total": len(rows), "writing": len(writing),
+        "est_usd_per_letter": est, "est_basis": basis, "bands": top,
+    }
 
 
 def claim_band(db: Session, profile_id: int, lo: int, hi: int, now: datetime | None = None) -> dict:

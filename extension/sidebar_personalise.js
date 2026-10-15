@@ -86,9 +86,9 @@ let letterEngine = 'agent';
 function updateLetterLoopNote() {
   const bar = Math.max(autoLetterMin, letterLoopMin);
   letterLoopNote.textContent = !letterLoopEnabled
-    ? 'Off: every letter is written in one quick pass (about 3¢), with no fact-check or revision.'
+    ? 'Off: every letter is written in one quick pass (about 10–15¢), with no fact-check or revision.'
     : bar > autoLetterMin
-      ? `Scores ${autoLetterMin}–${bar - 1}: one quick pass (about 3¢). From ${bar} up: fact-checks and revisions (about 20¢ and a few minutes each). The bar is the higher of this score and the auto-generate score above. The agent picks each step itself; the fixed workflow takes the same steps in a set order.`
+      ? `Scores ${autoLetterMin}–${bar - 1}: one quick pass (about 10–15¢). From ${bar} up: fact-checks and revisions (about 20¢ and a few minutes each). The bar is the higher of this score and the auto-generate score above. The agent picks each step itself; the fixed workflow takes the same steps in a set order.`
       : `Every automatic letter gets fact-checks and revisions (about 20¢ and a few minutes each). The agent picks each step itself; the fixed workflow takes the same steps in a set order.`;
 }
 

@@ -330,6 +330,11 @@ The user chose (2026-10-15) to do every manual check together after the last ste
   page are already in your list."). Switching to another tab straight after the click does NOT
   stop it. The header Scan Page still works and still jumps to the Jobs tab.
 - [ ] Step 5b: the "No letter yet" cards sit in one row, one card tall, and scroll sideways.
+- [ ] Step 5c: "+ letters" shows a realistic estimate (≈12¢ a letter on REAL today, from the
+  pipeline's draft calls until one-pass letters exist). After the second click, the band's jobs
+  leave "No letter yet" (an emptied band disappears) and appear in Keep Applying as "✍ Writing…"
+  cards (Open ad, no Copy), with "· N being written" in the count; each turns into a normal card
+  when its letter lands.
 
 ## Follow-ups (not in this plan)
 
@@ -399,3 +404,13 @@ The user chose (2026-10-15) to do every manual check together after the last ste
   (2) The top 3 suggested searches are back as rows, each with its own Scan more (one search per
   click, still no loop); the status line names the search. (3) The "No letter yet" cards are one
   row, one card tall, scrolling sideways (still the 6 highest non-empty bands).
+- 2026-10-15: USER: the "≈ 9¢ for 3" estimate was misleading (their letters cost ~20¢). Checked
+  read-only: no one-pass letter has run yet on either DB; a full pipeline letter averages 22.5¢ on
+  real.db and its draft call (the same strong model as the one-pass writer) ~12¢. The estimate now
+  comes from `llm_usage` (`letter_bands.letter_cost_estimate`: latest one-pass `cover_letter` calls,
+  else `generate_letter` calls, else 10¢); the Personalise note's "about 3¢" is now "about 10–15¢".
+  USER: a job being written belongs in Keep Applying with the writing notice, and leaves "No letter
+  yet". So: bands leave out band-queued jobs (the per-band `queued` and the "Writing N…" button are
+  gone; top-level `writing` counts them); GET /jobs gains `letter_queued`, and `ready=true` also
+  returns jobs being written (band-queued, or a pipeline run running/answered); Keep Applying shows
+  them as "✍ Writing…" cards and reloads every 15 s while any is writing.

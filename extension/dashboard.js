@@ -99,8 +99,9 @@ async function loadOverview() {
   ovData = obligation;
   if (!ovEditing) renderProgress();
   renderEvidence(evidence);
-  // A letter being rewritten, or paused on a question, isn't ready to send yet.
-  renderReady(ready.filter(job => coverLetterState(job) === 'ready'));
+  // Letters ready to send, and letters being written (shown with a notice); one paused on
+  // a question is on the progress card instead.
+  renderReady(ready.filter(job => ['ready', 'writing'].includes(coverLetterState(job))));
   renderBands(bands);
   renderSuggestions(suggestions);
 }
@@ -386,11 +387,17 @@ function renderStartDateEditor(el, { setup }) {
   el.appendChild(wrap);
 }
 
-// The Keep Applying row: one mini-card per job with a letter, best match first.
+// The Keep Applying row: one mini-card per job with a letter, or with one being written,
+// best match first. While any is being written, reload every 15 s: a band letter the worker
+// skips sends no event, so its "Writing" card would otherwise stay.
+let ovWritingPoll = null;
 function renderReady(jobs) {
   const keepLeft = ovScroller.scrollLeft;
   ovScroller.innerHTML = '';
-  setReadyCount(jobs.length);
+  clearTimeout(ovWritingPoll);
+  const writing = jobs.filter(job => coverLetterState(job) === 'writing').length;
+  if (writing) ovWritingPoll = setTimeout(refreshDashboard, 15000);
+  setReadyCount(jobs.length - writing, writing);
   if (!jobs.length) {
     ovScroller.appendChild(mk('div', 'ov-empty',
       `No cover letters waiting. Letters are written for matches scoring ${autoLetterMin}+, so scan more jobs below.`));
@@ -404,8 +411,10 @@ function renderReady(jobs) {
   updateArrows();
 }
 
-function setReadyCount(n) {
-  ovReadyCountEl.textContent = n ? `${plural(n, 'letter')} ready to send` : 'No letters ready';
+function setReadyCount(n, writing = 0) {
+  const parts = [n ? `${plural(n, 'letter')} ready to send` : 'No letters ready'];
+  if (writing) parts.push(`${writing} being written`);
+  ovReadyCountEl.textContent = parts.join(' · ');
   ovReadyCountEl.classList.toggle('none', !n);
 }
 
@@ -432,10 +441,17 @@ function renderMiniCard(job) {
   const open = mk('button', 'btn btn-sm', 'Open ad');
   open.title = 'Open the ad on Seek; the Quick Apply panel there has the letter';
   open.addEventListener('click', () => chrome.tabs.create({ url: job.url }));
-  const copy = mk('button', 'btn btn-sm', '⧉ Letter');
-  copy.title = 'Copy the cover letter (your edits if you made any)';
-  copy.addEventListener('click', () => copyLetter(job.job_id, copy));
-  actions.append(open, copy);
+  actions.appendChild(open);
+  if (coverLetterState(job) === 'writing') {
+    // The same notice as the Jobs tab's badge; Copy appears when the letter lands.
+    card.classList.add('writing');
+    actions.appendChild(mk('span', 'mc-writing', CL_BADGES.writing));
+  } else {
+    const copy = mk('button', 'btn btn-sm', '⧉ Letter');
+    copy.title = 'Copy the cover letter (your edits if you made any)';
+    copy.addEventListener('click', () => copyLetter(job.job_id, copy));
+    actions.appendChild(copy);
+  }
   card.appendChild(actions);
 
   // Two clicks: an application can't be un-marked (it's Centrelink evidence), so a
@@ -521,19 +537,16 @@ window.addEventListener('resize', updateArrows);
 // (GET /jobs/letter-bands, docs/overview-applied-rework-plan.md D3-D6). Only the top band
 // has "+ letters": one-shot letters for its best jobs (at most 10), after a confirming click.
 // ---------------------------------------------------------------------------
-const BAND_LETTER_CENTS = 3; // a one-shot letter, the figure the Personalise note uses
 let bandArmed = null;  // {key, timer}: the "+ letters" waiting for its confirming click
 let bandNotice = '';   // the last write's result, when it queued nothing
-let bandPoll = null;   // reloads while letters are queued: a skipped job sends no event
 
 function renderBands(data) {
-  clearTimeout(bandPoll);
   ovBandGrid.innerHTML = '';
   const bands = data?.bands || [];
   ovBandsEl.hidden = !bands.length;
   if (!bands.length) return;
   ovBandsSub.textContent = `${data.total} scored below ${data.bar}`;
-  bands.forEach((band, i) => ovBandGrid.appendChild(renderBandCard(band, i === 0)));
+  bands.forEach((band, i) => ovBandGrid.appendChild(renderBandCard(band, i === 0 ? data : null)));
 
   const waiting = bands.reduce((n, b) => n + b.waiting_check, 0);
   const notes = [];
@@ -543,36 +556,44 @@ function renderBands(data) {
   }
   ovBandNote.textContent = notes.join(' ');
   ovBandNote.hidden = !notes.length;
-  if (bands.some(b => b.queued)) bandPoll = setTimeout(refreshDashboard, 15000);
 }
 
+// `top`: the bands payload, passed only for the top band, which gets the button.
 function renderBandCard(band, top) {
   const card = mk('div', 'band-card');
   card.dataset.tier = tierOf(band.lo);
   card.title = `${plural(band.count, 'job')} scored ${band.lo}–${band.hi} with no cover letter`;
   card.append(mk('span', 'bc-range', `${band.hi}–${band.lo}`), mk('span', 'bc-count', String(band.count)));
   if (top) {
-    const btn = renderBandButton(band);
+    const btn = renderBandButton(band, top);
     if (btn) card.appendChild(btn);
   }
   return card;
 }
 
-function renderBandButton(band) {
+// "≈ 36¢", or "≈ US$1.20" from a dollar up
+function fmtEstimate(usd) {
+  return usd < 1 ? `≈ ${Math.max(1, Math.round(usd * 100))}¢` : `≈ US$${usd.toFixed(2)}`;
+}
+
+const EST_BASIS = {
+  one_pass: 'your recent one-pass letters',
+  draft: 'your full-pipeline draft calls (no one-pass letter yet)',
+  default: 'a rough default (no letter cost logged yet)',
+};
+
+function renderBandButton(band, data) {
   const key = `${band.lo}-${band.hi}`;
-  if (band.queued) {
-    const busy = mk('button', 'bc-btn', `Writing ${band.queued}…`);
-    busy.disabled = true;
-    return busy;
-  }
-  // Fresh jobs not already queued, at most 10 a click (the backend's cap).
+  // Fresh jobs (queued ones have left the bands), at most 10 a click (the backend's cap).
   const n = Math.min(band.ready, 10);
   if (!n) return null;
+  const each = data.est_usd_per_letter;
   const btn = mk('button', 'bc-btn', '+ letters');
-  btn.title = `Write quick one-pass letters for the best ${plural(n, 'job')} in this band`;
+  btn.title = `Write one-pass letters for the best ${plural(n, 'job')} in this band, `
+    + `${fmtEstimate(each)} each (estimated from ${EST_BASIS[data.est_basis] || 'past letters'})`;
   const arm = () => {
     btn.classList.add('confirm');
-    btn.textContent = `Write ${n}? ≈ ${n * BAND_LETTER_CENTS}¢`;
+    btn.textContent = `Write ${n}? ${fmtEstimate(n * each)}`;
   };
   if (bandArmed?.key === key) arm(); // a live reload mustn't drop the first click
   btn.addEventListener('click', async () => {
@@ -597,7 +618,7 @@ function renderBandButton(band) {
     } catch {
       alert('Could not start the letters — is the backend running?');
     }
-    loadOverview(); // shows "Writing N…" at once
+    loadOverview(); // the queued jobs move to Keep Applying as "Writing…" at once
   });
   return btn;
 }
