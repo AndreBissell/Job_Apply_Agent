@@ -418,6 +418,10 @@ def run(headed: bool, keep: bool = False) -> int:
                               "WHERE j.title = 'Ready 96'").fetchone()
             c.check(row[0] == "applied" and row[1], "the job is applied in the DB")
 
+            # the bin: two clicks. The DELETE is intercepted, so the scratch DB keeps the job and
+            # the reload afterwards brings the card back (later checks count 6 ready letters).
+            run_mini_delete_checks(c, side)
+
             # the "no letter yet" score bands
             run_band_checks(c, side)
 
@@ -472,6 +476,50 @@ def run(headed: bool, keep: bool = False) -> int:
     if not failed and not headed and not keep:
         shutil.rmtree(work, ignore_errors=True)
     return 1 if failed else 0
+
+
+def run_mini_delete_checks(c: Checks, side) -> None:
+    """The bin on a Keep Applying card: the first click arms it ("Delete?"), left alone it
+    disarms, the second click sends DELETE /jobs/{id} and the card leaves the row."""
+    print("Keep Applying bin")
+    cards = side.locator("#ov-scroller .mini-card")
+    c.check(cards.count() == 6 and cards.locator(".mc-del").count() == 6, "bin: one on every ready card")
+    first = cards.first
+    title = first.locator(".mc-title").inner_text()
+    job_id = first.get_attribute("data-job-id")
+    deletes: list[str] = []
+
+    def on_delete(r):
+        if r.request.method != "DELETE":
+            return r.fallback()
+        deletes.append(r.request.url)
+        return r.fulfill(status=200, content_type="application/json", body=json.dumps({"deleted": True}))
+
+    pattern = re.compile(rf"/jobs/{job_id}\?")
+    side.route(pattern, on_delete)
+    try:
+        bin_btn = first.locator(".mc-del")
+        bin_btn.click()
+        c.check(bin_btn.inner_text() == "Delete?" and "confirm" in (bin_btn.get_attribute("class") or "").split(),
+                f"bin: the first click asks 'Delete?' ({bin_btn.inner_text()!r})")
+        c.check(not deletes, "bin: one click deletes nothing")
+        c.check(wait_for(lambda: "confirm" not in (bin_btn.get_attribute("class") or "").split(), timeout_s=8),
+                "bin: left alone, it disarms")
+        c.check(not deletes, "bin: ...and still nothing is deleted")
+        bin_btn.click()
+        bin_btn.click()
+        c.check(wait_for(lambda: len(deletes) == 1), f"bin: the second click sends one DELETE ({deletes})")
+        c.check(bool(deletes) and f"/jobs/{job_id}?profile_id=1" in deletes[0], f"bin: ...for that job ({deletes[:1]})")
+        c.check(wait_for(lambda: side.locator("#ov-scroller .mini-card", has_text=title).count() == 0),
+                f"bin: the card '{title}' leaves the row")
+        c.check(side.inner_text("#ov-ready-count") == "5 letters ready to send", "bin: the ready count drops to 5")
+    finally:
+        side.unroute(pattern, on_delete)
+    # The job is still in the scratch DB (the DELETE never reached it): a reload brings it back.
+    side.click("nav#tabs .tab[data-tab=jobs]")
+    side.click("nav#tabs .tab[data-tab=overview]")
+    c.check(wait_for(lambda: side.locator("#ov-scroller .mini-card").count() == 6),
+            "bin: after a reload the (intercepted) job is back, 6 cards")
 
 
 def run_band_checks(c: Checks, side) -> None:

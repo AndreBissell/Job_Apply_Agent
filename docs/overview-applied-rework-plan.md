@@ -338,6 +338,8 @@ The user chose (2026-10-15) to do every manual check together after the last ste
 - [ ] Step 5d: after "+ letters", the button stays on that card while its range still has jobs to
   write, and moves to the next card when the range is used up (or only has jobs waiting for an
   availability check).
+- [ ] Keep Applying bin: the 🗑 on a card turns into "Delete?" on the first click, goes back after
+  4 s, and the second click removes the job (also from the Jobs tab). No bin on a "✍ Writing…" card.
 
 ## Follow-ups (not in this plan)
 
@@ -421,3 +423,7 @@ The user chose (2026-10-15) to do every manual check together after the last ste
   that range has more to write, else on the next. So "+ letters" now sits on the highest band with
   `ready > 0` (not always the first card): a band left with only jobs waiting for an availability
   check keeps its card and passes the button down. Updates D3's "button on the top band".
+- 2026-10-15: USER asked for a two-click bin on the Keep Applying cards. It uses the Jobs tab's own
+  Delete (DELETE /jobs/{id}, a hard delete; the backend refuses applied jobs, and these never are),
+  with the Mark applied pattern: first click arms "Delete?", 4 s to confirm. No bin on a card whose
+  letter is still being written, so a job is never deleted under the writer.

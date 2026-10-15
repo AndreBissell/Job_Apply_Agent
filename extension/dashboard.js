@@ -430,6 +430,8 @@ function renderMiniCard(job) {
     loc.title = job.location;
     top.appendChild(loc);
   }
+  // Not on a card still being written: its letter is in flight.
+  if (coverLetterState(job) !== 'writing') top.appendChild(renderMiniDelete(job, card));
   card.appendChild(top);
 
   const title = mk('div', 'mc-title', job.title || '(untitled)');
@@ -525,6 +527,51 @@ function updateArrows() {
 function scrollStep() {
   const card = 210; // 200px card + 10px gap
   return Math.max(1, Math.floor(ovScroller.clientWidth / card)) * card;
+}
+
+// The bin: two clicks, like Mark applied (the first arms it, 4 s to confirm), then the Jobs
+// tab's own Delete (DELETE /jobs/{id}; the backend refuses an applied job, and these never are).
+function renderMiniDelete(job, card) {
+  const del = mk('button', 'del-btn mc-del');
+  del.title = 'Delete this job';
+  del.innerHTML = TRASH_SVG;
+  let disarm = null;
+  const reset = () => {
+    del.classList.remove('confirm');
+    del.innerHTML = TRASH_SVG;
+    del.title = 'Delete this job';
+  };
+  del.addEventListener('click', async () => {
+    if (!del.classList.contains('confirm')) {
+      del.classList.add('confirm');
+      del.textContent = 'Delete?';
+      del.title = 'Click again to delete this job';
+      disarm = setTimeout(reset, 4000);
+      return;
+    }
+    clearTimeout(disarm);
+    del.disabled = true;
+    try {
+      const res = await fetch(`${BACKEND}/jobs/${job.job_id}?profile_id=${PROFILE_ID}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
+    } catch (e) {
+      del.disabled = false;
+      reset();
+      alert(`Could not delete the job: ${e.message}`);
+      return;
+    }
+    loadJobs(); // the Jobs tab drops it too
+    card.classList.add('leaving');
+    setTimeout(() => {
+      card.remove();
+      const left = ovScroller.querySelectorAll('.mini-card');
+      setReadyCount([...left].filter(c => !c.classList.contains('writing')).length,
+        ovScroller.querySelectorAll('.mini-card.writing').length);
+      if (!left.length) renderReady([]);
+      updateArrows();
+    }, 260);
+  });
+  return del;
 }
 
 ovPrev.addEventListener('click', () => ovScroller.scrollBy({ left: -scrollStep(), behavior: 'smooth' }));
