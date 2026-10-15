@@ -107,6 +107,27 @@ def test_detail_scraper_is_injected_only_into_scan_tabs():
     assert len(uses) == 1 + len(injections), "pageScrapeDetail is referenced outside its injection"
 
 
+def test_scan_more_opens_one_search_in_a_foreground_tab():
+    """The Overview's Scan more (CLAUDE.md, Seek access policy; D7 of
+    docs/overview-applied-rework-plan.md) opens ONE Seek search per click, the top suggestion,
+    in a foreground tab (active: true: the user clicked and sees it, so it is the page the user
+    opened), then scans that tab with the same scanPage. It never loops over the suggestions
+    or moves on to another search by itself."""
+    text = _sources()["dashboard.js"]
+    body = text[text.index("async function scanMore("):text.index("ovScanMoreBtn.addEventListener")]
+    calls = [_call_args(body, m.end() - 1) for m in re.finditer(r"chrome\.tabs\.create\(", body)]
+    assert len(calls) == 1, "Scan more opens exactly one tab"
+    assert re.search(r"\burl:\s*seekSearchUrl\(", calls[0]), calls[0]
+    assert re.search(r"\bactive:\s*true\b", calls[0]), f"the search tab must be in the foreground: {calls[0]}"
+    assert re.search(r"scanPage\(\s*\{\s*expectTabId:\s*tab\.id\b", body), "it scans the tab it opened"
+    loop = r"\bfor\s*\(|\bwhile\s*\(|\.forEach\(|\.map\("
+    assert not re.search(loop, body), "no loop: one search per click"
+    # The search is the top suggestion only, and dashboard.js builds a Seek search nowhere else.
+    pick = text[text.index("function renderSuggestions("):text.index("async function scanMore(")]
+    assert "suggestions?.[0]" in pick and not re.search(loop + r"|\.slice\(", pick)
+    assert len(re.findall(r"\bseekSearchUrl\(", text)) == 1
+
+
 # ---------------------------------------------------------------------------
 # Availability re-checks (CLAUDE.md, "Availability re-checks"): the side panel re-visits stored
 # listings in the background. Same stance as the scan: paced, capped, one page at a time, one hop.

@@ -324,6 +324,10 @@ The user chose (2026-10-15) to do every manual check together after the last ste
 - [ ] Step 5 (known-ids fix): Scan Page on the same "software developer" search no longer says
   "All jobs on this page already captured"; it opens new job pages (1 per scan on REAL, where
   Job pages per Scan is 1). real.db had 17 card-only jobs the old rule hid from the scan.
+- [ ] Step 5, TEST (pill on TEST, port 8001): Overview → Scan more: one Seek search tab opens in
+  front, the panel stays on the Overview, "Scanning 1/N…" then "Done: N new jobs captured…" (or a
+  clear "All N jobs on this page are already in your list."); switching tabs while it opens says
+  "You switched tabs…"; the header Scan Page still works and still jumps to the Jobs tab.
 
 ## Follow-ups (not in this plan)
 
@@ -377,3 +381,11 @@ The user chose (2026-10-15) to do every manual check together after the last ste
   add to: a description, OR any match (bulk-hidden rows lost their text but are scored), OR flagged
   closed. Only the scan reads known-ids. Still 1 hop: the jobs opened are links on the page the user
   opened. The `pageCollectJobLinks` polling stays (cheap insurance for a slow page).
+- 2026-10-15: Step 5 done (two commits: the known-ids fix first, then Scan more). `scanPage` takes
+  `{expectTabId, onStatus}` and keeps its active-tab query as is; the header button calls it with
+  no options. `pageCollectJobLinks` is async and polls 8 s. Scan more is a named `scanMore()` in
+  dashboard.js; a `scanMoreBusy` flag (beyond the plan) keeps the button off from the click until
+  the scan ends, since a live reload while the search page loads would otherwise re-enable it before
+  `scanning` is set. The header handler needed no change: Scan more calls `scanPage` directly, so
+  the handler's `showTab('jobs')` never runs for it. CLAUDE.md has the Scan more policy line;
+  tests/test_scan_policy.py pins one `seekSearchUrl` tab, `active: true`, no loop.

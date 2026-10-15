@@ -446,15 +446,9 @@
     .mc-applied:hover:not(:disabled) { background: #ecfdf5; }
     .mc-applied.confirm, .mc-applied.confirm:hover:not(:disabled) { background: #059669; color: #fff; }
     .mc-applied:disabled { opacity: .6; cursor: default; }
-    .ov-search {
-      display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
-      background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 9px 12px;
-      margin-bottom: 6px; cursor: pointer; font-size: 13px; color: #1c2330; font-family: inherit;
-    }
-    .ov-search:hover { border-color: #2557a7; background: #f0f4fb; }
-    .ov-search .q { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .ov-search .where { font-size: 12px; color: #6b7280; white-space: nowrap; }
-    .ov-search .chev { color: #9ca3af; font-size: 16px; }
+    .ov-scan-line { font-size: 12px; color: #374151; line-height: 1.45; }
+    .ov-scan-status { font-size: 12px; color: #2557a7; font-weight: 600; margin-top: 4px; }
+    .ov-scan-status:empty { display: none; }
     .ov-hint { font-size: 11px; color: #9ca3af; margin: 2px 0 0; }
     /* "No letter yet": one thin card per 5-point score band, two columns, row-major */
     .band-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
@@ -808,9 +802,12 @@
       <p class="ov-hint" id="ov-band-note" hidden></p>
     </section>
     <section class="ov-block">
-      <div class="ov-head"><div><h2>Scan more jobs</h2></div></div>
-      <div id="ov-searches"></div>
-      <p class="ov-hint" id="ov-search-hint" hidden>Open one, then press <strong>Scan Page</strong>.</p>
+      <div class="ov-head">
+        <div><h2>Scan more jobs</h2></div>
+        <button class="btn btn-sm" id="ov-scan-more" disabled>Scan more</button>
+      </div>
+      <div class="ov-scan-line" id="ov-scan-line"></div>
+      <div class="ov-scan-status" id="ov-scan-status" aria-live="polite"></div>
     </section>
   </div>
 

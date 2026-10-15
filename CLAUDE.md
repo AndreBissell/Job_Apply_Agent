@@ -47,6 +47,12 @@ by both the API (PreferencesUpdate le=25) and the sidebar (SCAN_PAGES_CEILING) â
 that ceiling is the policy cap: raise it deliberately if needed, don't remove it.
 Both constants and the scan code (scanPage, pageCollectJobLinks, pageScrapeDetail)
 live in extension/sidebar_scan.js; tests/test_scan_policy.py checks them wherever they are.
+Scan more (2026-10-15, docs/overview-applied-rework-plan.md D7): the Overview's Scan more button
+opens ONE Seek search page per click, the top suggested search (`seekSearchUrl`), in a FOREGROUND
+tab (`active: true`), then runs the same scanPage on that active tab. The user clicked and sees it,
+so it is the page the user opened. The 1-hop rule, SCAN_DELAY_MS, the cap and the no-second-hop
+line are unchanged; it never moves on to the next suggestion or to Seek's page 2 by itself
+(pinned by tests/test_scan_policy.py).
 
 
 The hard line that still holds â€” no second hop:

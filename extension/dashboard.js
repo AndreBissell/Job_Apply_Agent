@@ -6,6 +6,7 @@
 // Classic script loaded last, after sidebar.js and the sidebar_*.js files, sharing their
 // globals (scripts/js_globals.py prints where each lives): PROFILE_ID, mk,
 // tierOf, coverLetterState, autoLetterMin, seekSearchUrl, markApplied, loadJobs, showTab,
+// scanPage, scanning, scanMaxPages, waitForTabComplete (sidebar_scan.js),
 // typingIn, overviewSection, appliedSection, evidenceNote, csvEscape, TRASH_SVG,
 // apRecordOpen / toggleAppliedRecord / showAppliedRecord (applied_record.js), and
 // scanBtn (used at load time, so it must be declared by an earlier script). BACKEND
@@ -62,8 +63,9 @@ const ovScroller = document.getElementById('ov-scroller');
 const ovNav = document.getElementById('ov-nav');
 const ovPrev = document.getElementById('ov-prev');
 const ovNext = document.getElementById('ov-next');
-const ovSearchesEl = document.getElementById('ov-searches');
-const ovSearchHint = document.getElementById('ov-search-hint');
+const ovScanMoreBtn = document.getElementById('ov-scan-more');
+const ovScanLine = document.getElementById('ov-scan-line');
+const ovScanStatus = document.getElementById('ov-scan-status');
 const ovBandsEl = document.getElementById('ov-bands');
 const ovBandsSub = document.getElementById('ov-bands-sub');
 const ovBandGrid = document.getElementById('ov-band-grid');
@@ -600,32 +602,56 @@ function renderBandButton(band) {
   return btn;
 }
 
-// Scan More Jobs: the next 3 suggested searches. Ignores the Jobs-tab banner's 7-day
-// dismissal: this tab is where you come to pick the next search. Opening one is a normal
-// user-initiated tab (no request to Seek from here).
+// Scan More Jobs (D7, D8): one button that opens the TOP suggested search in a new foreground
+// tab and scans it, staying on this tab. One search per click: it never moves on to the next
+// suggestion or to Seek's page 2 by itself. The tab is opened by the user's click and shown
+// to them, so it is the page the user opened (CLAUDE.md, Seek access policy); the scan
+// then reads that active tab as Scan Page always does. Ignores the Jobs-tab banner's 7-day
+// dismissal: this tab is where you come to pick the next search.
+let ovTopSearch = null; // {phrase, where}: what Scan more searches next
+let scanMoreBusy = false; // from the click until its scan ends (scanPage sets `scanning` later)
+
 function renderSuggestions(data) {
-  ovSearchesEl.innerHTML = '';
-  const list = (data?.suggestions || []).slice(0, 3);
-  ovSearchHint.hidden = !list.length;
-  if (!list.length) {
-    ovSearchesEl.appendChild(mk('div', 'ov-empty',
-      'No suggestions yet. They come from the jobs you match well: search Seek yourself, then press Scan Page.'));
+  const phrase = data?.suggestions?.[0];
+  ovTopSearch = phrase ? { phrase, where: data.location || '' } : null;
+  ovScanMoreBtn.disabled = !ovTopSearch || scanning || scanMoreBusy;
+  if (!ovTopSearch) {
+    ovScanLine.textContent = 'No suggestions yet. They come from the jobs you match well: search Seek '
+      + 'yourself, then press Scan Page.';
     return;
   }
-  const where = data.location || '';
-  for (const phrase of list) {
-    const row = mk('button', 'ov-search');
-    row.title = `Open a Seek search for "${phrase}"${where ? ` in ${where}` : ''}`;
-    row.append(mk('span', null, '🔍'), mk('span', 'q', phrase));
-    if (where) row.appendChild(mk('span', 'where', where));
-    row.appendChild(mk('span', 'chev', '›'));
-    row.addEventListener('click', () => chrome.tabs.create({ url: seekSearchUrl(phrase, where) }));
-    ovSearchesEl.appendChild(row);
+  const where = ovTopSearch.where ? ` in ${ovTopSearch.where}` : '';
+  ovScanLine.textContent = `Searches "${phrase}"${where}, up to ${plural(scanMaxPages, 'new job')}.`;
+  ovScanMoreBtn.title = `Open a Seek search for "${phrase}"${where} and scan it`;
+}
+
+async function scanMore() {
+  if (scanning || scanMoreBusy || !ovTopSearch) return;
+  // Busy and both buttons off at once: a double click, or a live reload re-enabling the
+  // button while the search page loads, must not open a second search before scanPage
+  // sets `scanning`.
+  scanMoreBusy = true;
+  ovScanMoreBtn.disabled = true;
+  scanBtn.disabled = true;
+  const { phrase, where } = ovTopSearch;
+  ovScanStatus.textContent = 'Opening the search…';
+  try {
+    const tab = await chrome.tabs.create({ url: seekSearchUrl(phrase, where), active: true });
+    await waitForTabComplete(tab.id, 15000);
+    await scanPage({ expectTabId: tab.id, onStatus: msg => { ovScanStatus.textContent = msg; } });
+  } catch (e) {
+    ovScanStatus.textContent = `Could not open the search: ${e.message}`;
+  } finally {
+    scanMoreBusy = false;
+    scanBtn.disabled = scanning;
+    ovScanMoreBtn.disabled = scanning || !ovTopSearch;
   }
 }
 
+ovScanMoreBtn.addEventListener('click', scanMore);
+
 // Scan Page from the Overview: the Jobs list is the scan's progress display (and where
-// its notices appear), so go there.
+// its notices appear), so go there. (Scan more stays here: it calls scanPage itself.)
 scanBtn.addEventListener('click', () => {
   if (!overviewSection.hidden) showTab('jobs');
 });

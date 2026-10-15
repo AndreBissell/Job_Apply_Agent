@@ -26,6 +26,8 @@ const WEAK_STREAK_LIMIT = 3;
 const scanBtn = document.getElementById('scan-btn');
 const scanLogEl = document.getElementById('scanlog');
 let scanning = false;
+// The running scan's extra status line (the Overview's Scan more passes one); null otherwise.
+let scanStatusHook = null;
 
 // Per-page progress goes to the console only — the list itself is the progress
 // display (the "N more scanned — analysing" row at the bottom). scanNotice is
@@ -37,6 +39,12 @@ function scanLog(msg) {
 function scanNotice(msg) {
   scanLog(msg);
   scanLogEl.textContent = msg;
+  scanStatus(msg);
+}
+
+// Only to the caller's status line: brief progress the Jobs tab doesn't show.
+function scanStatus(msg) {
+  try { scanStatusHook?.(msg); } catch { /* a broken status line must not stop the scan */ }
 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
@@ -51,8 +59,13 @@ async function seekPace(gapMs) {
   lastSeekPageAt = Date.now();
 }
 
-// Runs inside the Seek page — collect all /job/<id> hrefs already on it.
-function pageCollectJobLinks() {
+// Runs inside the Seek page — collect all /job/<id> hrefs already on it. Seek draws its
+// results after the page loads, so wait (up to 8 s) until at least one link is there.
+async function pageCollectJobLinks() {
+  const start = Date.now();
+  while (!document.querySelector('a[href*="/job/"]') && Date.now() - start < 8000) {
+    await new Promise(r => setTimeout(r, 400));
+  }
   const out = [], seen = new Set();
   for (const a of document.querySelectorAll('a[href*="/job/"]')) {
     const href = a.getAttribute('href') || '';
@@ -123,16 +136,24 @@ async function ingestListing(listing) {
   } catch { return null; }
 }
 
-async function scanPage() {
+// The header's Scan Page calls this with no options. The Overview's Scan more passes the
+// search tab it just opened (expectTabId: the scan still reads the ACTIVE tab, and stops if
+// the user has switched away from it) and a status line for its notices and progress.
+async function scanPage({ expectTabId = null, onStatus = null } = {}) {
   if (scanning) return;
   scanning = true;
   scanBtn.disabled = true;
   scanLogEl.textContent = '';
+  scanStatusHook = onStatus;
   try {
     // A scan always wins over a background availability check: close its tab now, and the
     // checker waits until this scan is done (sidebar_availability.js).
     await cancelAvailabilityCheck();
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (expectTabId != null && tab?.id !== expectTabId) {
+      scanNotice('You switched tabs: open the search tab and press Scan Page.');
+      return;
+    }
     if (!tab || !/^https:\/\/(au\.seek\.com|www\.seek\.com\.au)\/[^?#]*jobs/i.test(tab.url || '')) {
       scanNotice('Open a Seek search results page in this tab first, then click Scan Page.');
       return;
@@ -161,7 +182,10 @@ async function scanPage() {
     const urls = newUrls.slice(0, scanMaxPages);
 
     if (skipped) scanLog(`Skipped ${skipped} already-captured job(s).`);
-    if (!urls.length) { scanNotice('All jobs on this page already captured.'); return; }
+    if (!urls.length) {
+      scanNotice(`All ${plural(allUrls.length, 'job')} on this page are already in your list.`);
+      return;
+    }
     scanLog(`Found ${newUrls.length} new link(s); scraping up to ${urls.length} (5s apart), screening as we go…`);
 
     // Scraping (the "producer") and quick-screening (the "consumer") run
@@ -175,12 +199,14 @@ async function scanPage() {
     const screenQueue = [];   // { label, jobId } pushed by the producer
     let producing = true;     // producer still has links left to try
     let abort = false;        // consumer decided to stop this search early
+    let captured = 0;
 
     async function produce() {
       for (let i = 0; i < urls.length; i++) {
         if (abort) { scanLog('Stopping further scraping — search abandoned early.'); break; }
         const label = `(${i + 1}/${urls.length})`;
         scanLog(`${label} opening job page…`);
+        scanStatus(`Scanning ${i + 1}/${urls.length}…`);
         let bgTab;
         try {
           await seekPace(SCAN_DELAY_MS);
@@ -220,6 +246,7 @@ async function scanPage() {
           const desc = payload.raw_description ? `${payload.raw_description.length} chars` : 'NO DESCRIPTION';
           if (jobId != null) {
             scanLog(`${label} captured ✓ (${desc})`);
+            captured += 1;
             screenQueue.push({ label, jobId });
             refreshPendingCount();
           } else {
@@ -266,14 +293,20 @@ async function scanPage() {
     await Promise.all([produce(), consume()]);
 
     scanLog(abort ? 'Scan stopped early — refreshing matches…' : 'Scan complete — refreshing matches…');
+    if (!abort) {
+      scanStatus(captured
+        ? `Done: ${plural(captured, 'new job')} captured; scoring ${captured === 1 ? 'it' : 'them'} now.`
+        : 'Done, but no job page could be read (details in the console).');
+    }
     loadJobs();
     refreshDashboard();
   } finally {
     lastSeekPageAt = Date.now(); // the checker leaves its own full gap after the scan's last page
     scanning = false;
     scanBtn.disabled = false;
+    scanStatusHook = null;
   }
 }
 
-scanBtn.addEventListener('click', scanPage);
+scanBtn.addEventListener('click', () => scanPage());
 document.getElementById('refresh-btn').addEventListener('click', () => { loadJobs(); refreshDashboard(); });

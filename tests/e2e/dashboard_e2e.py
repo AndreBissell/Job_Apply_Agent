@@ -20,11 +20,15 @@ Not collected by pytest (needs Chromium and a server). What it does:
    ``chrome.tabs.create`` is stubbed to record the URL: the panel never opens a tab, so
    nothing reaches Seek (a real tab can start loading before routing attaches to it).
 3. Checks the Overview (opens first, start-date prompt, progress, waiting letters, the
-   Keep Applying row and its arrows, Copy / Open / Mark applied, the suggested searches,
-   the ✎ editor), the "No letter yet" bands (the 6 highest of 7 bands, two columns, the
+   Keep Applying row and its arrows, Copy / Open / Mark applied, the
+   ✎ editor), the "No letter yet" bands (the 6 highest of 7 bands, two columns, the
    top card's "+ letters" two-click confirm and its POST {lo, hi}, "Writing 1..." after it,
    the availability-check note, the section hidden when there are no bands; the write
-   endpoint is intercepted, so nothing is queued) and the Applied tab (periods newest first with the current one open,
+   endpoint is intercepted, so nothing is queued), "Scan more" (the one line naming the top
+   search, a foreground tab, one injection into it, "All 2 jobs ... already in your list",
+   staying on the Overview, the switched-tab stop, a double click opening one tab; every
+   chrome.tabs / chrome.scripting call is stubbed before the click, so nothing is opened)
+   and the Applied tab (periods newest first with the current one open,
    counts against the target, cost and "not costed", + Interview set and undo, the
    per-period and full CSV exports), at a narrow and a wide panel width. A row opens its
    read-only record in place (it never opens the ad): the ad's status and summary, both
@@ -402,17 +406,8 @@ def run(headed: bool, keep: bool = False) -> int:
             # the "no letter yet" score bands
             run_band_checks(c, side)
 
-            # suggested searches
-            searches = side.locator("#ov-searches .ov-search")
-            n = searches.count()
-            c.check(1 <= n <= 3, f"1-3 suggested searches ({n})")
-            first_q = searches.first.locator(".q").inner_text() if n else ""
-            c.check(n and "Brisbane" in searches.first.inner_text(), "suggestions carry the search location")
-            c.check(side.is_visible("#ov-search-hint"), "hint: open one, then press Scan Page")
-            if n:
-                url = opened_url(lambda: searches.first.click())
-                slug = first_q.lower().replace(" ", "-") + "-jobs"
-                c.check(url == f"https://au.seek.com/{slug}?where=Brisbane", f"a suggestion opens its Seek search ({url})")
+            # Scan more (D7, D8): one button, one line, the Seek calls stubbed
+            run_scan_more_checks(c, side)
 
             # the ✎ editor
             side.click("#ov-progress .ov-edit-btn")
@@ -571,6 +566,116 @@ def run_band_checks(c: Checks, side) -> None:
     side.click("nav#tabs .tab[data-tab=overview]")
     c.check(wait_for(lambda: side.is_visible("#ov-bands") and side.locator("#ov-band-grid .band-card").count() == 6),
             "bands: the real data is back after un-routing")
+
+
+SCAN_STUBS = """() => {
+    window.__orig = {
+        create: chrome.tabs.create, query: chrome.tabs.query,
+        exec: chrome.scripting.executeScript, wait: window.waitForTabComplete,
+    };
+    window.__created = []; window.__injected = []; window.__createDelay = 0;
+    window.__queryTab = { id: 4242, url: 'https://au.seek.com/data-analyst-jobs/in-All-Brisbane-QLD' };
+    chrome.tabs.create = o => {
+        window.__created.push({ url: o.url, active: o.active });
+        window.__opened.push(o.url);
+        return new Promise(r => setTimeout(() => r({ id: 4242 }), window.__createDelay));
+    };
+    window.waitForTabComplete = async () => {};
+    chrome.tabs.query = () => Promise.resolve([window.__queryTab]);
+    chrome.scripting.executeScript = ({ target, func }) => {
+        window.__injected.push({ tabId: target.tabId, func: func.name });
+        return Promise.resolve([{ result: ['https://au.seek.com/job/90001', 'https://au.seek.com/job/90002'] }]);
+    };
+}"""
+
+SCAN_RESTORE = """() => {
+    chrome.tabs.create = window.__orig.create; chrome.tabs.query = window.__orig.query;
+    chrome.scripting.executeScript = window.__orig.exec; window.waitForTabComplete = window.__orig.wait;
+}"""
+
+
+def run_scan_more_checks(c: Checks, side) -> None:
+    """The Overview's Scan more button. Every chrome.tabs / chrome.scripting call the scan makes
+    is stubbed BEFORE the click (a real tab can load before Playwright's routing attaches), so
+    nothing is opened or injected; the two seeded links are jobs already in the list, so the
+    scan stops at "All 2 jobs ... already in your list" and never opens a job tab."""
+    print("Scan more")
+    c.check(side.locator("#ov-searches").count() == 0 and side.locator(".ov-search").count() == 0,
+            "scan more: the old suggestion rows are gone")
+    top = json.load(urllib.request.urlopen(f"{BACKEND}/jobs/suggested-searches?profile_id=1"))["suggestions"][0]
+    max_pages = side.evaluate("scanMaxPages")
+    line = side.inner_text("#ov-scan-line")
+    expect_line = f'Searches "{top}" in Brisbane, up to {max_pages} new jobs.'
+    c.check(side.is_enabled("#ov-scan-more") and side.inner_text("#ov-scan-more") == "Scan more",
+            "scan more: the button is enabled")
+    c.check(line == expect_line, f"scan more: the line reads {expect_line!r} (got {line!r})")
+    c.check(side.evaluate("ovTopSearch.phrase") == top, "scan more: the panel's top search is the API's first suggestion")
+    expect_url = side.evaluate("seekSearchUrl(ovTopSearch.phrase, 'Brisbane')")
+
+    side.evaluate(SCAN_STUBS)
+    try:
+        c.check(side.evaluate("chrome.tabs.create.toString().includes('__created') "
+                              "&& chrome.tabs.query.toString().includes('__queryTab') "
+                              "&& chrome.scripting.executeScript.toString().includes('__injected')"),
+                "scan more: tabs.create / tabs.query / scripting.executeScript are stubbed before the click")
+        c.check(side.evaluate("window.waitForTabComplete.toString().includes('{}') "
+                              "&& waitForTabComplete === window.waitForTabComplete"),
+                "scan more: waitForTabComplete override is what the panel's code sees")
+        side.evaluate("document.getElementById('ov-scan-status').textContent = ''")
+
+        # --- the happy path: one foreground tab, one injection, nothing to open -----
+        side.click("#ov-scan-more")
+        status = "All 2 jobs on this page are already in your list."
+        c.check(wait_for(lambda: side.inner_text("#ov-scan-status") == status, timeout_s=15),
+                f"scan more: the status reads {status!r} (got {side.inner_text('#ov-scan-status')!r})")
+        created = side.evaluate("window.__created")
+        c.check(len(created) == 1 and created[0]["url"] == expect_url and created[0]["active"] is True,
+                f"scan more: exactly one tab, the top search, in the foreground ({created})")
+        c.check(side.evaluate("window.__injected") == [{"tabId": 4242, "func": "pageCollectJobLinks"}],
+                f"scan more: one injection of pageCollectJobLinks into the new tab ({side.evaluate('window.__injected')})")
+        c.check(not any(t["active"] is False for t in created), "scan more: no job tab was opened")
+        c.check(side.is_visible("#overview-section") and side.is_hidden("#jobs-section")
+                and side.locator("nav#tabs .tab.active").inner_text() == "Overview",
+                "scan more: stays on the Overview")
+        c.check(wait_for(lambda: side.is_enabled("#ov-scan-more") and side.is_enabled("#scan-btn")),
+                "scan more: both buttons are enabled again afterwards")
+        c.check(not side.evaluate("scanning"), "scan more: the scan is not left running")
+
+        # --- the user switched tabs ----------------------------------------------------
+        side.evaluate("window.__queryTab = { id: 999, url: 'https://au.seek.com/data-analyst-jobs/in-All-Brisbane-QLD' }")
+        side.evaluate("document.getElementById('ov-scan-status').textContent = ''")
+        side.click("#ov-scan-more")
+        status = "You switched tabs: open the search tab and press Scan Page."
+        c.check(wait_for(lambda: side.inner_text("#ov-scan-status") == status, timeout_s=15),
+                f"scan more: a switched tab says {status!r} (got {side.inner_text('#ov-scan-status')!r})")
+        c.check(wait_for(lambda: side.is_enabled("#ov-scan-more") and side.is_enabled("#scan-btn")),
+                "scan more: buttons enabled again after the switched-tab stop")
+        c.check(len(side.evaluate("window.__injected")) == 1, "scan more: a switched tab injects nothing")
+        c.check(len(side.evaluate("window.__created")) == 2, "scan more: ...but the click did open its own search tab")
+
+        # --- a double click opens one tab ----------------------------------------------
+        side.evaluate("window.__queryTab = { id: 4242, url: 'https://au.seek.com/data-analyst-jobs/in-All-Brisbane-QLD' }")
+        side.evaluate("window.__createDelay = 300; window.__created.length = 0; window.__injected.length = 0; "
+                      "document.getElementById('ov-scan-status').textContent = ''")
+        side.evaluate("(() => { const b = document.getElementById('ov-scan-more'); b.click(); b.click(); })()")
+        c.check(side.is_disabled("#ov-scan-more") and side.is_disabled("#scan-btn"),
+                "scan more: both buttons go off at once")
+        # a live reload while the search tab is still opening must not re-enable it
+        side.evaluate("renderSuggestions({ suggestions: [ovTopSearch.phrase], location: 'Brisbane' })")
+        c.check(side.is_disabled("#ov-scan-more"), "scan more: a reload mid-open keeps the button off")
+        status = "All 2 jobs on this page are already in your list."
+        c.check(wait_for(lambda: side.inner_text("#ov-scan-status") == status, timeout_s=15),
+                "scan more: the double-clicked scan finishes")
+        time.sleep(0.5)
+        c.check(len(side.evaluate("window.__created")) == 1 and len(side.evaluate("window.__injected")) == 1,
+                f"scan more: a double click opens one tab and scans once ({side.evaluate('window.__created')})")
+        c.check(wait_for(lambda: side.is_enabled("#ov-scan-more") and side.is_enabled("#scan-btn")),
+                "scan more: buttons enabled after the double click")
+    finally:
+        side.evaluate(SCAN_RESTORE)
+    c.check(side.evaluate("chrome.tabs.create.toString().includes('__opened') "
+                          "&& !chrome.tabs.create.toString().includes('__created')"),
+            "scan more: the earlier recording tab stub is back")
 
 
 def run_applied_checks(c: Checks, side, con, work: Path) -> None:
