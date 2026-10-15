@@ -527,10 +527,14 @@
     .p-cost { font-size: 12px; color: #6b7280; font-variant-numeric: tabular-nums; white-space: nowrap; }
     .p-jobs { list-style: none; margin: 0; padding: 0; border-top: 1px solid #eef0f3; }
     .p-jobs li {
-      display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+      display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 8px 12px;
       border-bottom: 1px solid #f3f4f6; cursor: pointer;
     }
     .p-jobs li:hover { background: #f0f4fb; }
+    .p-jobs li.open, .p-jobs li.open:hover { background: #f8fafc; }
+    /* the row's chevron: not rotated by its open period (details.period[open] .p-chev) */
+    details.period[open] .p-jobs li > .p-chev { transform: none; }
+    details.period[open] .p-jobs li.open > .p-chev { transform: rotate(90deg); }
     .pj-main { flex: 1; min-width: 0; }
     .pj-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .pj-meta { font-size: 12px; color: #6b7280; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -552,6 +556,35 @@
       padding: 8px 12px; font-size: 11px; color: #9ca3af;
     }
     .p-foot .btn { margin-left: auto; }
+
+    /* Applied record: one application opened in place (extension/applied_record.js) */
+    .ap-record {
+      flex: 1 0 100%; min-width: 0; cursor: default; margin-top: 6px; padding: 8px 10px;
+      background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;
+      font-size: 12px; line-height: 1.45; color: #1c2330;
+    }
+    .ar-top { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .ar-status { font-size: 11px; color: #6b7280; }
+    .ar-status.closed { color: #b45309; }
+    .ar-sec { margin-top: 8px; }
+    .ar-sec h5 {
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      margin: 0 0 3px; font-size: 10px; font-weight: 700; letter-spacing: .06em;
+      text-transform: uppercase; color: #6b7280;
+    }
+    .ar-facts { font-size: 11px; color: #6b7280; }
+    .ar-summary { margin: 2px 0 4px; overflow-wrap: anywhere; }
+    .ar-skills, .ar-gaps { font-size: 11px; color: #374151; margin-top: 4px; overflow-wrap: anywhere; }
+    .ar-reason { overflow-wrap: anywhere; }
+    .ar-note { font-size: 11px; font-style: italic; color: #6b7280; }
+    details.ar-full { margin-top: 4px; }
+    details.ar-full > summary { cursor: pointer; font-size: 11px; color: #2557a7; }
+    .ar-text, .ar-letter {
+      white-space: pre-wrap; overflow-wrap: anywhere; overflow: auto;
+      background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; padding: 6px 8px;
+    }
+    .ar-text { max-height: 240px; margin-top: 4px; font-size: 11px; color: #4b5563; }
+    .ar-letter { max-height: 16em; }
 
     /* ── Profile tab ──────────────────────────────────────── */
     #profile-section { padding: 12px 14px 24px; }
@@ -1030,6 +1063,7 @@
   <script src="sidebar_profile.js"></script>
   <script src="sidebar_seek_import.js"></script>
   <script src="sidebar_events.js"></script>
+  <script src="applied_record.js"></script>
   <script src="sidebar.js"></script>
   <script src="dashboard.js"></script>
 </body>

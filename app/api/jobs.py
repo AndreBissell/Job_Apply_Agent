@@ -55,6 +55,11 @@ def _json_list(raw: str | None) -> list[str]:
     return [item for item in data if isinstance(item, str)] if isinstance(data, list) else []
 
 
+def _iso(dt) -> str | None:
+    """Aware-UTC ISO text, so the panel's ``new Date()`` reads it as UTC (SQLite hands back naive)."""
+    return retention.utc(dt).isoformat() if dt is not None else None
+
+
 def _eligibility_notes(job: JobListing) -> list[str]:
     """Requirements the cover-letter pipeline judged not-for-a-letter (work rights,
     licence, clearance, availability), for display on the job card as a heads-up.
@@ -252,7 +257,7 @@ def get_job(job_id: int, profile_id: int = 1, db: Session = Depends(get_db)) -> 
         "apply_type": job.apply_type,
         "raw_description": job.raw_description,
         "eligibility_notes": _eligibility_notes(job),
-        "date_scraped": job.date_scraped.isoformat() if job.date_scraped else None,
+        "date_scraped": _iso(job.date_scraped),
         "summary": job.summary,
         "key_responsibilities": _json_list(job.key_responsibilities),
         "seniority": job.seniority,
@@ -261,12 +266,8 @@ def get_job(job_id: int, profile_id: int = 1, db: Session = Depends(get_db)) -> 
             "hard": [js.name for js in job.job_skills if js.skill_type == "hard"],
             "soft": [js.name for js in job.job_skills if js.skill_type == "soft"],
         },
-        "expired_detected_at": (
-            job.expired_detected_at.isoformat() if job.expired_detected_at else None
-        ),
-        "last_seen_live_at": (
-            job.last_seen_live_at.isoformat() if job.last_seen_live_at else None
-        ),
+        "expired_detected_at": _iso(job.expired_detected_at),
+        "last_seen_live_at": _iso(job.last_seen_live_at),
         "match": (
             {
                 "score": _score_to_number(match.score),
@@ -275,7 +276,7 @@ def get_job(job_id: int, profile_id: int = 1, db: Session = Depends(get_db)) -> 
                 "status": match.status,
                 "applied_at": match.applied_at.isoformat() if match.applied_at else None,
                 "applied_via": match.applied_via,
-                "interview_at": match.interview_at.isoformat() if match.interview_at else None,
+                "interview_at": _iso(match.interview_at),
             }
             if match is not None
             else None
@@ -285,8 +286,8 @@ def get_job(job_id: int, profile_id: int = 1, db: Session = Depends(get_db)) -> 
                 "generated_content": cover.generated_content,
                 "edited_content": cover.edited_content,
                 "status": cover.status,
-                "created_at": cover.created_at.isoformat() if cover.created_at else None,
-                "updated_at": cover.updated_at.isoformat() if cover.updated_at else None,
+                "created_at": _iso(cover.created_at),
+                "updated_at": _iso(cover.updated_at),
             }
             if cover is not None
             else None

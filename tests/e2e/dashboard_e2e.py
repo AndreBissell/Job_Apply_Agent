@@ -22,7 +22,12 @@ Not collected by pytest (needs Chromium and a server). What it does:
    Keep Applying row and its arrows, Copy / Open / Mark applied, the suggested searches,
    the ✎ editor) and the Applied tab (periods newest first with the current one open,
    counts against the target, cost and "not costed", + Interview set and undo, the
-   per-period and full CSV exports), at a narrow and a wide panel width. Then deleting:
+   per-period and full CSV exports), at a narrow and a wide panel width. A row opens its
+   read-only record in place (it never opens the ad): the ad's status and summary, both
+   responsibilities, skills, the full text, the match, the letter as last saved (edited wins);
+   "No cover letter was saved" and the dead ad ("Ad closed", "The ad text wasn't kept"); a
+   click inside it doesn't collapse it, it survives a reload, and "Open ad on Seek" is the
+   one way to the ad (recorded, never opened). Then deleting:
    no Delete on an applied job's Jobs card (a row with applied_at set but status 'new'
    shows ✓ Applied there too), the backend's 409, and the Applied tab's Delete
    (cancel, confirm, the row, DB rows and period count gone).
@@ -60,6 +65,17 @@ EDITED_LETTER = "Dear Hiring Manager, this is MY EDITED letter. Sincerely, E2E T
 TODAY = dt.date.today()
 ANCHOR = TODAY - dt.timedelta(days=3)  # the period start the test types in
 
+# What the Applied tab's record shows (Current Analyst A has all of it, Previous Role 0 is a
+# dead ad, Current Analyst C has nothing saved).
+A_GENERATED = "GENERATED letter text for Analyst A. Sincerely, E2E Test"
+A_EDITED = "EDITED letter text for Analyst A. Sincerely, E2E Test"
+A_SUMMARY = "Build dashboards and reports for the finance team."
+A_RESPONSIBILITIES = ["Maintain the weekly sales dashboard", "Write SQL for ad hoc requests"]
+A_AD_TEXT = "About the role\nWe need a data analyst.\nYou will write SQL and build dashboards.\nApply now."
+DEAD_SUMMARY = "An old role that Seek has taken down."
+DEAD_LETTER = "Dear Hiring Manager, the letter for the closed ad. Sincerely, E2E Test"
+DEAD_DAY = TODAY - dt.timedelta(days=5)  # the day the dead ad was noticed closed
+
 
 def add_months(d: dt.date, k: int) -> dt.date:
     from app.obligation import add_months as _add
@@ -92,7 +108,7 @@ def seed(url: str) -> None:
     from sqlalchemy.orm import Session
 
     from app.llm.letter.state import JobInfo, LetterState
-    from app.models import CoverLetter, JobListing, LetterRun, LlmUsage, Match, Profile, Skill
+    from app.models import CoverLetter, JobListing, JobSkill, LetterRun, LlmUsage, Match, Profile, Skill
 
     engine = create_engine(url)
     with Session(engine) as s:
@@ -103,13 +119,18 @@ def seed(url: str) -> None:
         s.flush()
         next_id = iter(range(1, 1000))
 
-        def job(title, score, *, applied=None, hidden=False, letter=None, edited=None, company=None):
+        def job(title, score, *, applied=None, hidden=False, letter=None, edited=None, company=None,
+                record=None, skills=()):
+            # record: extra JobListing columns (the Applied tab's record shows them);
+            # skills: hard skill names for job_skills.
             jid = next(next_id)
             s.add(JobListing(id=jid, source="seek", source_job_id=f"9{jid:04d}",
                              url=f"https://au.seek.com/job/9{jid:04d}", title=title,
                              company=company or f"Company {jid}", location="Brisbane QLD",
-                             extracted_at=dt.datetime.now(dt.timezone.utc)))
+                             extracted_at=dt.datetime.now(dt.timezone.utc), **(record or {})))
             s.flush()
+            for name in skills:
+                s.add(JobSkill(job_id=jid, name=name, skill_type="hard"))
             s.add(Match(id=jid, user_id=1, job_id=jid, score=score, status="applied" if applied else "new",
                         applied_at=local_noon_utc(applied) if applied else None,
                         hidden_at=dt.datetime.now(dt.timezone.utc) if hidden else None))
@@ -122,7 +143,12 @@ def seed(url: str) -> None:
             s.add(LlmUsage(task="match", tier="small", model="stub", cost_usd=Decimal(str(usd)), job_id=jid))
 
         # Current period (starts ANCHOR): 3 applications, one hidden, one never costed.
-        cur = [job("Current Analyst A", 91, applied=ANCHOR),
+        cur = [job("Current Analyst A", 91, applied=ANCHOR, letter=A_GENERATED, edited=A_EDITED,
+                   skills=("SQL", "Tableau"), record={
+                       "raw_description": A_AD_TEXT, "summary": A_SUMMARY,
+                       "key_responsibilities": json.dumps(A_RESPONSIBILITIES),
+                       "date_scraped": local_noon_utc(ANCHOR - dt.timedelta(days=1)),
+                       "last_seen_live_at": local_noon_utc(ANCHOR)}),
                job("Current Analyst B", 84, applied=TODAY - dt.timedelta(days=1), hidden=True),
                job("Current Analyst C", 77, applied=TODAY)]
         cost(cur[0], 0.12)
@@ -131,7 +157,11 @@ def seed(url: str) -> None:
         # Previous period: 2 applications.
         prev_start = add_months(ANCHOR, -1)
         for i in range(2):
-            cost(job(f"Previous Role {i}", 80, applied=prev_start + dt.timedelta(days=i + 1)), 0.10)
+            # Previous Role 0 is a dead ad: no text kept, a summary, a letter as generated.
+            dead = ({"raw_description": None, "summary": DEAD_SUMMARY,
+                     "expired_detected_at": local_noon_utc(DEAD_DAY)} if i == 0 else None)
+            cost(job(f"Previous Role {i}", 80, applied=prev_start + dt.timedelta(days=i + 1),
+                     letter=DEAD_LETTER if i == 0 else None, record=dead), 0.10)
         # Two back: 21 applications (target met).
         two_back = add_months(ANCHOR, -2)
         for i in range(21):
@@ -467,11 +497,73 @@ def run_applied_checks(c: Checks, side, con, work: Path) -> None:
     c.check(wait_for(lambda: iv.inner_text() == "+ Interview"), "click again (confirmed): undone")
     c.check(con.execute("SELECT interview_at FROM matches WHERE id = 1").fetchone()[0] is None, "interview cleared in the DB")
 
-    # a row opens its ad
-    before = side.evaluate("window.__opened.length")
+    # a row opens its record in place (not the ad); the ad is the record's first button
+    def record_text(row) -> str:
+        return row.locator(".ap-record").inner_text()
+
+    def opened_url(click):
+        before = side.evaluate("window.__opened.length")
+        click()
+        wait_for(lambda: side.evaluate("window.__opened.length") > before)
+        return side.evaluate("window.__opened.at(-1) || ''")
+
+    opened_before = side.evaluate("window.__opened.length")
     row_a.locator(".pj-title").click()
-    wait_for(lambda: side.evaluate("window.__opened.length") > before)
-    c.check(side.evaluate("window.__opened.at(-1)") == "https://au.seek.com/job/90001", "a row opens its ad")
+    row_a.locator(".ap-record button", has_text="Open ad on Seek").wait_for(timeout=10000)
+    rec = row_a.locator(".ap-record")
+    c.check(rec.count() == 1 and side.evaluate("window.__opened.length") == opened_before,
+            "a row opens its record inside the row, and does not open the ad")
+    text = record_text(row_a)
+    low = text.lower()
+    c.check("the ad" in low and "the match" in low and "cover letter (your edited version)" in low,
+            "record: The ad / The match / Cover letter (your edited version) sections")
+    c.check(f"Last seen live {ANCHOR.strftime('%d/%m')}" in text and "Ad closed" not in text,
+            f"record: ad status 'Last seen live {ANCHOR.strftime('%d/%m')}'")
+    c.check(A_SUMMARY in text and all(r in text for r in A_RESPONSIBILITIES),
+            "record: the summary and both responsibilities")
+    c.check("Skills: SQL, Tableau" in text, "record: the ad's skills")
+    c.check("Full ad text (as captured" in text, "record: the full ad text is offered, with its capture date")
+    full = row_a.locator("details.ar-full")
+    c.check(not full.evaluate("d => d.open") and "You will write SQL" not in text, "record: full ad text starts closed")
+    full.locator("summary").click()
+    c.check(wait_for(lambda: "You will write SQL" in row_a.locator(".ar-text").inner_text()),
+            "record: the full ad text opens")
+    full.locator("summary").click()
+    c.check(row_a.locator(".ar-letter").inner_text() == A_EDITED and A_GENERATED not in text,
+            "record: the letter is the edited version, not the generated one")
+    c.check(row_a.locator(".ar-letter").get_attribute("contenteditable") is None
+            and row_a.locator(".ap-record textarea").count() == 0, "record: the letter is read-only")
+    c.check(row_a.locator(".ap-record h5 button").inner_text().strip().lower().endswith("copy"),
+            "record: the letter has a Copy button")
+    c.check(row_a.locator(".ar-reason .score").inner_text() == "91" and "never scored" not in text,
+            "record: the match section shows the score")
+
+    # the Open ad button is the way to Seek (recorded, never opened)
+    url = opened_url(lambda: row_a.locator(".ap-record button", has_text="Open ad on Seek").click())
+    c.check(url == "https://au.seek.com/job/90001", f"Open ad on Seek records the ad URL ({url})")
+    c.check(row_a.locator(".ap-record").count() == 1, "...and the record stays open")
+
+    # a click inside the record does not collapse it
+    row_a.locator(".ar-letter").click()
+    time.sleep(0.2)
+    c.check(row_a.locator(".ap-record").count() == 1, "clicking inside the record doesn't collapse it")
+    c.check("open" in (row_a.get_attribute("class") or "").split(), "the open row is marked")
+
+    # an open record survives a reload (tab switch)
+    side.click("nav#tabs .tab[data-tab=overview]")
+    side.click("nav#tabs .tab[data-tab=applied]")
+    c.check(wait_for(lambda: A_EDITED in record_text(row_a) if row_a.locator(".ap-record").count() else False),
+            "an open record is kept across a reload, with its content")
+    c.check(row_a.locator(".ap-record").count() == 1, "...exactly once")
+
+    # no letter saved
+    row_c = periods.nth(0).locator(".p-jobs li", has_text="Current Analyst C")
+    row_c.locator(".pj-title").click()
+    c.check(wait_for(lambda: "No cover letter was saved for this application." in (
+        record_text(row_c) if row_c.locator(".ap-record").count() else "")),
+        "a job with no letter says none was saved")
+    row_c.locator(".pj-title").click()
+    c.check(row_c.locator(".ap-record").count() == 0, "clicking the title again collapses the record")
 
     # open sections survive a reload
     periods.nth(1).locator("summary").click()
@@ -480,6 +572,21 @@ def run_applied_checks(c: Checks, side, con, work: Path) -> None:
     time.sleep(0.8)
     opened = [side.evaluate(f"document.querySelectorAll('details.period')[{i}].open") for i in range(3)]
     c.check(opened == [True, True, False], f"open sections are kept across a reload ({opened})")
+
+    # a dead ad: no text kept, but the summary and the letter still read
+    row_dead = periods.nth(1).locator(".p-jobs li", has_text="Previous Role 0")
+    row_dead.locator(".pj-title").click()
+    row_dead.locator(".ap-record button", has_text="Open ad on Seek").wait_for(timeout=10000)
+    dead = record_text(row_dead)
+    c.check(f"Ad closed (noticed {DEAD_DAY.strftime('%d/%m')})" in dead and "Last seen live" not in dead,
+            f"dead ad: 'Ad closed (noticed {DEAD_DAY.strftime('%d/%m')})'")
+    c.check("The ad text wasn't kept." in dead and "Full ad text" not in dead, "dead ad: says the ad text wasn't kept")
+    c.check(DEAD_SUMMARY in dead, "dead ad: its summary still shows")
+    c.check("cover letter (as generated)" in dead.lower() and row_dead.locator(".ar-letter").inner_text() == DEAD_LETTER,
+            "dead ad: its letter shows, 'as generated'")
+    row_dead.locator(".pj-title").click()
+    c.check(row_dead.locator(".ap-record").count() == 0 and "open" not in (row_dead.get_attribute("class") or "").split(),
+            "the dead ad's record collapses")
 
     # exports
     with side.expect_download() as dl:
@@ -496,13 +603,19 @@ def run_applied_checks(c: Checks, side, con, work: Path) -> None:
     c.check(len(all_rows) == 28, f"Export CSV: header + all 27 applications ({len(all_rows)})")
     c.check(dates == sorted(dates, reverse=True), "Export CSV: newest first")
 
+    # with one record open, so the layout checks cover it (row A is still open from above)
+    c.check(row_a.locator(".ap-record").count() == 1, "row A's record is open for the layout checks")
     c.check(side.evaluate("document.scrollingElement.scrollWidth <= window.innerWidth"), "narrow: no sideways page scroll")
+    c.check(side.evaluate("(() => { const r = document.querySelector('.ap-record').getBoundingClientRect(); "
+                          "return r.right <= window.innerWidth && r.left >= 0; })()"), "narrow: the record fits the panel")
     side.screenshot(path=str(work / "applied-narrow.png"), full_page=True)
     side.set_viewport_size({"width": 760, "height": 900})
     time.sleep(0.4)
     c.check(side.evaluate("document.scrollingElement.scrollWidth <= window.innerWidth"), "wide: no sideways page scroll")
     side.screenshot(path=str(work / "applied-wide.png"))
     side.set_viewport_size({"width": 380, "height": 900})
+    row_a.locator(".pj-title").click()
+    c.check(side.locator(".ap-record").count() == 0, "row A's record is collapsed again")
 
     # no start date: calendar months, with a pointer to the Overview
     prefs = json.loads(con.execute("SELECT preferences FROM profiles WHERE id = 1").fetchone()[0])

@@ -6,7 +6,8 @@
 // Classic script loaded last, after sidebar.js and the sidebar_*.js files, sharing their
 // globals (scripts/js_globals.py prints where each lives): PROFILE_ID, mk,
 // tierOf, coverLetterState, autoLetterMin, seekSearchUrl, markApplied, loadJobs, showTab,
-// typingIn, overviewSection, appliedSection, evidenceNote, csvEscape, TRASH_SVG, and
+// typingIn, overviewSection, appliedSection, evidenceNote, csvEscape, TRASH_SVG,
+// apRecordOpen / toggleAppliedRecord / showAppliedRecord (applied_record.js), and
 // scanBtn (used at load time, so it must be declared by an earlier script). BACKEND
 // comes from config.js.
 
@@ -641,9 +642,12 @@ function periodCostText(period) {
 function renderPeriodJob(job) {
   const li = document.createElement('li');
   li.dataset.jobId = job.job_id;
-  li.title = 'Open the ad';
-  li.addEventListener('click', () => chrome.tabs.create({ url: job.url }));
+  // The row opens the application's record in place (applied_record.js); the ad itself is
+  // the record's first button, so a closed ad still has its letter and summary.
+  li.title = 'Show this application';
+  li.addEventListener('click', () => toggleAppliedRecord(li, job));
 
+  li.appendChild(mk('span', 'p-chev', '▶'));
   const main = mk('div', 'pj-main');
   main.appendChild(mk('div', 'pj-title', job.title || '(untitled)'));
   const meta = [job.company, `Applied ${fmtDay(localDay(job.applied_at))}`];
@@ -674,10 +678,11 @@ function renderPeriodJob(job) {
   del.title = 'Delete this application';
   del.innerHTML = TRASH_SVG;
   del.addEventListener('click', (e) => {
-    e.stopPropagation(); // the row opens the ad
+    e.stopPropagation(); // the row toggles its record
     deleteApplication(job, del);
   });
   li.appendChild(del);
+  if (apRecordOpen.has(job.job_id)) showAppliedRecord(li, job);
   return li;
 }
 

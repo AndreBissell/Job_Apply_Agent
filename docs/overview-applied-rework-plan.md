@@ -321,3 +321,10 @@ the new file in the repo layout. PROGRESS.md slim block. docs/database-schema.md
   record fields (tests/test_job_detail.py). `test_hidden_jobs_stay_out_of_the_applied_tab` relied
   on the bug (it hid an applied job through bulk-hide), so it now stamps `hidden_at` directly.
   The 2 damaged applied rows in app.db (TEST) stay hidden with no ad text; Step 2 must render them.
+- 2026-10-15: Step 2 done. `extension/applied_record.js` loads before `sidebar.js` (not right
+  before `dashboard.js`: tests/test_js_globals.py and sidebar_load_e2e pin those two as the last
+  scripts). The record goes inside the row's `<li>` (flex-wrap), with open ids and the fetched
+  record cached so a reload redraws it without a fetch. The screenshot note stays on the row
+  (`evidenceNote` already draws it there), so the record doesn't repeat it. `GET /jobs/{id}` now
+  returns its datetimes as aware UTC (`_iso`), since SQLite drops the zone and the panel would
+  read them as local time. The optional overlay hint on Seek is skipped.

@@ -32,7 +32,7 @@ function evidenceNote(job) {
     view.href = `${BACKEND}${job.screenshot_url}`;
     view.target = '_blank';
     view.textContent = 'View';
-    view.addEventListener('click', (e) => e.stopPropagation()); // the row itself opens the ad
+    view.addEventListener('click', (e) => e.stopPropagation()); // not the row's own click
     note.append(' · ', view);
     return note;
   }

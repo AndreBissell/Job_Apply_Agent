@@ -121,6 +121,9 @@ class TestRecordFields:
         assert data["expired_detected_at"].startswith("2026-10-05T12:00")
         assert data["last_seen_live_at"].startswith("2026-10-01T09:30")
         assert data["match"]["interview_at"].startswith("2026-10-09T15:00")
+        # SQLite drops the zone; the panel's new Date() must still read these as UTC.
+        assert data["expired_detected_at"].endswith("+00:00")
+        assert data["last_seen_live_at"].endswith("+00:00")
         assert data["cover_letter"]["created_at"] is not None
         assert data["cover_letter"]["updated_at"] is not None
 

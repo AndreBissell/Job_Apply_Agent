@@ -215,6 +215,7 @@ job-app-assistant/
     sidebar_shared.js sidebar_jobs.js sidebar_letter_notes.js sidebar_letter_card.js
     sidebar_evidence.js sidebar_suggest.js sidebar_scan.js sidebar_personalise.js
     sidebar_profile.js sidebar_seek_import.js sidebar_events.js
+    applied_record.js  # Applied tab: one application's read-only record (ad, match, letter)
     sidebar.js         # env pill, zoom, startup
     dashboard.js       # Overview + Applied tabs; loaded last
       They share one global scope, so load order is the contract: no top-level name in two
