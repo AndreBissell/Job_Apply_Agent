@@ -164,6 +164,7 @@ autoLetterSaveBtn.addEventListener('click', async () => {
     updateLetterLoopNote();
     autoLetterSaveBtn.textContent = 'Saved ✓';
     loadJobs(); // cards move between "pending" and "no letter" states
+    refreshDashboard(); // the Overview's "no letter yet" bands are anchored on this score
   } catch {
     autoLetterSaveBtn.textContent = 'Error';
   }

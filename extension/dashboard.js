@@ -64,6 +64,10 @@ const ovPrev = document.getElementById('ov-prev');
 const ovNext = document.getElementById('ov-next');
 const ovSearchesEl = document.getElementById('ov-searches');
 const ovSearchHint = document.getElementById('ov-search-hint');
+const ovBandsEl = document.getElementById('ov-bands');
+const ovBandsSub = document.getElementById('ov-bands-sub');
+const ovBandGrid = document.getElementById('ov-band-grid');
+const ovBandNote = document.getElementById('ov-band-note');
 
 let ovData = null;     // the last GET /obligation payload
 let ovEditing = false; // the start-date editor is open: reloads wait so it isn't wiped
@@ -71,15 +75,17 @@ let ovSeq = 0;         // drops a slow response that a newer load has overtaken
 
 async function loadOverview() {
   const seq = ++ovSeq;
-  let obligation, ready, suggestions, evidence;
+  let obligation, ready, suggestions, evidence, bands;
   try {
-    [obligation, ready, suggestions, evidence] = await Promise.all([
+    [obligation, ready, suggestions, evidence, bands] = await Promise.all([
       getJson(`${BACKEND}/obligation?profile_id=${PROFILE_ID}`),
       getJson(`${BACKEND}/jobs?profile_id=${PROFILE_ID}&ready=true&limit=200`),
       // A nicety: the rest of the tab still works without it.
       getJson(`${BACKEND}/jobs/suggested-searches?profile_id=${PROFILE_ID}`).catch(() => null),
       // So is this (an older backend has no /evidence/status).
       getJson(`${BACKEND}/evidence/status?profile_id=${PROFILE_ID}`).catch(() => null),
+      // And this: the "no letter yet" bands.
+      getJson(`${BACKEND}/jobs/letter-bands?profile_id=${PROFILE_ID}`).catch(() => null),
     ]);
   } catch {
     if (seq !== ovSeq) return;
@@ -93,6 +99,7 @@ async function loadOverview() {
   renderEvidence(evidence);
   // A letter being rewritten, or paused on a question, isn't ready to send yet.
   renderReady(ready.filter(job => coverLetterState(job) === 'ready'));
+  renderBands(bands);
   renderSuggestions(suggestions);
 }
 
@@ -506,6 +513,92 @@ ovPrev.addEventListener('click', () => ovScroller.scrollBy({ left: -scrollStep()
 ovNext.addEventListener('click', () => ovScroller.scrollBy({ left: scrollStep(), behavior: 'smooth' }));
 ovScroller.addEventListener('scroll', updateArrows, { passive: true });
 window.addEventListener('resize', updateArrows);
+
+// ---------------------------------------------------------------------------
+// No letter yet: scored jobs below the auto-letter score, one thin card per 5-point band
+// (GET /jobs/letter-bands, docs/overview-applied-rework-plan.md D3-D6). Only the top band
+// has "+ letters": one-shot letters for its best jobs (at most 10), after a confirming click.
+// ---------------------------------------------------------------------------
+const BAND_LETTER_CENTS = 3; // a one-shot letter, the figure the Personalise note uses
+let bandArmed = null;  // {key, timer}: the "+ letters" waiting for its confirming click
+let bandNotice = '';   // the last write's result, when it queued nothing
+let bandPoll = null;   // reloads while letters are queued: a skipped job sends no event
+
+function renderBands(data) {
+  clearTimeout(bandPoll);
+  ovBandGrid.innerHTML = '';
+  const bands = data?.bands || [];
+  ovBandsEl.hidden = !bands.length;
+  if (!bands.length) return;
+  ovBandsSub.textContent = `${data.total} scored below ${data.bar}`;
+  bands.forEach((band, i) => ovBandGrid.appendChild(renderBandCard(band, i === 0)));
+
+  const waiting = bands.reduce((n, b) => n + b.waiting_check, 0);
+  const notes = [];
+  if (bandNotice) notes.push(bandNotice);
+  if (waiting) {
+    notes.push(`${waiting} waiting for an availability check: letters are only written for ads seen live in the last day.`);
+  }
+  ovBandNote.textContent = notes.join(' ');
+  ovBandNote.hidden = !notes.length;
+  if (bands.some(b => b.queued)) bandPoll = setTimeout(refreshDashboard, 15000);
+}
+
+function renderBandCard(band, top) {
+  const card = mk('div', 'band-card');
+  card.dataset.tier = tierOf(band.lo);
+  card.title = `${plural(band.count, 'job')} scored ${band.lo}–${band.hi} with no cover letter`;
+  card.append(mk('span', 'bc-range', `${band.hi}–${band.lo}`), mk('span', 'bc-count', String(band.count)));
+  if (top) {
+    const btn = renderBandButton(band);
+    if (btn) card.appendChild(btn);
+  }
+  return card;
+}
+
+function renderBandButton(band) {
+  const key = `${band.lo}-${band.hi}`;
+  if (band.queued) {
+    const busy = mk('button', 'bc-btn', `Writing ${band.queued}…`);
+    busy.disabled = true;
+    return busy;
+  }
+  // Fresh jobs not already queued, at most 10 a click (the backend's cap).
+  const n = Math.min(band.ready, 10);
+  if (!n) return null;
+  const btn = mk('button', 'bc-btn', '+ letters');
+  btn.title = `Write quick one-pass letters for the best ${plural(n, 'job')} in this band`;
+  const arm = () => {
+    btn.classList.add('confirm');
+    btn.textContent = `Write ${n}? ≈ ${n * BAND_LETTER_CENTS}¢`;
+  };
+  if (bandArmed?.key === key) arm(); // a live reload mustn't drop the first click
+  btn.addEventListener('click', async () => {
+    if (bandArmed?.key !== key) {
+      clearTimeout(bandArmed?.timer);
+      bandNotice = '';
+      bandArmed = { key, timer: setTimeout(() => { bandArmed = null; loadOverview(); }, 4000) };
+      arm();
+      return;
+    }
+    clearTimeout(bandArmed.timer);
+    bandArmed = null;
+    btn.disabled = true;
+    btn.textContent = 'Queuing…';
+    try {
+      const res = await getJson(`${BACKEND}/jobs/letter-bands/write?profile_id=${PROFILE_ID}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lo: band.lo, hi: band.hi }),
+      });
+      if (!res.queued) bandNotice = 'Nothing to write in that band right now.';
+    } catch {
+      alert('Could not start the letters — is the backend running?');
+    }
+    loadOverview(); // shows "Writing N…" at once
+  });
+  return btn;
+}
 
 // Scan More Jobs: the next 3 suggested searches. Ignores the Jobs-tab banner's 7-day
 // dismissal: this tab is where you come to pick the next search. Opening one is a normal

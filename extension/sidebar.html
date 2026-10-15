@@ -456,6 +456,29 @@
     .ov-search .where { font-size: 12px; color: #6b7280; white-space: nowrap; }
     .ov-search .chev { color: #9ca3af; font-size: 16px; }
     .ov-hint { font-size: 11px; color: #9ca3af; margin: 2px 0 0; }
+    /* "No letter yet": one thin card per 5-point score band, two columns, row-major */
+    .band-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+    .band-card {
+      --tier-color: #f59e0b;
+      display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 32px;
+      padding: 4px 8px; background: #fff; border: 1px solid #e5e7eb; border-left: 3px solid var(--tier-color);
+      border-radius: 8px; font-size: 13px; color: #1c2330;
+    }
+    .band-card[data-tier="gold"] { --tier-color: #d99a00; }
+    .band-card[data-tier="blue"] { --tier-color: #22d3ee; }
+    .band-card[data-tier="green"] { --tier-color: #10b981; }
+    .band-card[data-tier="amber"], .band-card[data-tier="hidden"] { --tier-color: #f59e0b; }
+    .bc-range { font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .bc-count { color: #6b7280; font-variant-numeric: tabular-nums; min-width: 0; }
+    .bc-btn {
+      margin-left: auto; flex: none; padding: 2px 8px; font-size: 11px; font-family: inherit;
+      border: 1px solid #cbd5e1; border-radius: 999px; background: #fff; color: #1c2330;
+      white-space: nowrap; cursor: pointer;
+    }
+    .bc-btn:hover:not(:disabled) { border-color: #2557a7; background: #f0f4fb; }
+    .bc-btn.confirm, .bc-btn.confirm:hover:not(:disabled) { background: #059669; border-color: #059669; color: #fff; }
+    .bc-btn:disabled { opacity: .6; cursor: default; }
+    #ov-band-note { margin-top: 6px; }
     /* Centrelink evidence card: unreported Quick Apply screenshots -> one PDF */
     .ov-evidence { margin-top: 10px; }
     .ov-evidence h3 {
@@ -773,6 +796,16 @@
         </div>
       </div>
       <div class="ov-scroller" id="ov-scroller"></div>
+    </section>
+    <section class="ov-block" id="ov-bands" hidden>
+      <div class="ov-head">
+        <div>
+          <h2>No letter yet</h2>
+          <div class="ov-sub none" id="ov-bands-sub"></div>
+        </div>
+      </div>
+      <div class="band-grid" id="ov-band-grid"></div>
+      <p class="ov-hint" id="ov-band-note" hidden></p>
     </section>
     <section class="ov-block">
       <div class="ov-head"><div><h2>Scan more jobs</h2></div></div>

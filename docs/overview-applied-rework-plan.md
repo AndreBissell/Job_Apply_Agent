@@ -319,6 +319,8 @@ The user chose (2026-10-15) to do every manual check together after the last ste
   to confirm with the estimate, writes one-shot letters (≈3¢ each), shows "Writing N…", and new
   letters appear in Keep Applying; jobs not seen live in 24h are counted as waiting for a check.
   (real.db on 2026-10-15: 60–64 has 3 jobs but only 1 fresh, so a click writes 1.)
+- [ ] Step 4: change the auto-letter score in Personalise, open the Overview: the bands move to
+  the new bar; a band's "+ letters" left alone for 4 s goes back to "+ letters".
 
 ## Follow-ups (not in this plan)
 
@@ -353,3 +355,8 @@ The user chose (2026-10-15) to do every manual check together after the last ste
   it also skips a job with a live letter run (a Regenerate in flight), which the cards still count.
   `skipped` in the POST response = ready jobs already queued or over the cap of 10. Read-only
   check on real.db reproduces D3's bands exactly (60–64: 3, 59–55: 4, 49–45, 44–40, 39–35: 1).
+- 2026-10-15: Step 4 done. The bands render from `loadOverview` (optional fetch, like the
+  suggestions). Two additions to the plan: while any band has `queued > 0` the Overview reloads
+  every 15 s (a job the worker skips sends no SSE event, so "Writing N…" could otherwise stick), and
+  the armed "Write N? ≈ X¢" state survives a live reload (as `bandArmed`), so a scan's refreshes
+  can't eat the first click. A write that queues nothing says "Nothing to write in that band right now."

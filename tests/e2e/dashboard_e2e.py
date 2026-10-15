@@ -10,7 +10,8 @@ Not collected by pytest (needs Chromium and a server). What it does:
 1. Builds a scratch SQLite DB in a temp folder (alembic head) holding profile 1, applied
    jobs across three monthly periods (one hidden, one with no logged AI spend), seven jobs
    with a letter ready (one with your edits), one job whose letter run waits on a question,
-   one high scorer with no letter, and some ``llm_usage`` rows. Dates are relative to
+   one high scorer with no letter, eight more letter-less jobs across seven score bands
+   (one not seen live for 3 days), and some ``llm_usage`` rows. Dates are relative to
    today, so the run works on any day. The letter bars are set to 100 and no job has a
    description, so the idle loop has no LLM work; the server runs with LLM_PROVIDER=stub
    anyway, so a stray call would fail instead of costing money.
@@ -20,7 +21,10 @@ Not collected by pytest (needs Chromium and a server). What it does:
    nothing reaches Seek (a real tab can start loading before routing attaches to it).
 3. Checks the Overview (opens first, start-date prompt, progress, waiting letters, the
    Keep Applying row and its arrows, Copy / Open / Mark applied, the suggested searches,
-   the ✎ editor) and the Applied tab (periods newest first with the current one open,
+   the ✎ editor), the "No letter yet" bands (the 6 highest of 7 bands, two columns, the
+   top card's "+ letters" two-click confirm and its POST {lo, hi}, "Writing 1..." after it,
+   the availability-check note, the section hidden when there are no bands; the write
+   endpoint is intercepted, so nothing is queued) and the Applied tab (periods newest first with the current one open,
    counts against the target, cost and "not costed", + Interview set and undo, the
    per-period and full CSV exports), at a narrow and a wide panel width. A row opens its
    read-only record in place (it never opens the ad): the ad's status and summary, both
@@ -178,6 +182,15 @@ def seed(url: str) -> None:
         state = LetterState(profile_id=1, job=JobInfo(job_id=waiting, title="Waiting On You"))
         s.add(LetterRun(match_id=waiting, engine="agent", status="waiting_user", state=state.model_dump_json()))
         job("No Letter Yet", 95)
+        # More letter-less, unapplied, extracted jobs so the "no letter yet" bands are
+        # interesting (bar 100): 99-95 (1), 94-90 (2), 74-70 (1), 59-55 (2), 44-40 (1), 34-30 (1),
+        # 14-10 (1) = 7 bands, so only the 6 highest show; 9 jobs in all. "Band 56" was last seen
+        # live 3 days ago, so the freshness gate holds it back (score < 60: never re-checked for
+        # its own sake, so the panel's availability check leaves it alone).
+        for title, score in [("Band 93", 93), ("Band 91", 91), ("Band 72", 72), ("Band 58", 58),
+                             ("Band 41", 41), ("Band 33", 33), ("Band 12", 12)]:
+            job(title, score)
+        job("Band 56", 56, record={"last_seen_live_at": dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=3)})
         s.commit()
     engine.dispose()
 
@@ -386,6 +399,9 @@ def run(headed: bool, keep: bool = False) -> int:
                               "WHERE j.title = 'Ready 96'").fetchone()
             c.check(row[0] == "applied" and row[1], "the job is applied in the DB")
 
+            # the "no letter yet" score bands
+            run_band_checks(c, side)
+
             # suggested searches
             searches = side.locator("#ov-searches .ov-search")
             n = searches.count()
@@ -446,6 +462,115 @@ def run(headed: bool, keep: bool = False) -> int:
     if not failed and not headed and not keep:
         shutil.rmtree(work, ignore_errors=True)
     return 1 if failed else 0
+
+
+def run_band_checks(c: Checks, side) -> None:
+    """The "No letter yet" section (bar 100): seven bands, the six highest shown, two columns,
+    "+ letters" on the top card only. The write endpoint is intercepted (nothing is queued on
+    the real server) and the band list is served from here for the "Writing" and empty cases."""
+    print("No letter yet")
+    c.check(side.is_visible("#ov-bands"), "bands: the section shows")
+    c.check(side.inner_text("#ov-bands h2").strip().lower() == "no letter yet", "bands: heading 'No letter yet'")
+    c.check(wait_for(lambda: side.inner_text("#ov-bands-sub") == "9 scored below 100"),
+            f"bands: sub '9 scored below 100' (got {side.inner_text('#ov-bands-sub')!r})")
+
+    cards = side.locator("#ov-band-grid .band-card")
+    ranges = [cards.nth(i).locator(".bc-range").inner_text() for i in range(cards.count())]
+    counts = [cards.nth(i).locator(".bc-count").inner_text() for i in range(cards.count())]
+    c.check(cards.count() == 6, f"bands: 6 cards (the 7th, 14–10, is dropped) ({cards.count()})")
+    c.check(ranges == ["99–95", "94–90", "74–70", "59–55", "44–40", "34–30"],
+            f"bands: highest first, hi–lo labels ({ranges})")
+    c.check(counts == ["1", "2", "1", "2", "1", "1"], f"bands: counts per band ({counts})")
+    # the tier of each band's lo score (sidebar_shared.js: gold 95, blue 90, green 75, amber 60)
+    tiers = [cards.nth(i).get_attribute("data-tier") for i in range(cards.count())]
+    c.check(tiers == ["gold", "blue", "amber", "hidden", "hidden", "hidden"],
+            f"bands: tier follows tierOf(lo) ({tiers})")
+    border = side.evaluate("(() => { const s = getComputedStyle(document.querySelector('.band-card')); "
+                           "return [s.borderLeftWidth, s.borderTopWidth]; })()")
+    c.check(border == ["3px", "1px"], f"bands: a 3px left border, 1px elsewhere ({border})")
+    h = side.evaluate("document.querySelector('.band-card').getBoundingClientRect().height")
+    c.check(30 <= h <= 40, f"bands: cards are about one line tall ({h:.0f}px)")
+
+    # two columns, row-major: cards 1 and 2 side by side, card 3 below card 1
+    box = [cards.nth(i).bounding_box() for i in range(3)]
+    c.check(abs(box[0]["y"] - box[1]["y"]) < 1 and box[1]["x"] > box[0]["x"] + box[0]["width"] - 1
+            and box[2]["y"] > box[0]["y"] + box[0]["height"] - 1 and abs(box[2]["x"] - box[0]["x"]) < 1,
+            "bands: two columns, filled left to right then down")
+
+    # the button is on the top card only
+    c.check(side.locator("#ov-band-grid .bc-btn").count() == 1 and cards.first.locator(".bc-btn").count() == 1,
+            "bands: one button, on the top card")
+    btn = cards.first.locator(".bc-btn")
+    c.check(btn.inner_text() == "+ letters", "bands: the button reads '+ letters'")
+    note = side.inner_text("#ov-band-note")
+    c.check("1 waiting for an availability check" in note and side.is_visible("#ov-band-note"),
+            f"bands: the stale ad is held back, with a note ({note!r})")
+
+    # The write is intercepted: the real server never queues anything.
+    posts: list[tuple[str, str | None]] = []
+    state = {"queued": 0}
+
+    def on_write(r):
+        posts.append((r.request.method, r.request.post_data))
+        return r.fulfill(status=200, content_type="application/json",
+                         body=json.dumps({"queued": 1, "waiting_check": 0, "skipped": 0}))
+
+    def on_get(r):
+        if not state["queued"]:
+            return r.fallback()
+        data = json.load(urllib.request.urlopen(r.request.url, timeout=10))
+        data["bands"][0]["queued"] = 1
+        return r.fulfill(status=200, content_type="application/json", body=json.dumps(data))
+
+    side.route("**/jobs/letter-bands?**", on_get)
+    side.route("**/jobs/letter-bands/write**", on_write)
+    try:
+        btn.click()
+        c.check(btn.inner_text() == "Write 1? ≈ 3¢" and "confirm" in (btn.get_attribute("class") or "").split(),
+                f"bands: the first click asks 'Write 1? ≈ 3¢' ({btn.inner_text()!r})")
+        c.check(not posts, "bands: nothing is posted by the first click")
+        fits = side.evaluate("(() => { const c = document.querySelector('.band-card').getBoundingClientRect(); "
+                             "const b = document.querySelector('.bc-btn').getBoundingClientRect(); "
+                             "return b.right <= c.right + 0.5 && b.left >= c.left; })()")
+        c.check(fits and side.evaluate("document.scrollingElement.scrollWidth <= window.innerWidth"),
+                "bands: the confirm label fits its card, no sideways scroll")
+        c.check(wait_for(lambda: side.locator("#ov-band-grid .bc-btn").first.inner_text() == "+ letters", timeout_s=8),
+                "bands: left alone, the button disarms back to '+ letters'")
+        c.check(not posts, "bands: ...and still nothing is posted")
+
+        side.locator("#ov-band-grid .bc-btn").first.click()
+        state["queued"] = 1  # from here the reload sees the top band as queued
+        side.locator("#ov-band-grid .bc-btn.confirm").click()
+        c.check(wait_for(lambda: len(posts) == 1), f"bands: the second click posts once ({len(posts)})")
+        c.check(bool(posts) and posts[0][0] == "POST" and json.loads(posts[0][1] or "{}") == {"lo": 95, "hi": 99},
+                f"bands: ...as POST {{lo: 95, hi: 99}} ({posts[:1]})")
+        busy = side.locator("#ov-band-grid .bc-btn")
+        c.check(wait_for(lambda: busy.count() == 1 and busy.first.inner_text() == "Writing 1…"),
+                f"bands: 'Writing 1…' after the reload ({busy.first.inner_text() if busy.count() else None!r})")
+        c.check(busy.first.is_disabled(), "bands: ...and it is disabled")
+        time.sleep(0.5)
+        c.check(len(posts) == 1, "bands: still exactly one POST")
+    finally:
+        state["queued"] = 0
+
+    # nothing to show: the section is hidden
+    def on_empty(r):
+        return r.fulfill(status=200, content_type="application/json",
+                         body=json.dumps({"bar": 100, "width": 5, "total": 0, "bands": []}))
+
+    side.unroute("**/jobs/letter-bands?**", on_get)
+    side.route("**/jobs/letter-bands?**", on_empty)
+    try:
+        side.click("nav#tabs .tab[data-tab=jobs]")
+        side.click("nav#tabs .tab[data-tab=overview]")
+        c.check(wait_for(lambda: side.is_hidden("#ov-bands")), "bands: with no bands the section is hidden")
+    finally:
+        side.unroute("**/jobs/letter-bands?**", on_empty)
+        side.unroute("**/jobs/letter-bands/write**", on_write)
+    side.click("nav#tabs .tab[data-tab=jobs]")
+    side.click("nav#tabs .tab[data-tab=overview]")
+    c.check(wait_for(lambda: side.is_visible("#ov-bands") and side.locator("#ov-band-grid .band-card").count() == 6),
+            "bands: the real data is back after un-routing")
 
 
 def run_applied_checks(c: Checks, side, con, work: Path) -> None:
