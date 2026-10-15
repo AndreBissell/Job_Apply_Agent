@@ -41,6 +41,20 @@ def _gaps_to_list(gaps: str | None) -> list[str]:
     return data if isinstance(data, list) else [str(data)]
 
 
+def _json_list(raw: str | None) -> list[str]:
+    """A JSON-array string column (``key_responsibilities``) as a list of strings.
+
+    Empty for None, invalid JSON or anything that isn't a list.
+    """
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    return [item for item in data if isinstance(item, str)] if isinstance(data, list) else []
+
+
 def _eligibility_notes(job: JobListing) -> list[str]:
     """Requirements the cover-letter pipeline judged not-for-a-letter (work rights,
     licence, clearance, availability), for display on the job card as a heads-up.
@@ -207,7 +221,13 @@ def list_jobs(
 
 @router.get("/jobs/{job_id}")
 def get_job(job_id: int, profile_id: int = 1, db: Session = Depends(get_db)) -> dict:
-    """Full detail for one job: listing fields + this profile's match + cover letter."""
+    """Full detail for one job: listing fields + this profile's match + cover letter.
+
+    Also serves the Applied tab's read-only record, so it carries the extracted fields
+    (summary, responsibilities, seniority, skills), the availability stamps, the
+    interview date and the letter's timestamps. Keys are only ever added: the Seek
+    overlay and the sidebar read the older ones.
+    """
     job = db.get(JobListing, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -233,6 +253,20 @@ def get_job(job_id: int, profile_id: int = 1, db: Session = Depends(get_db)) -> 
         "raw_description": job.raw_description,
         "eligibility_notes": _eligibility_notes(job),
         "date_scraped": job.date_scraped.isoformat() if job.date_scraped else None,
+        "summary": job.summary,
+        "key_responsibilities": _json_list(job.key_responsibilities),
+        "seniority": job.seniority,
+        "discovered_query": job.discovered_query,
+        "skills": {
+            "hard": [js.name for js in job.job_skills if js.skill_type == "hard"],
+            "soft": [js.name for js in job.job_skills if js.skill_type == "soft"],
+        },
+        "expired_detected_at": (
+            job.expired_detected_at.isoformat() if job.expired_detected_at else None
+        ),
+        "last_seen_live_at": (
+            job.last_seen_live_at.isoformat() if job.last_seen_live_at else None
+        ),
         "match": (
             {
                 "score": _score_to_number(match.score),
@@ -241,6 +275,7 @@ def get_job(job_id: int, profile_id: int = 1, db: Session = Depends(get_db)) -> 
                 "status": match.status,
                 "applied_at": match.applied_at.isoformat() if match.applied_at else None,
                 "applied_via": match.applied_via,
+                "interview_at": match.interview_at.isoformat() if match.interview_at else None,
             }
             if match is not None
             else None
@@ -250,6 +285,8 @@ def get_job(job_id: int, profile_id: int = 1, db: Session = Depends(get_db)) -> 
                 "generated_content": cover.generated_content,
                 "edited_content": cover.edited_content,
                 "status": cover.status,
+                "created_at": cover.created_at.isoformat() if cover.created_at else None,
+                "updated_at": cover.updated_at.isoformat() if cover.updated_at else None,
             }
             if cover is not None
             else None

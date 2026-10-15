@@ -275,6 +275,10 @@ def bulk_hide_jobs(
     a query's yield is meaningless if the misses are erased and only the hits
     remain.
 
+    Applied matches (``applied_at`` set) are skipped: never hidden, and they keep
+    their ``raw_description``. They are the application record and Centrelink
+    evidence, and the Applied tab shows the ad text.
+
     Idempotent: already-hidden matches are skipped, so re-running it at the
     same threshold reports 0.
     """
@@ -284,6 +288,7 @@ def bulk_hide_jobs(
         .where(Match.user_id == profile_id)
         .where(Match.score < below_score)
         .where(Match.hidden_at.is_(None))
+        .where(Match.applied_at.is_(None))
     ).all()
 
     now = datetime.now(timezone.utc)

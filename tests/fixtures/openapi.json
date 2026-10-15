@@ -1766,7 +1766,7 @@
   },
   "/jobs": {
    "delete": {
-    "description": "Hide every match for a profile scoring below ``below_score``.\n\nA *soft* delete, despite the verb: the match row survives with\n``hidden_at`` stamped, and only ``raw_description`` \u2014 the bulk of the\nstorage \u2014 is discarded. The user sees the same thing either way (the job\nleaves every list in the sidebar), but the score survives, and the score is\nwhat the suggestion miner needs.\n\nHard-deleting these was actively harmful. Phrase ranking is\n``(shrunk_mean - baseline) * log1p(support)``, so the low scorers are the\ncontrast that makes a good phrase measurably good; deleting them raised the\ndev profile's baseline from 69.4 to 82.5 in one click and flattened the\nsignal. ``GET /jobs/search-performance`` needs them for the same reason \u2014\na query's yield is meaningless if the misses are erased and only the hits\nremain.\n\nIdempotent: already-hidden matches are skipped, so re-running it at the\nsame threshold reports 0.",
+    "description": "Hide every match for a profile scoring below ``below_score``.\n\nA *soft* delete, despite the verb: the match row survives with\n``hidden_at`` stamped, and only ``raw_description`` \u2014 the bulk of the\nstorage \u2014 is discarded. The user sees the same thing either way (the job\nleaves every list in the sidebar), but the score survives, and the score is\nwhat the suggestion miner needs.\n\nHard-deleting these was actively harmful. Phrase ranking is\n``(shrunk_mean - baseline) * log1p(support)``, so the low scorers are the\ncontrast that makes a good phrase measurably good; deleting them raised the\ndev profile's baseline from 69.4 to 82.5 in one click and flattened the\nsignal. ``GET /jobs/search-performance`` needs them for the same reason \u2014\na query's yield is meaningless if the misses are erased and only the hits\nremain.\n\nApplied matches (``applied_at`` set) are skipped: never hidden, and they keep\ntheir ``raw_description``. They are the application record and Centrelink\nevidence, and the Applied tab shows the ad text.\n\nIdempotent: already-hidden matches are skipped, so re-running it at the\nsame threshold reports 0.",
     "operationId": "bulk_hide_jobs_jobs_delete",
     "parameters": [
      {
@@ -2235,7 +2235,7 @@
     "summary": "Delete Job"
    },
    "get": {
-    "description": "Full detail for one job: listing fields + this profile's match + cover letter.",
+    "description": "Full detail for one job: listing fields + this profile's match + cover letter.\n\nAlso serves the Applied tab's read-only record, so it carries the extracted fields\n(summary, responsibilities, seniority, skills), the availability stamps, the\ninterview date and the letter's timestamps. Keys are only ever added: the Seek\noverlay and the sidebar read the older ones.",
     "operationId": "get_job_jobs__job_id__get",
     "parameters": [
      {
