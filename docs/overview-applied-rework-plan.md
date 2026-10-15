@@ -321,6 +321,9 @@ The user chose (2026-10-15) to do every manual check together after the last ste
   (real.db on 2026-10-15: 60–64 has 3 jobs but only 1 fresh, so a click writes 1.)
 - [ ] Step 4: change the auto-letter score in Personalise, open the Overview: the bands move to
   the new bar; a band's "+ letters" left alone for 4 s goes back to "+ letters".
+- [ ] Step 5 (known-ids fix): Scan Page on the same "software developer" search no longer says
+  "All jobs on this page already captured"; it opens new job pages (1 per scan on REAL, where
+  Job pages per Scan is 1). real.db had 17 card-only jobs the old rule hid from the scan.
 
 ## Follow-ups (not in this plan)
 
@@ -360,3 +363,17 @@ The user chose (2026-10-15) to do every manual check together after the last ste
   every 15 s (a job the worker skips sends no SSE event, so "Writing N…" could otherwise stick), and
   the armed "Write N? ≈ X¢" state survives a live reload (as `bandArmed`), so a scan's refreshes
   can't eat the first click. A write that queues nothing says "Nothing to write in that band right now."
+- 2026-10-15: Step 0 RESULT (the user ran it; logs show localhost:8000, so REAL, not TEST; `new: 0`,
+  so no model call). Both runs, including Scan Page pressed while the results were loading:
+  `[scan] Skipped 30 already-captured job(s).` then `[scan] All jobs on this page already captured.`;
+  the content script's card capture worked on the redirected URL form (`Ingest done … received: 32`).
+  Not the URL regex, not timing, not executeScript. First read as table row 2 (page 1 already
+  scored); the USER doubted the scan saw the jobs, and was right. REAL CAUSE: `GET /jobs/known-ids`
+  returns every `source_job_id`, including CARD-ONLY rows (no description, never matched) that the
+  content script's card capture writes as soon as a search page loads. So by the time Scan Page runs,
+  every job on the page is "known" and none is opened. Read-only counts: real.db 17 card-only jobs
+  never matched (22 card-only rows with discovered_query "software developer"); app.db 66. FIX (Step
+  5, as the plan allows for a different cause): known-ids returns only jobs the scan has nothing to
+  add to: a description, OR any match (bulk-hidden rows lost their text but are scored), OR flagged
+  closed. Only the scan reads known-ids. Still 1 hop: the jobs opened are links on the page the user
+  opened. The `pageCollectJobLinks` polling stays (cheap insurance for a slow page).

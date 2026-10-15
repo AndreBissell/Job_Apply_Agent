@@ -2027,7 +2027,7 @@
   },
   "/jobs/known-ids": {
    "get": {
-    "description": "Return all source_job_ids already in the database so the extension can skip re-scraping.",
+    "description": "The source_job_ids Scan Page skips: jobs it has nothing to add to.\n\nThat is a job with its ad text, or one already scored (a bulk-hidden job lost its text\nbut keeps its score), or one flagged closed. NOT a card-only row: the content script\nstores every card on a search page as soon as it loads, before Scan Page runs, so\ncounting those made the scan skip every job on the page without opening one.",
     "operationId": "known_job_ids_jobs_known_ids_get",
     "responses": {
      "200": {

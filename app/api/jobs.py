@@ -15,7 +15,7 @@ from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app import letter_bands, retention
@@ -86,8 +86,23 @@ def _eligibility_notes(job: JobListing) -> list[str]:
 
 @router.get("/jobs/known-ids")
 def known_job_ids(db: Session = Depends(get_db)) -> dict:
-    """Return all source_job_ids already in the database so the extension can skip re-scraping."""
-    ids = db.scalars(select(JobListing.source_job_id)).all()
+    """The source_job_ids Scan Page skips: jobs it has nothing to add to.
+
+    That is a job with its ad text, or one already scored (a bulk-hidden job lost its text
+    but keeps its score), or one flagged closed. NOT a card-only row: the content script
+    stores every card on a search page as soon as it loads, before Scan Page runs, so
+    counting those made the scan skip every job on the page without opening one.
+    """
+    scored = select(Match.id).where(Match.job_id == JobListing.id).exists()
+    ids = db.scalars(
+        select(JobListing.source_job_id).where(
+            or_(
+                JobListing.raw_description.is_not(None),
+                JobListing.expired_detected_at.is_not(None),
+                scored,
+            )
+        )
+    ).all()
     return {"source_ids": ids}
 
 
