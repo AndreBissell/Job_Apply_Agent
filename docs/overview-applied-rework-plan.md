@@ -1,6 +1,6 @@
 # Plan: Applied-tab records, "no letter yet" bands, one-click Scan More
 
-**Status:** APPROVED 2026-10-15 (the user accepted D1–D8 as written). Written for the chat that implements it. Branch `centrelink-ease-apply`
+**Status:** DONE 2026-10-15 (manual checks passed). APPROVED 2026-10-15 (the user accepted D1–D8 as written). Written for the chat that implements it. Branch `centrelink-ease-apply`
 (tip `524e24b`, clean). Read CLAUDE.md first, mainly the Seek Access Policy and the side-panel
 load-order contract (`python scripts/js_globals.py --check`).
 
@@ -308,37 +308,37 @@ the new file in the repo layout. PROGRESS.md slim block. docs/database-schema.md
 
 The user chose (2026-10-15) to do every manual check together after the last step.
 
-- [ ] Step 2, REAL: Applied tab -> click an application: the record opens in place (no Seek tab);
+- [x] Step 2, REAL: Applied tab -> click an application: the record opens in place (no Seek tab);
   ad facts, summary, responsibilities, skills, "Full ad text", the match, the letter labelled
   edited/as generated, Copy works; "Open ad on Seek ↗" opens the ad; a second click closes it;
   an open record stays open while a scan refreshes the tab.
-- [ ] Step 2, TEST: the 2 applied jobs whose ad text bulk-hide deleted show "The ad text wasn't
+- [x] Step 2, TEST: the 2 applied jobs whose ad text bulk-hide deleted show "The ad text wasn't
   kept" and still show their letter.
-- [ ] Step 2, when one exists: an applied job whose ad has closed shows "Ad closed (noticed dd/mm)".
-- [ ] Step 3/4, REAL or TEST: the Overview's "No letter yet" cards match the bands; "+ letters" asks
+- [x] Step 2, when one exists: an applied job whose ad has closed shows "Ad closed (noticed dd/mm)".
+- [x] Step 3/4, REAL or TEST: the Overview's "No letter yet" cards match the bands; "+ letters" asks
   to confirm with the estimate, writes one-shot letters (≈3¢ each), shows "Writing N…", and new
   letters appear in Keep Applying; jobs not seen live in 24h are counted as waiting for a check.
   (real.db on 2026-10-15: 60–64 has 3 jobs but only 1 fresh, so a click writes 1.)
-- [ ] Step 4: change the auto-letter score in Personalise, open the Overview: the bands move to
+- [x] Step 4: change the auto-letter score in Personalise, open the Overview: the bands move to
   the new bar; a band's "+ letters" left alone for 4 s goes back to "+ letters".
-- [ ] Step 5 (known-ids fix): Scan Page on the same "software developer" search no longer says
+- [x] Step 5 (known-ids fix): Scan Page on the same "software developer" search no longer says
   "All jobs on this page already captured"; it opens new job pages (1 per scan on REAL, where
   Job pages per Scan is 1). real.db had 17 card-only jobs the old rule hid from the scan.
-- [ ] Step 5, TEST (pill on TEST, port 8001): Overview → "Scan more jobs" lists the top 3 searches,
+- [x] Step 5, TEST (pill on TEST, port 8001): Overview → "Scan more jobs" lists the top 3 searches,
   each with its own Scan more. Click one: that search opens in a tab in front, the panel stays on the
   Overview, "<search>: Scanning 1/N…" then "Done: N new jobs captured…" (or "All N jobs on this
   page are already in your list."). Switching to another tab straight after the click does NOT
   stop it. The header Scan Page still works and still jumps to the Jobs tab.
-- [ ] Step 5b: the "No letter yet" cards sit in one row, one card tall, and scroll sideways.
-- [ ] Step 5c: "+ letters" shows a realistic estimate (≈12¢ a letter on REAL today, from the
+- [x] Step 5b: the "No letter yet" cards sit in one row, one card tall, and scroll sideways.
+- [x] Step 5c: "+ letters" shows a realistic estimate (≈12¢ a letter on REAL today, from the
   pipeline's draft calls until one-pass letters exist). After the second click, the band's jobs
   leave "No letter yet" (an emptied band disappears) and appear in Keep Applying as "✍ Writing…"
   cards (Open ad, no Copy), with "· N being written" in the count; each turns into a normal card
   when its letter lands.
-- [ ] Step 5d: after "+ letters", the button stays on that card while its range still has jobs to
+- [x] Step 5d: after "+ letters", the button stays on that card while its range still has jobs to
   write, and moves to the next card when the range is used up (or only has jobs waiting for an
   availability check).
-- [ ] Keep Applying bin: the 🗑 on a card turns into "Delete?" on the first click, goes back after
+- [x] Keep Applying bin: the 🗑 on a card turns into "Delete?" on the first click, goes back after
   4 s, and the second click removes the job (also from the Jobs tab). No bin on a "✍ Writing…" card.
 
 ## Follow-ups (not in this plan)
@@ -427,3 +427,4 @@ The user chose (2026-10-15) to do every manual check together after the last ste
   Delete (DELETE /jobs/{id}, a hard delete; the backend refuses applied jobs, and these never are),
   with the Mark applied pattern: first click arms "Delete?", 4 s to confirm. No bin on a card whose
   letter is still being written, so a job is never deleted under the writer.
+- 2026-10-15: USER: all manual checks passed. Step 6 done (CLAUDE.md ✅ COMPLETED entry, PROGRESS.md).

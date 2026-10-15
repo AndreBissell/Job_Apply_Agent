@@ -573,6 +573,29 @@ screenshot never expires. Endpoints `/evidence/status|bundles|bundles/{id}/downl
 `evidence_changed`. 1655 tests; e2e `apply_sent_e2e.py` 51/51 (+ dashboard 92, sidebar_load 58).
 Part 2 NOT yet checked in the user's own Chrome.
 
+✅ COMPLETED: Overview/Applied rework — 2026-10-15 (branch `centrelink-ease-apply`)
+
+docs/overview-applied-rework-plan.md (D1–D8 plus the owner's same-day updates, all in its Decision
+log). Owner's manual checks passed 2026-10-15.
+- Applied tab: a row click opens a read-only record in place (`extension/applied_record.js`): the
+  ad as captured, the match, the letter as last saved; "Open ad on Seek ↗" is its first button.
+  `GET /jobs/{id}` returns the record fields (aware-UTC datetimes). Bulk hide (`DELETE /jobs?below_score=`)
+  now skips applied jobs: it used to null their ad text.
+- Overview "No letter yet": scored, letter-less jobs below the auto-letter score in 5-point bands
+  anchored on it (`app/letter_bands.py`, `GET /jobs/letter-bands`), one row that scrolls sideways.
+  "+ letters" sits on the highest band with jobs it can write now; two clicks queue at most 10
+  ONE-SHOT letters (`POST /jobs/letter-bands/write`, `worker._write_band_letters`; `Work.below_bar`
+  lets the one-shot skip only its score gate). The estimate comes from `llm_usage` (one-pass
+  letters, else the pipeline's draft call, ≈12¢ on REAL), not a constant. The freshness gate holds
+  back stale ads. Queued jobs leave the bands and show in Keep Applying as "✍ Writing…" cards
+  (`GET /jobs` `letter_queued`; `ready=true` also returns jobs being written).
+- Keep Applying cards have a two-click bin (the Jobs tab's DELETE /jobs/{id}; none while writing).
+- Scan more: the top 3 suggested searches, each with its own button; see the Seek Access Policy.
+  BUG FIXED on the way (Step 0, found by the owner): `GET /jobs/known-ids` counted card-only rows
+  (the content script stores every search card on page load), so Scan Page skipped every job on a
+  page without opening one. It now lists only jobs with ad text, a score, or a closed flag.
+- 1753 tests; `tests/e2e/dashboard_e2e.py` 197/197, `sidebar_load_e2e.py` 59/59.
+
 ✅ COMPLETED: Availability checks + freshness gate — 2026-10-13 (branch `centrelink-ease-apply`)
 
 Closed Seek ads now drop out of the list without a button, and no AI money is spent on one.
