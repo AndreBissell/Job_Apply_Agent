@@ -304,6 +304,22 @@ the new file in the repo layout. PROGRESS.md slim block. docs/database-schema.md
   record for a real applied job on REAL, and, when one exists, an applied job whose ad has
   closed.
 
+## Manual checks to do at the end (the user drives; kept up to date per step)
+
+The user chose (2026-10-15) to do every manual check together after the last step.
+
+- [ ] Step 2, REAL: Applied tab -> click an application: the record opens in place (no Seek tab);
+  ad facts, summary, responsibilities, skills, "Full ad text", the match, the letter labelled
+  edited/as generated, Copy works; "Open ad on Seek ↗" opens the ad; a second click closes it;
+  an open record stays open while a scan refreshes the tab.
+- [ ] Step 2, TEST: the 2 applied jobs whose ad text bulk-hide deleted show "The ad text wasn't
+  kept" and still show their letter.
+- [ ] Step 2, when one exists: an applied job whose ad has closed shows "Ad closed (noticed dd/mm)".
+- [ ] Step 3/4, REAL or TEST: the Overview's "No letter yet" cards match the bands; "+ letters" asks
+  to confirm with the estimate, writes one-shot letters (≈3¢ each), shows "Writing N…", and new
+  letters appear in Keep Applying; jobs not seen live in 24h are counted as waiting for a check.
+  (real.db on 2026-10-15: 60–64 has 3 jobs but only 1 fresh, so a click writes 1.)
+
 ## Follow-ups (not in this plan)
 
 - When the top suggestion's page 1 is all captured: offer the next suggestion, or Seek's page 2
@@ -328,3 +344,12 @@ the new file in the repo layout. PROGRESS.md slim block. docs/database-schema.md
   (`evidenceNote` already draws it there), so the record doesn't repeat it. `GET /jobs/{id}` now
   returns its datetimes as aware UTC (`_iso`), since SQLite drops the zone and the panel would
   read them as local time. The optional overlay hint on Seek is skipped.
+- 2026-10-15: Step 3 done. CODE CONTRADICTED THE PLAN (small): `run_work(Work(ONESHOT, id))` reaches
+  `generate_cover_letter(bypass_threshold=False)`, which refuses every score below the auto bar, so
+  the planned call would write nothing. Fix: `Work.below_bar` (default False), passed by `run_work`
+  to the one-shot as `bypass_threshold` only (`force` stays off: an existing letter is never
+  replaced). D5 unchanged: `kind_for` still picks the kind. The writer is
+  `worker._write_band_letters` (next to `_process_listing`, so tests patch `worker.SessionLocal`);
+  it also skips a job with a live letter run (a Regenerate in flight), which the cards still count.
+  `skipped` in the POST response = ready jobs already queued or over the cap of 10. Read-only
+  check on real.db reproduces D3's bands exactly (60–64: 3, 59–55: 4, 49–45, 44–40, 39–35: 1).

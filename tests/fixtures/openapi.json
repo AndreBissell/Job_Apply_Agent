@@ -51,6 +51,24 @@
     "title": "AnswersIn",
     "type": "object"
    },
+   "BandWrite": {
+    "properties": {
+     "hi": {
+      "title": "Hi",
+      "type": "integer"
+     },
+     "lo": {
+      "title": "Lo",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "lo",
+     "hi"
+    ],
+    "title": "BandWrite",
+    "type": "object"
+   },
    "CaptureIn": {
     "properties": {
      "questions": {
@@ -2026,6 +2044,102 @@
      }
     },
     "summary": "Known Job Ids"
+   }
+  },
+  "/jobs/letter-bands": {
+   "get": {
+    "description": "The Overview's \"no letter yet\" cards: scored jobs below the auto-letter score, in\n5-point bands anchored on it, the 6 highest non-empty bands first (app/letter_bands.py).",
+    "operationId": "get_letter_bands_jobs_letter_bands_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "profile_id",
+      "required": false,
+      "schema": {
+       "default": 1,
+       "title": "Profile Id",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Get Letter Bands Jobs Letter Bands Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Get Letter Bands"
+   }
+  },
+  "/jobs/letter-bands/write": {
+   "post": {
+    "description": "Queue one-shot letters for a band's best jobs (at most 10) on the single worker.\n\nThe jobs come from the database, not the request: the same filter as the cards, and\nonly jobs seen live recently (the availability gate); the rest are counted as\n``waiting_check``. 400 when (lo, hi) is not a band below the auto-letter score.",
+    "operationId": "write_letter_band_jobs_letter_bands_write_post",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "profile_id",
+      "required": false,
+      "schema": {
+       "default": 1,
+       "title": "Profile Id",
+       "type": "integer"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/BandWrite"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Write Letter Band Jobs Letter Bands Write Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Write Letter Band"
    }
   },
   "/jobs/pending-count": {

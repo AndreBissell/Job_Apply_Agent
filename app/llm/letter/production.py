@@ -65,6 +65,9 @@ class Work:
     kind: str  # PIPELINE | ONESHOT | RESUME
     job_id: int
     run_id: int | None = None  # RESUME only
+    # ONESHOT only: the user asked for this letter below the auto-letter bar (the Overview's
+    # "+ cover letters"), so the one-shot writer's own score gate must not refuse it.
+    below_bar: bool = False
 
 
 @dataclass
@@ -235,7 +238,7 @@ def run_work(work: Work, profile_id: int, emit: Emit | None = None, *, db: Sessi
     session = db or SessionLocal()
     try:
         if work.kind == ONESHOT:
-            return _run_oneshot(session, work.job_id, profile_id, emit)
+            return _run_oneshot(session, work.job_id, profile_id, emit, below_bar=work.below_bar)
         return _run_pipeline(session, work.job_id, profile_id, emit, run_id=work.run_id)
     finally:
         if own:
@@ -264,9 +267,14 @@ def generate_for(
     return _run_pipeline(db, job_id, profile_id, emit)
 
 
-def _run_oneshot(db: Session, job_id: int, profile_id: int, emit: Emit | None, *, force: bool = False) -> Landed:
+def _run_oneshot(
+    db: Session, job_id: int, profile_id: int, emit: Emit | None, *, force: bool = False, below_bar: bool = False,
+) -> Landed:
+    # force (regenerate) replaces a letter and ignores the bar; below_bar only ignores the bar.
     try:
-        cl = generate_cover_letter(job_id, profile_id, session=db, force=force, bypass_threshold=force)
+        cl = generate_cover_letter(
+            job_id, profile_id, session=db, force=force, bypass_threshold=force or below_bar,
+        )
     except (BudgetExceededError, DailyQuotaError) as exc:
         return Landed(ONESHOT, job_id, "budget_stopped", reason=str(exc), account_limit=str(exc))
     if cl is None:

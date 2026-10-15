@@ -12,6 +12,7 @@ GET /jobs | list_jobs | list[dict] | app.api.deps.get_db
 GET /jobs/by-source-id/{source_job_id} | job_by_source_id | dict | app.api.deps.get_db
 GET /jobs/evidence-export | evidence_export | - | app.api.deps.get_db
 GET /jobs/known-ids | known_job_ids | dict | app.api.deps.get_db
+GET /jobs/letter-bands | get_letter_bands | dict | app.api.deps.get_db
 GET /jobs/pending-count | pending_job_count | dict | app.api.deps.get_db
 GET /jobs/search-performance | search_performance | dict | app.api.deps.get_db
 GET /jobs/suggested-searches | suggested_searches | dict | app.api.deps.get_db
@@ -43,6 +44,7 @@ POST /availability/{job_id} | record_check | dict | app.api.deps.get_db
 POST /evidence/bundles | create_bundles | dict | app.api.deps.get_db
 POST /gaps/{gap_id}/clear | clear_gap | dict | app.api.deps.get_db
 POST /ingest | ingest | dict | app.api.deps.get_db
+POST /jobs/letter-bands/write | write_letter_band | dict | app.api.deps.get_db
 POST /jobs/{job_id}/quick-apply-sent | quick_apply_sent | dict | app.api.deps.get_db
 POST /jobs/{job_id}/quick-screen | run_quick_screen | dict | app.api.deps.get_db
 POST /jobs/{job_id}/regenerate | regenerate | dict | app.api.deps.get_db

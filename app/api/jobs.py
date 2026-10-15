@@ -1,4 +1,5 @@
-"""The job read endpoints: known-ids, pending-count, by-source-id, GET /jobs, GET /jobs/{job_id}.
+"""The job read endpoints: known-ids, pending-count, by-source-id, GET /jobs, GET /jobs/{job_id};
+plus the Overview's letter bands (GET /jobs/letter-bands and its POST .../write).
 
 ORDER MATTERS: ``GET /jobs/{job_id}`` (``job_id: int``) must stay LAST in this file and this
 router must be included after every other router that has a ``GET /jobs/<literal>`` path
@@ -13,10 +14,12 @@ from datetime import timedelta
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from app import retention
+from app import letter_bands, retention
+from app.api import worker
 from app.api.deps import get_db
 from app.api.ingest import SOURCE
 from app.llm.letter import view as letter_view
@@ -222,6 +225,39 @@ def list_jobs(
         }
         for match, job in rows
     ]
+
+
+class BandWrite(BaseModel):
+    lo: int
+    hi: int
+
+
+@router.get("/jobs/letter-bands")
+def get_letter_bands(profile_id: int = 1, db: Session = Depends(get_db)) -> dict:
+    """The Overview's "no letter yet" cards: scored jobs below the auto-letter score, in
+    5-point bands anchored on it, the 6 highest non-empty bands first (app/letter_bands.py)."""
+    return letter_bands.summary(db, profile_id)
+
+
+@router.post("/jobs/letter-bands/write")
+def write_letter_band(body: BandWrite, profile_id: int = 1, db: Session = Depends(get_db)) -> dict:
+    """Queue one-shot letters for a band's best jobs (at most 10) on the single worker.
+
+    The jobs come from the database, not the request: the same filter as the cards, and
+    only jobs seen live recently (the availability gate); the rest are counted as
+    ``waiting_check``. 400 when (lo, hi) is not a band below the auto-letter score.
+    """
+    try:
+        claim = letter_bands.claim_band(db, profile_id, body.lo, body.hi)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if claim["job_ids"]:
+        try:
+            worker._bg_executor.submit(worker._write_band_letters, claim["job_ids"], profile_id)
+        except Exception:
+            letter_bands.release(*claim["job_ids"])
+            raise
+    return {"queued": len(claim["job_ids"]), "waiting_check": claim["waiting_check"], "skipped": claim["skipped"]}
 
 
 @router.get("/jobs/{job_id}")
