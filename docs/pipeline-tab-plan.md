@@ -1,6 +1,6 @@
 # Plan: turn the Jobs tab into "Pipeline", and move settings behind ⚙
 
-**Status:** APPROVED 2026-10-16 (the user accepted D1–D14 as written). Written for the chat that
+**Status:** BUILT 2026-10-16 (Steps 1–5 committed); the manual checks below are the user's. APPROVED 2026-10-16 (the user accepted D1–D14 as written). Written for the chat that
 implements it. Branch `centrelink-ease-apply` (tip `e00a13b`, clean). Read CLAUDE.md first,
 mainly the side-panel load-order contract (`python scripts/js_globals.py --check`) and the e2e
 rule about stubbing `chrome.tabs.create`.
@@ -358,6 +358,8 @@ docs/database-schema.md: note `gap_ignored` under `profiles.preferences` (no DDL
   should **not** be there); Have adds to Profile; Not yet moves to To work on; ✕ hides and Undo
   restores.
 - [ ] Step 4: Tidy-up asks "Hide N jobs?" before hiding.
+- [ ] Step 2: Settings → Search suggestions → "Refresh now" prints the AI's picks under the button
+  (one small model call; the banner it used to fill is gone).
 
 ## Follow-ups (not in this plan)
 

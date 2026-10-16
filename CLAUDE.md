@@ -42,7 +42,7 @@ links on the opened search-results page are fair game. This is
 1 hop: the page the user opened → the listings linked from it.
 Paced and capped so it stays a trickle, not a crawl: ≥5s between pages
 (SCAN_DELAY_MS = 5000), and a per-scan cap. The cap is now user-tunable in the
-sidebar's Personalise panel (`scan_max_pages`, default 10) but hard-bounded at 25
+sidebar's ⚙ Settings view (`scan_max_pages`, default 10) but hard-bounded at 25
 by both the API (PreferencesUpdate le=25) and the sidebar (SCAN_PAGES_CEILING) —
 that ceiling is the policy cap: raise it deliberately if needed, don't remove it.
 Both constants and the scan code (scanPage, pageCollectJobLinks, pageScrapeDetail)
@@ -81,7 +81,7 @@ background.js); one background tab at a time (`active: false`) and one Seek page
 scans and checks together (`seekPace`); ≥ `CHECK_DELAY_MS` (15s, never below `SCAN_DELAY_MS`) apart;
 ≤ `CHECK_SESSION_CAP` (8) pages per session, one session per 30 min while the panel is open and
 ≤ `DAILY_CAP` (24, app/availability.py) per rolling 24 hours; never while a scan runs (a scan
-cancels the check in flight); a toggle in Personalise (`availability_checks_enabled`). Hard stop:
+cancels the check in flight); a toggle in ⚙ Settings (`availability_checks_enabled`). Hard stop:
 a challenge page, or `CHECK_MISS_STREAK_LIMIT` (5) empty pages in a row, pauses checks for 6 hours.
 A closed ad is never concluded from one empty page: it takes two separate visits (≥1 day apart)
 and a live page seen in the same session each time, so a blocked or logged-out browser cannot flag
@@ -204,6 +204,7 @@ job-app-assistant/
       idle_loop.py     # the idle loop, the letters phase and their helpers
       health.py ingest.py evidence.py search.py job_actions.py jobs.py profile.py   # routers
       (app/evidence_pdf.py: the Centrelink upload PDFs; app/screenshots.py: evidence file layout)
+      (app/letter_bands.py: the Overview's bands + one-job letters; app/skill_gaps.py: the Pipeline's skills ads ask for)
       letters.py obligation.py profile_ui.py screening.py origin_guard.py          # (older routers)
       Patch the module that OWNS a name (worker._bg_executor, idle_loop._letters_phase, ...), never main;
       main re-exports only app and get_db. GET /jobs/{job_id} (jobs.py) must be matched after every other
@@ -220,7 +221,7 @@ job-app-assistant/
     content_script.js background.js popup.js config.js selectors.js screening_assist.js
     apply_flow.js      # Quick Apply "application sent" page: auto-register + screenshot
     sidebar.html       # side panel; its <script> tags load the panel's CLASSIC scripts in order:
-    sidebar_shared.js sidebar_jobs.js sidebar_letter_notes.js sidebar_letter_card.js
+    sidebar_shared.js sidebar_jobs.js sidebar_skills.js sidebar_letter_notes.js sidebar_letter_card.js
     sidebar_evidence.js sidebar_scan.js sidebar_personalise.js
     sidebar_profile.js sidebar_seek_import.js sidebar_events.js
     applied_record.js  # Applied tab: one application's read-only record (ad, match, letter)
@@ -572,6 +573,32 @@ in `evidence/<YYYY-MM>/(time)_(date)_(company).png`; "reported" is the `evidence
 screenshot never expires. Endpoints `/evidence/status|bundles|bundles/{id}/download`, SSE
 `evidence_changed`. 1655 tests; e2e `apply_sent_e2e.py` 51/51 (+ dashboard 92, sidebar_load 58).
 Part 2 NOT yet checked in the user's own Chrome.
+
+🔄 BUILT, AWAITING THE USER'S MANUAL CHECKS: Pipeline tab — 2026-10-16 (branch `centrelink-ease-apply`)
+
+docs/pipeline-tab-plan.md (D1–D14, approved; Decision log per step; the manual-check list is at the
+end of the plan). The Jobs tab is now **Pipeline** (its ids still say `jobs`):
+- Top: "Needs your answer", one question card per letter run waiting on the user (the Overview's ❓
+  link scrolls here). Then every scored job NOT applied for (`GET /jobs?applied=false&limit=500`;
+  `limit` is 1–500, default still 50) as one-click rows (score, title, company, one status label)
+  in a box that shows 7.5 rows and scrolls; filter chips with counts, search, sort (remembered in
+  chrome.storage.local). A row opens a drill-in detail view (← All jobs / Esc): why it scored, the
+  scorer's gaps, the letter, and actions: Open ad, Write a letter (one job, one-shot, the band
+  rules: `POST /jobs/{id}/write-letter`, `letter_bands.claim_job`), Mark applied, Delete (two
+  clicks each). The two-click tidy-up (bulk hide) moved here from settings.
+- Below: "Skills ads ask for that you don't list" (`app/skill_gaps.py`, `GET /gaps/market`, code
+  only): hard job_skills of jobs scored in the last 90 days, matched to the profile by WHOLE PHRASE
+  both ways, because the real profile's Seek-imported names ("Typescript Programming") made
+  prefilter's exact match call TypeScript/React/Docker gaps. I have it / Not yet / ignore
+  (`POST /gaps/market/{have,not-yet,ignore,unignore}`; ignored keys in `profiles.preferences.gap_ignored`).
+  To work on moved here from Profile (`extension/sidebar_skills.js`).
+- Settings: the old Personalise panel is a full-panel view behind ⚙ in the header (same ids).
+  The budget banner sits under the tab bar (every tab). The suggestion banner and
+  sidebar_suggest.js are gone (`seekSearchUrl` is in sidebar_shared.js).
+- Follow-up logged, NOT done: prefilter's exact-name matching feeds false "Gaps:" lines into the
+  match prompt for Seek-style names; fixing it changes scores, so measure it first.
+- 1794 tests; e2e `pipeline_e2e.py` 86/86, dashboard 199, sidebar_load 66, availability 48,
+  apply_sent 51, quick_apply 124. Not checked in the user's own Chrome yet.
 
 ✅ COMPLETED: Overview/Applied rework — 2026-10-15 (branch `centrelink-ease-apply`)
 

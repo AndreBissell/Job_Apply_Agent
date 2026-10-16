@@ -5,6 +5,15 @@ one block per milestone.
 
 ---
 
+## 2026-10-16 — Pipeline tab (was Jobs) + ⚙ Settings view — BUILT, manual checks pending
+
+- Branch `centrelink-ease-apply`. Plan `docs/pipeline-tab-plan.md` (D1–D14 approved by the owner; built in one go, manual checks batched at the end of the plan).
+- `5e9c3d1` backend: `GET /jobs` `applied=` / `limit` 1–500 / `fresh` / `date_scraped`; `POST /jobs/{id}/write-letter` (one-shot, band rules); `app/skill_gaps.py` + `GET /gaps/market` and have / not-yet / ignore / unignore. Finding: Seek-style profile skill names make prefilter's exact match report false gaps (real.db 565 → 395 asks with whole-phrase matching); the skills view uses whole-phrase matching, the scorer is a logged follow-up.
+- `ac8625f` Settings behind ⚙ (same ids, grouped), budget banner on every tab, suggestion banner and sidebar_suggest.js removed. `39c08e8` compact rows in a 7.5-row scroll box, chips/search/sort, drill-in detail. `6a3e164` Needs your answer, two-click tidy-up, skills ads ask for, To work on moved from Profile (`extension/sidebar_skills.js`).
+- Tests: pytest 1753 → 1794 (`tests/test_pipeline_api.py`); new `tests/e2e/pipeline_e2e.py` 86/86; dashboard 199, sidebar_load 66, availability 48, apply_sent 51, quick_apply 124. No paid call (stub LLM; Seek-touching Chrome calls stubbed).
+
+---
+
 ## 2026-10-15 — Overview/Applied rework: Applied records, "no letter yet" bands, Scan more — DONE ✅
 
 - Branch `centrelink-ease-apply`. Plan `docs/overview-applied-rework-plan.md` (D1–D8, the owner's same-day updates and Step 0 in its Decision log). One commit per step, owner's go-ahead between.
