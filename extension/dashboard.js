@@ -736,6 +736,46 @@ function setScanMoreButtons(off) {
   for (const btn of ovSearchesEl.querySelectorAll('.ov-scan-more')) btn.disabled = off;
 }
 
+// "How past searches did" (moved here from Settings, docs/settings-simplify-plan.md D6): which
+// searches paid off. Volume is also the LLM cost of a search, so a big-volume/low-yield row is
+// the one worth retiring. Fetched each time the disclosure opens (one cheap query).
+const searchPerfEl = document.getElementById('search-perf');
+document.getElementById('ov-search-perf').addEventListener('toggle', async (e) => {
+  if (!e.target.open) return;
+  searchPerfEl.textContent = 'Loading…';
+  try {
+    const res = await fetch(`${BACKEND}/jobs/search-performance?profile_id=${PROFILE_ID}`);
+    if (!res.ok) throw new Error();
+    const { performance, underperforming } = await res.json();
+    if (!performance.length) {
+      searchPerfEl.textContent = 'No data yet: searches are tracked from the next results page you open.';
+      return;
+    }
+    const weak = new Set(underperforming);
+    const table = document.createElement('table');
+    const head = table.insertRow();
+    ['Search', 'Jobs', 'Good', 'Yield'].forEach((label, i) => {
+      const th = document.createElement('th');
+      th.textContent = label;
+      if (i > 0) th.className = 'num';
+      head.appendChild(th);
+    });
+    for (const row of performance) {
+      const tr = table.insertRow();
+      if (weak.has(row.query)) tr.className = 'weak';
+      tr.insertCell().textContent = row.query;
+      [row.volume, row.hits, `${Math.round(row.yield * 100)}%`].forEach((v) => {
+        const td = tr.insertCell();
+        td.textContent = v;
+        td.className = 'num';
+      });
+    }
+    searchPerfEl.replaceChildren(table);
+  } catch {
+    searchPerfEl.textContent = 'Could not load search performance.';
+  }
+});
+
 // Scan Page from the Overview: the Jobs list is the scan's progress display (and where
 // its notices appear), so go there. (Scan more stays here: it calls scanPage itself.)
 scanBtn.addEventListener('click', () => {

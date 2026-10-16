@@ -303,22 +303,48 @@
       color: #2557a7; margin: 16px 0 2px; padding-top: 10px; border-top: 1px solid #eef0f3;
     }
     .set-group:first-child { border-top: none; margin-top: 6px; padding-top: 0; }
+    /* One setting per row: label, control, a short "Saved ✓", and an (i) that opens its note */
     .pref-row {
-      display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
-      padding: 5px 0; font-size: 12px; color: #6b7280;
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+      padding: 6px 0; font-size: 12px; color: #374151;
     }
-    .pref-row > span { flex: 1 1 150px; }
+    .pref-label, .pref-check { flex: 1 1 auto; min-width: 0; }
+    .pref-check { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+    .pref-row input[type="checkbox"] { margin: 0; flex: none; }
     .pref-row input[type="number"] {
       width: 52px; padding: 3px 6px; border: 1px solid #d1d5db;
       border-radius: 5px; font-size: 12px; text-align: center;
     }
-    .pref-row .btn { padding: 3px 8px; font-size: 12px; }
-    .pref-check { flex: 1 1 150px; display: flex; align-items: center; gap: 6px; cursor: pointer; }
-    .pref-check input { margin: 0; flex: none; }
+    .pref-row select {
+      padding: 3px 4px; border: 1px solid #d1d5db; border-radius: 5px;
+      font-size: 12px; font-family: inherit; background: #fff; color: #1c2330;
+    }
+    /* the Extras boxes wrap onto their own line under the label */
+    .pref-extras { order: 9; flex: 1 0 100%; display: flex; flex-wrap: wrap; gap: 4px 12px; padding-left: 2px; }
+    .pref-extras label { display: flex; align-items: center; gap: 5px; cursor: pointer; white-space: nowrap; }
+    .pref-saved { font-size: 11px; color: #059669; white-space: nowrap; }
+    .pref-saved.err { color: #dc2626; }
+    .pref-saved:empty { display: none; }
+    .pref-info, .pref-icon {
+      flex: none; width: 18px; height: 18px; padding: 0; border-radius: 50%;
+      border: 1px solid #d1d5db; background: #fff; color: #6b7280; cursor: pointer;
+      font: italic 600 11px/1 Georgia, serif;
+    }
+    .pref-icon { font-style: normal; font-weight: 400; font-size: 13px; font-family: inherit; border-radius: 4px; width: 22px; }
+    .pref-info:hover, .pref-icon:hover:not(:disabled) { border-color: #2557a7; color: #2557a7; }
+    .pref-info[aria-expanded="true"] { background: #e8eef9; border-color: #2557a7; color: #2557a7; }
+    .pref-hint { margin: -4px 0 4px; font-size: 11px; color: #9ca3af; line-height: 1.4; }
+    .pref-more {
+      margin: 0 0 6px; padding: 6px 8px; border-radius: 6px; background: #f6f8fb;
+      font-size: 11px; line-height: 1.45; color: #4b5563;
+    }
     .pref-note {
       margin: 0 0 4px; font-size: 11px; line-height: 1.4; color: #9ca3af;
     }
-    #search-perf { font-size: 11px; color: #6b7280; padding: 2px 0 6px; }
+    /* Overview → Scan more jobs → "How past searches did" (moved from Settings) */
+    #ov-search-perf { margin-top: 8px; }
+    #ov-search-perf summary { cursor: pointer; font-size: 12px; color: #2557a7; }
+    #search-perf { font-size: 11px; color: #6b7280; padding: 6px 0 2px; }
     #search-perf table { width: 100%; border-collapse: collapse; }
     #search-perf th, #search-perf td {
       text-align: left; padding: 3px 4px; border-bottom: 1px solid #f3f4f6;
@@ -807,6 +833,10 @@
       <div class="ov-scan-line" id="ov-scan-line"></div>
       <div id="ov-searches"></div>
       <div class="ov-scan-status" id="ov-scan-status" aria-live="polite"></div>
+      <details id="ov-search-perf">
+        <summary>How past searches did</summary>
+        <div id="search-perf"></div>
+      </details>
     </section>
   </div>
 
@@ -998,131 +1028,86 @@
     <div id="personalise-panel">
       <h3 class="set-group">Cover letters</h3>
       <div class="pref-row">
-        <span>Auto-generate cover letters at or above score</span>
+        <label class="pref-label" for="auto-letter-min">Write letters for scores from</label>
         <input id="auto-letter-min" type="number" min="0" max="100" value="75">
-        <button class="btn" id="auto-letter-save">Save</button>
+        <span class="pref-saved" aria-live="polite"></span>
+        <button class="pref-info" aria-expanded="false" aria-controls="info-auto-letter" aria-label="About this setting" title="About this setting">i</button>
       </div>
-      <div class="pref-row">
-        <label class="pref-check" for="letter-loop-enabled">
-          <input id="letter-loop-enabled" type="checkbox" checked>
-          <span>Check and revise letters for top matches</span>
-        </label>
-      </div>
-      <div class="pref-row">
-        <span>Full pipeline at or above score</span>
-        <input id="letter-loop-min" type="number" min="0" max="100" value="85">
-        <button class="btn" id="letter-loop-save">Save</button>
-      </div>
-      <div class="pref-row">
-        <span>Letter engine</span>
-        <select id="letter-engine">
-          <option value="agent">Agent (a model picks each step)</option>
-          <option value="workflow">Fixed workflow</option>
-        </select>
-      </div>
-      <p class="pref-note" id="letter-loop-note"></p>
-      <h3 class="set-group">Letter limits</h3>
-      <div class="pref-row">
-        <span>Max drafts per letter</span>
-        <input id="limit-drafts" type="number" min="1" max="5" step="1" value="3">
-        <button class="btn" id="limit-drafts-save">Save</button>
-      </div>
-      <div class="pref-row">
-        <span>Max tool calls per letter</span>
-        <input id="limit-tools" type="number" min="6" max="40" step="1" value="15">
-        <button class="btn" id="limit-tools-save">Save</button>
-      </div>
-      <div class="pref-row">
-        <span>Max spend per letter (US$)</span>
-        <input id="limit-usd" type="number" min="0.05" max="5" step="0.05" value="0.50">
-        <button class="btn" id="limit-usd-save">Save</button>
-      </div>
-      <p class="pref-note" id="limits-note">
-        Limits for one fact-checked letter. A letter that reaches one stops with its best
-        draft so far, and the sidebar lists what is still wrong with it. Each extra draft
-        needs 4 more tool calls (a full run with 3 drafts uses 14); the extras above don't
-        count towards the tool calls, but they do count towards the spend. Applies to
-        letters started after you save.
+      <p class="pref-more" id="info-auto-letter" hidden>
+        A match at or above this score gets a letter written for it automatically. Below it, you
+        can still write one yourself from the Overview or a Pipeline job (always a quick pass).
       </p>
-      <h3 class="set-group">Extras beside a letter</h3>
       <div class="pref-row">
-        <label class="pref-check" for="side-screening">
-          <input id="side-screening" type="checkbox" checked>
-          <span>Draft answers to screening questions in the ad</span>
-        </label>
+        <label class="pref-label" for="letter-quality">Fact-check &amp; revise</label>
+        <select id="letter-quality"></select>
+        <span class="pref-saved" aria-live="polite"></span>
+        <button class="pref-info" aria-expanded="false" aria-controls="info-letter-quality" aria-label="About this setting" title="About this setting">i</button>
       </div>
-      <div class="pref-row">
-        <label class="pref-check" for="side-learning">
-          <input id="side-learning" type="checkbox" checked>
-          <span>Suggest ways to close gaps you said no to</span>
-        </label>
-      </div>
-      <div class="pref-row">
-        <label class="pref-check" for="side-resume">
-          <input id="side-resume" type="checkbox" checked>
-          <span>Résumé tailoring notes</span>
-        </label>
-      </div>
-      <p class="pref-note">
-        Extras beside a fact-checked letter (not the quick one-pass letters). Each adds
-        one model call to a full run when it has something to work on: résumé notes
-        about 1–2¢, screening answers about 2¢ (only when the ad asks questions), gap
-        suggestions under 1¢ (only for gaps you said no to).
+      <p class="pref-hint" id="letter-quality-hint"></p>
+      <p class="pref-more" id="info-letter-quality" hidden>
+        A fact-checked letter is drafted, checked against your profile and the ad, and revised up
+        to twice: a few minutes each. The rest get one quick pass with no checks.
       </p>
-      <h3 class="set-group">Quick Apply</h3>
       <div class="pref-row">
-        <label class="pref-check" for="qa-question-help">
-          <input id="qa-question-help" type="checkbox" checked>
-          <span>Help with Quick Apply questions</span>
-        </label>
+        <span class="pref-label">Extras</span>
+        <span class="pref-extras">
+          <label><input id="side-resume" type="checkbox" checked>Résumé notes</label>
+          <label><input id="side-screening" type="checkbox" checked>Screening answers</label>
+          <label><input id="side-learning" type="checkbox" checked>Gap ideas</label>
+        </span>
+        <span class="pref-saved" aria-live="polite"></span>
+        <button class="pref-info" aria-expanded="false" aria-controls="info-extras" aria-label="About this setting" title="About this setting">i</button>
       </div>
-      <p class="pref-note">
-        On Seek's "Answer employer questions" step, for jobs with a fact-checked letter:
-        what the job wants beside what your profile has, and a draft answer when you ask
-        for one (about 1–2¢ each). Off = every question is yours to answer, with no help.
+      <p class="pref-more" id="info-extras" hidden>
+        Made beside each fact-checked letter (never the quick ones), one model call each and only
+        when there is something to work on: résumé tailoring notes (1–2¢), answers to screening
+        questions in the ad (about 2¢), ways to close gaps you said no to (under 1¢).
       </p>
-      <h3 class="set-group">Scanning</h3>
       <div class="pref-row">
-        <span>Job pages opened per Scan Page</span>
+        <label class="pref-check"><input id="qa-question-help" type="checkbox" checked>Help with Quick Apply questions</label>
+        <span class="pref-saved" aria-live="polite"></span>
+        <button class="pref-info" aria-expanded="false" aria-controls="info-qa-help" aria-label="About this setting" title="About this setting">i</button>
+      </div>
+      <p class="pref-more" id="info-qa-help" hidden>
+        On Seek's "Answer employer questions" step, for jobs with a fact-checked letter: what the
+        job wants beside what your profile has, and a draft answer when you ask for one (1–2¢
+        each). Off: every question is yours to answer, and no model is called.
+      </p>
+
+      <h3 class="set-group">Finding jobs</h3>
+      <div class="pref-row">
+        <label class="pref-label" for="scan-pages">Job pages per scan</label>
         <input id="scan-pages" type="number" min="1" max="25" value="10">
-        <button class="btn" id="scan-pages-save">Save</button>
+        <span class="pref-saved" aria-live="polite"></span>
+        <button class="pref-info" aria-expanded="false" aria-controls="info-scan-pages" aria-label="About this setting" title="About this setting">i</button>
       </div>
-      <p class="pref-note">
-        Max 25. Each page is opened 5 seconds after the last, so a scan takes
-        roughly 5s × this number. Already-captured jobs are skipped and don't count.
+      <p class="pref-hint">max 25 · about 5 s each</p>
+      <p class="pref-more" id="info-scan-pages" hidden>
+        How many job ads one Scan opens, one every 5 seconds. Jobs already captured are skipped
+        and don't count.
       </p>
-      <h3 class="set-group">Availability checks</h3>
       <div class="pref-row">
-        <label class="pref-check" for="availability-checks">
-          <input id="availability-checks" type="checkbox" checked>
-          <span>Check in the background that jobs are still advertised</span>
-        </label>
+        <label class="pref-check"><input id="availability-checks" type="checkbox" checked>Hide closed ads automatically</label>
+        <span class="pref-saved" aria-live="polite"></span>
+        <button class="pref-info" aria-expanded="false" aria-controls="info-availability" aria-label="About this setting" title="About this setting">i</button>
       </div>
-      <p class="pref-note">
-        While this panel is open, it quietly re-opens a few saved job pages (one at a time,
-        15 seconds apart, at most 8 per session and 24 a day, never during a Scan) and hides
-        ads that have closed. Matching and cover letters only run for an ad seen live in the
-        last 24 hours, so an old backlog waits for a check first. Applied jobs are never
-        touched. Off = no checks and no wait.
+      <p class="pref-more" id="info-availability" hidden>
+        While the panel is open it quietly re-opens a few saved ads (one at a time, 15 seconds
+        apart, at most 8 per session and 24 a day, never during a scan) and hides the ones that
+        have closed. AI work only runs for an ad seen live in the last 24 hours, so an old backlog
+        waits for a check first. Applied jobs are never touched. Off: no checks and no wait.
       </p>
-      <h3 class="set-group">Search suggestions</h3>
       <div class="pref-row">
-        <label class="pref-check" for="llm-suggest">
-          <input id="llm-suggest" type="checkbox">
-          <span>Use AI to refine search suggestions</span>
-        </label>
-        <button class="btn" id="llm-suggest-refresh">Refresh now</button>
+        <label class="pref-check"><input id="llm-suggest" type="checkbox">AI-refined search suggestions</label>
+        <button class="pref-icon" id="llm-suggest-refresh" title="Ask the AI for fresh picks now (one small call)" aria-label="Ask the AI for fresh picks now">↻</button>
+        <span class="pref-saved" aria-live="polite"></span>
+        <button class="pref-info" aria-expanded="false" aria-controls="info-llm-suggest" aria-label="About this setting" title="About this setting">i</button>
       </div>
-      <p class="pref-note">
-        Off by default. Suggestions are mined from your match history for free;
-        this spends one small LLM call, cached until ~10 new jobs are scored.
+      <p class="pref-hint" id="llm-suggest-result" hidden></p>
+      <p class="pref-more" id="info-llm-suggest" hidden>
+        Search suggestions on the Overview are mined from your scores for free. On, one small AI
+        call picks the best of them, cached until about 10 more jobs are scored. ↻ asks now.
       </p>
-      <p class="pref-note" id="llm-suggest-result" hidden></p>
-      <div class="pref-row">
-        <span>Search performance</span>
-        <button class="btn" id="search-perf-btn">Show</button>
-      </div>
-      <div id="search-perf" hidden></div>
     </div>
   </div>
 

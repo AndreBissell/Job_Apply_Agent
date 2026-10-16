@@ -1,5 +1,5 @@
 """Load check for the side panel's scripts: does every script load, in order, and does
-the panel survive its tabs, Personalise, zoom and every live-update event?
+the panel survive its tabs, Settings, zoom and every live-update event?
 
     python tests/e2e/sidebar_load_e2e.py            # headless Chromium
     python tests/e2e/sidebar_load_e2e.py --headed
@@ -21,7 +21,7 @@ It needs NO backend and can't reach Seek:
 
 Checks: no page error on load; every top-level name of every script in sidebar.html can
 be read (a script that never ran, or died part-way, leaves names missing or in the
-temporal dead zone); each tab draws; Personalise opens; zoom in and out; each SSE event
+temporal dead zone); each tab draws; Settings opens; zoom in and out; each SSE event
 the panel listens for fires without a page error; nothing opened a tab or left the
 machine. Exit code 0 = all checks passed.
 """
@@ -188,7 +188,9 @@ def run(headed: bool) -> int:
                 and side.locator("nav#tabs .tab.active").count() == 0,
                 f"⚙ opens Settings over every tab ({shown})")
         c.check(side.is_visible("#auto-letter-min") and side.is_visible("#availability-checks")
-                and side.locator("#settings-section .set-group").count() >= 7, "Settings holds the grouped controls")
+                and side.locator("#settings-section .set-group").count() == 2
+                and side.locator("#settings-section button.btn:not(#settings-back)").count() == 0,
+                "Settings holds two groups of controls and no Save buttons")
         settle("opening Settings")
         side.click("#settings-back")
         c.check(side.is_hidden("#settings-section") and side.is_visible("#applied-section")
