@@ -6,6 +6,7 @@ GET /availability/next | next_check | dict | app.api.deps.get_db
 GET /events | sse_events | - | -
 GET /evidence/bundles/{bundle_id}/download | download_bundle | - | app.api.deps.get_db
 GET /evidence/status | evidence_status | dict | app.api.deps.get_db
+GET /gaps/market | market_gaps | dict | app.api.deps.get_db
 GET /gaps/to-work-on | to_work_on | dict | app.api.deps.get_db
 GET /health | health | dict | app.api.deps.get_db
 GET /jobs | list_jobs | list[dict] | app.api.deps.get_db
@@ -42,6 +43,10 @@ PATCH /jobs/{job_id}/status | update_status | dict | app.api.deps.get_db
 PATCH /screening-questions/{question_id} | review_screening_question | dict | app.api.deps.get_db
 POST /availability/{job_id} | record_check | dict | app.api.deps.get_db
 POST /evidence/bundles | create_bundles | dict | app.api.deps.get_db
+POST /gaps/market/have | market_have | dict | app.api.deps.get_db
+POST /gaps/market/ignore | market_ignore | dict | app.api.deps.get_db
+POST /gaps/market/not-yet | market_not_yet | dict | app.api.deps.get_db
+POST /gaps/market/unignore | market_unignore | dict | app.api.deps.get_db
 POST /gaps/{gap_id}/clear | clear_gap | dict | app.api.deps.get_db
 POST /ingest | ingest | dict | app.api.deps.get_db
 POST /jobs/letter-bands/write | write_letter_band | dict | app.api.deps.get_db
@@ -53,6 +58,7 @@ POST /jobs/{job_id}/screening-gaps | answer_screening_gap | dict | app.api.deps.
 POST /jobs/{job_id}/screening-gaps/confirm | confirm_screening_gap | dict | app.api.deps.get_db
 POST /jobs/{job_id}/screening-questions | capture_screening_questions | dict | app.api.deps.get_db
 POST /jobs/{job_id}/screenshot | upload_screenshot | dict | app.api.deps.get_db
+POST /jobs/{job_id}/write-letter | write_one_letter | dict | app.api.deps.get_db
 POST /letter-runs/{run_id}/answers | post_answers | dict | app.api.deps.get_db
 POST /letter-runs/{run_id}/questions/{question_id}/confirm | post_confirm | dict | app.api.deps.get_db
 PUT /profile-ui/data | put_profile_data | dict | app.api.deps.get_db

@@ -9,6 +9,8 @@ POST /letter-runs/{run_id}/questions/{qid}/confirm   confirm (or reject) a Yes's
 GET  /jobs/{job_id}/letter-info                   the letter's open issues, "not claimed" list, notes
 GET  /gaps/to-work-on                             the ranked to-work-on list
 POST /gaps/{gap_id}/clear                         take an item off the list (history kept)
+GET  /gaps/market                                 skills recent ads ask for that the profile lacks
+POST /gaps/market/{have|not-yet|ignore|unignore}  the user's answer for one of them (no LLM)
 
 A Yes is parsed by a small-model call inside the request (a few seconds). Nothing
 reaches the profile until the confirm call (plan Q11). Resuming an ``answered`` run
@@ -25,7 +27,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import gaps
+from app import gaps, skill_gaps
 from app.api.deps import get_db
 from app.llm.client import DailyQuotaError, LLMError
 from app.llm.letter import answers, view
@@ -159,3 +161,52 @@ def clear_gap(gap_id: int, profile_id: int = 1, db: Session = Depends(get_db)) -
     if decision is None:
         raise HTTPException(status_code=404, detail=f"to-work-on item {gap_id} not found")
     return {"ok": True, "id": decision.id, "cleared_at": decision.cleared_at.isoformat()}
+
+
+# ---------------------------------------------------------------------------
+# Skills ads ask for (the Pipeline tab, docs/pipeline-tab-plan.md D10). Code only.
+# ---------------------------------------------------------------------------
+class MarketSkillIn(BaseModel):
+    skill: str = Field(min_length=1, max_length=200)
+
+
+@router.get("/gaps/market")
+def market_gaps(profile_id: int = 1, days: int = gaps.WINDOW_DAYS, db: Session = Depends(get_db)) -> dict:
+    if not 1 <= days <= 3650:
+        raise HTTPException(status_code=422, detail="days must be between 1 and 3650")
+    return skill_gaps.market_gaps(db, profile_id, days=days)
+
+
+@router.post("/gaps/market/have")
+def market_have(body: MarketSkillIn, profile_id: int = 1, db: Session = Depends(get_db)) -> dict:
+    """Add the skill to the profile (skill only, ``origin='ask_user'``; no model call)."""
+    rows = answers.ProposedRows(experiences=[], qualifications=[], skills=[body.skill])
+    try:
+        saved_as, cleared = answers.confirm_runless(db, profile_id, rows)
+    except answers.AnswerError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"skill": body.skill, "saved_as": saved_as, "auto_cleared": cleared}
+
+
+@router.post("/gaps/market/not-yet")
+def market_not_yet(body: MarketSkillIn, profile_id: int = 1, db: Session = Depends(get_db)) -> dict:
+    """Remember a "no": the skill moves to the to-work-on list."""
+    try:
+        decision = skill_gaps.not_yet(db, profile_id, body.skill)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"skill": body.skill, "gap_id": decision.id, "label": decision.label}
+
+
+@router.post("/gaps/market/ignore")
+def market_ignore(body: MarketSkillIn, profile_id: int = 1, db: Session = Depends(get_db)) -> dict:
+    try:
+        keys = skill_gaps.ignore(db, profile_id, body.skill)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"skill": body.skill, "ignored": keys}
+
+
+@router.post("/gaps/market/unignore")
+def market_unignore(body: MarketSkillIn, profile_id: int = 1, db: Session = Depends(get_db)) -> dict:
+    return {"skill": body.skill, "ignored": skill_gaps.unignore(db, profile_id, body.skill)}

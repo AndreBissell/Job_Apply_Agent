@@ -1,5 +1,6 @@
 """The job read endpoints: known-ids, pending-count, by-source-id, GET /jobs, GET /jobs/{job_id};
-plus the Overview's letter bands (GET /jobs/letter-bands and its POST .../write).
+plus the Overview's letter bands (GET /jobs/letter-bands and its POST .../write) and the
+Pipeline's one-job letter (POST /jobs/{job_id}/write-letter).
 
 ORDER MATTERS: ``GET /jobs/{job_id}`` (``job_id: int``) must stay LAST in this file and this
 router must be included after every other router that has a ``GET /jobs/<literal>`` path
@@ -13,12 +14,12 @@ import json
 from datetime import timedelta
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
-from app import letter_bands, retention
+from app import availability, letter_bands, retention
 from app.api import worker
 from app.api.deps import get_db
 from app.api.ingest import SOURCE
@@ -155,8 +156,9 @@ def list_jobs(
     status: str | None = None,
     include_expired: bool = False,
     ready: bool = False,
-    limit: int = 50,
-    offset: int = 0,
+    applied: bool | None = None,
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
 ) -> list[dict]:
     """Matched jobs for a profile.
@@ -185,6 +187,10 @@ def list_jobs(
     cover letter OR are having one written (a pipeline run ``running`` / ``answered``, or
     queued by the Overview's "+ letters": ``letter_queued``), by score. Filtered here rather
     than in the sidebar so the ``limit`` can't drop them behind letter-less ones.
+
+    ``applied=false`` / ``true`` keeps only jobs not applied for / applied for (the Pipeline
+    tab asks for ``applied=false``). Each row's ``fresh`` says whether the job passes the
+    freshness gate (``availability.llm_gate``): false = no model work until a check sees it live.
     """
     query = (
         select(Match, JobListing)
@@ -205,6 +211,8 @@ def list_jobs(
         if band_queue:
             writing.append(Match.job_id.in_(band_queue))
         query = query.where(Match.applied_at.is_(None)).where(or_(*writing))
+    if applied is not None:
+        query = query.where(Match.applied_at.is_not(None) if applied else Match.applied_at.is_(None))
     if status is not None:
         # "Applied" means applied_at is set (same rule as the dashboard and the export).
         if status == "applied":
@@ -220,6 +228,10 @@ def list_jobs(
     ttl = timedelta(days=retention.screenshot_ttl_days(get_preferences(db, profile_id)))
     runs = letter_view.latest_runs(db, [match.id for match, _ in rows])
     reported = retention.reported_match_ids(db, [match.id for match, _ in rows])
+    job_ids = [job.id for _, job in rows]
+    fresh = set(db.scalars(
+        select(JobListing.id).where(JobListing.id.in_(job_ids)).where(availability.llm_gate(db, profile_id))
+    )) if job_ids else set()
 
     return [
         {
@@ -240,6 +252,9 @@ def list_jobs(
             "letter_queued": job.id in band_queue,
             **retention.screenshot_fields(match, ttl, match.id in reported),
             "extracted_at": job.extracted_at.isoformat() if job.extracted_at else None,
+            "date_scraped": _iso(job.date_scraped),
+            # Seen live recently enough for model work (availability.llm_gate); false = check due.
+            "fresh": job.id in fresh,
             "top_skills": [
                 js.name for js in job.job_skills if js.skill_type == "hard"
             ][:3],
@@ -283,6 +298,24 @@ def write_letter_band(body: BandWrite, profile_id: int = 1, db: Session = Depend
             letter_bands.release(*claim["job_ids"])
             raise
     return {"queued": len(claim["job_ids"]), "waiting_check": claim["waiting_check"], "skipped": claim["skipped"]}
+
+
+@router.post("/jobs/{job_id}/write-letter")
+def write_one_letter(job_id: int, profile_id: int = 1, db: Session = Depends(get_db)) -> dict:
+    """The Pipeline's "Write a letter" for one job below the auto-letter score
+    (docs/pipeline-tab-plan.md D7): the same one-shot writer, rules and freshness gate as
+    "+ letters", for one job. Never forces the full pipeline (that is /regenerate).
+    Returns ``{"queued": 0|1, "reason": ...}`` (see ``letter_bands.claim_job``)."""
+    claim = letter_bands.claim_job(db, profile_id, job_id)
+    if claim["reason"] == "not_found":
+        raise HTTPException(status_code=404, detail="Match not found")
+    if claim["job_ids"]:
+        try:
+            worker._bg_executor.submit(worker._write_band_letters, claim["job_ids"], profile_id)
+        except Exception:
+            letter_bands.release(*claim["job_ids"])
+            raise
+    return {"queued": len(claim["job_ids"]), "reason": claim["reason"]}
 
 
 @router.get("/jobs/{job_id}")

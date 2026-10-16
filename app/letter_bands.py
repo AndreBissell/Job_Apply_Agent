@@ -49,18 +49,20 @@ def band_of(score_floor: int, bar: int) -> tuple[int, int]:
     return max(hi - WIDTH + 1, 0), hi
 
 
-def _eligible(profile_id: int, bar: int):
-    """D4: a full score below the bar, no letter, not applied, hidden or flagged closed."""
-    return (
+def _eligible(profile_id: int, bar: int | None):
+    """D4: a full score below the bar, no letter, not applied, hidden or flagged closed.
+    ``bar=None`` leaves out the score cap (the rest still applies)."""
+    stmt = (
         select(Match.job_id, Match.score)
         .join(JobListing, JobListing.id == Match.job_id)
         .outerjoin(CoverLetter, CoverLetter.match_id == Match.id)
         .where(Match.user_id == profile_id, CoverLetter.id.is_(None))
-        .where(Match.score.is_not(None), Match.score < bar)
+        .where(Match.score.is_not(None))
         .where(Match.applied_at.is_(None), Match.hidden_at.is_(None))
         # Quick-screen skips are never extracted and can't get a letter.
         .where(JobListing.extracted_at.is_not(None), JobListing.expired_detected_at.is_(None))
     )
+    return stmt if bar is None else stmt.where(Match.score < bar)
 
 
 def queued_ids() -> set[int]:
@@ -130,6 +132,44 @@ def claim_band(db: Session, profile_id: int, lo: int, hi: int, now: datetime | N
         fresh = [j for j in ready if j not in queued][:WRITE_CAP]
         queued.update(fresh)
     return {"job_ids": fresh, "waiting_check": count - len(ready), "skipped": len(ready) - len(fresh)}
+
+
+def claim_job(db: Session, profile_id: int, job_id: int, now: datetime | None = None) -> dict:
+    """POST /jobs/{job_id}/write-letter (the Pipeline's "Write a letter", docs/pipeline-tab-plan.md
+    D7): the band rules for one job. Returns ``{"job_ids": [job_id] or [], "reason": ...}``;
+    ``reason`` is ``queued`` when it was claimed, else why not: ``not_found``, ``has_letter``,
+    ``not_eligible`` (applied, hidden, closed or never fully scored), ``at_or_above_bar`` (the
+    idle loop writes those), ``writing`` (already queued or a run is live) or ``waiting_check``."""
+    bar = letter_settings(db, profile_id)["auto_min_score"]
+    row = db.execute(
+        select(Match, JobListing)
+        .join(JobListing, JobListing.id == Match.job_id)
+        .where(Match.user_id == profile_id, Match.job_id == job_id)
+    ).first()
+    if row is None:
+        return {"job_ids": [], "reason": "not_found"}
+    match, job = row
+    if db.scalar(select(CoverLetter.id).where(CoverLetter.match_id == match.id)) is not None:
+        return {"job_ids": [], "reason": "has_letter"}
+    if db.execute(_eligible(profile_id, None).where(Match.job_id == job_id)).first() is None:
+        return {"job_ids": [], "reason": "not_eligible"}
+    if float(match.score) >= bar:
+        return {"job_ids": [], "reason": "at_or_above_bar"}
+    live = db.scalar(
+        select(LetterRun.id).where(LetterRun.match_id == match.id, LetterRun.status.in_(_LIVE_RUNS)).limit(1)
+    )
+    if live is not None:
+        return {"job_ids": [], "reason": "writing"}
+    gated_in = db.execute(
+        select(JobListing.id).where(JobListing.id == job.id).where(availability.llm_gate(db, profile_id, now))
+    ).first()
+    if gated_in is None:
+        return {"job_ids": [], "reason": "waiting_check"}
+    with _lock:
+        if job_id in queued:
+            return {"job_ids": [], "reason": "writing"}
+        queued.add(job_id)
+    return {"job_ids": [job_id], "reason": "queued"}
 
 
 def release(*job_ids: int) -> None:

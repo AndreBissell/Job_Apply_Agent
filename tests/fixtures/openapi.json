@@ -480,6 +480,21 @@
     "title": "InterviewIn",
     "type": "object"
    },
+   "MarketSkillIn": {
+    "properties": {
+     "skill": {
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Skill",
+      "type": "string"
+     }
+    },
+    "required": [
+     "skill"
+    ],
+    "title": "MarketSkillIn",
+    "type": "object"
+   },
    "OptionIn": {
     "properties": {
      "label": {
@@ -1617,6 +1632,268 @@
     "summary": "Evidence Status"
    }
   },
+  "/gaps/market": {
+   "get": {
+    "operationId": "market_gaps_gaps_market_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "profile_id",
+      "required": false,
+      "schema": {
+       "default": 1,
+       "title": "Profile Id",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "days",
+      "required": false,
+      "schema": {
+       "default": 90,
+       "title": "Days",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Market Gaps Gaps Market Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Market Gaps"
+   }
+  },
+  "/gaps/market/have": {
+   "post": {
+    "description": "Add the skill to the profile (skill only, ``origin='ask_user'``; no model call).",
+    "operationId": "market_have_gaps_market_have_post",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "profile_id",
+      "required": false,
+      "schema": {
+       "default": 1,
+       "title": "Profile Id",
+       "type": "integer"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/MarketSkillIn"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Market Have Gaps Market Have Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Market Have"
+   }
+  },
+  "/gaps/market/ignore": {
+   "post": {
+    "operationId": "market_ignore_gaps_market_ignore_post",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "profile_id",
+      "required": false,
+      "schema": {
+       "default": 1,
+       "title": "Profile Id",
+       "type": "integer"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/MarketSkillIn"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Market Ignore Gaps Market Ignore Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Market Ignore"
+   }
+  },
+  "/gaps/market/not-yet": {
+   "post": {
+    "description": "Remember a \"no\": the skill moves to the to-work-on list.",
+    "operationId": "market_not_yet_gaps_market_not_yet_post",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "profile_id",
+      "required": false,
+      "schema": {
+       "default": 1,
+       "title": "Profile Id",
+       "type": "integer"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/MarketSkillIn"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Market Not Yet Gaps Market Not Yet Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Market Not Yet"
+   }
+  },
+  "/gaps/market/unignore": {
+   "post": {
+    "operationId": "market_unignore_gaps_market_unignore_post",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "profile_id",
+      "required": false,
+      "schema": {
+       "default": 1,
+       "title": "Profile Id",
+       "type": "integer"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/MarketSkillIn"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Market Unignore Gaps Market Unignore Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Market Unignore"
+   }
+  },
   "/gaps/to-work-on": {
    "get": {
     "operationId": "to_work_on_gaps_to_work_on_get",
@@ -1834,7 +2111,7 @@
     "summary": "Bulk Hide Jobs"
    },
    "get": {
-    "description": "Matched jobs for a profile.\n\nOnly returns jobs that have a scored ``matches`` row (>= ``min_score``); jobs\nawaiting the LLM pass simply don't appear yet. Without ``status``, ranked by\nscore desc (the normal Jobs tab). With ``status`` (e.g. ``applied``), ranked\nby ``applied_at`` desc instead \u2014 that's the Applied tab / Centrelink export,\nwhere recency of application matters more than match quality. ``status=applied``\nmeans ``applied_at IS NOT NULL``; any other value filters the ``status`` column.\n\nJobs flagged ``expired_detected_at`` (see PATCH /jobs/{id}/expired) are\nexcluded from the default (no-``status``) view \u2014 the Jobs tab should only\never show listings the user can actually still apply to. This filter is\nskipped for ``status`` queries: a listing closing after the user already\napplied doesn't invalidate that application as Centrelink evidence.\n``include_expired=true`` lifts the filter on the default view too, mainly\nfor debugging/verification.\n\nMatches hidden by the bulk low-score action (``hidden_at``) are excluded\nfrom every view here, including the Applied tab. They still exist, and\nstill feed the suggestion baseline and the search-performance yield \u2014 see\nDELETE /jobs for why they are kept rather than deleted.\n\n``ready=true`` (the Overview's Keep Applying row): jobs not applied yet that have a\ncover letter OR are having one written (a pipeline run ``running`` / ``answered``, or\nqueued by the Overview's \"+ letters\": ``letter_queued``), by score. Filtered here rather\nthan in the sidebar so the ``limit`` can't drop them behind letter-less ones.",
+    "description": "Matched jobs for a profile.\n\nOnly returns jobs that have a scored ``matches`` row (>= ``min_score``); jobs\nawaiting the LLM pass simply don't appear yet. Without ``status``, ranked by\nscore desc (the normal Jobs tab). With ``status`` (e.g. ``applied``), ranked\nby ``applied_at`` desc instead \u2014 that's the Applied tab / Centrelink export,\nwhere recency of application matters more than match quality. ``status=applied``\nmeans ``applied_at IS NOT NULL``; any other value filters the ``status`` column.\n\nJobs flagged ``expired_detected_at`` (see PATCH /jobs/{id}/expired) are\nexcluded from the default (no-``status``) view \u2014 the Jobs tab should only\never show listings the user can actually still apply to. This filter is\nskipped for ``status`` queries: a listing closing after the user already\napplied doesn't invalidate that application as Centrelink evidence.\n``include_expired=true`` lifts the filter on the default view too, mainly\nfor debugging/verification.\n\nMatches hidden by the bulk low-score action (``hidden_at``) are excluded\nfrom every view here, including the Applied tab. They still exist, and\nstill feed the suggestion baseline and the search-performance yield \u2014 see\nDELETE /jobs for why they are kept rather than deleted.\n\n``ready=true`` (the Overview's Keep Applying row): jobs not applied yet that have a\ncover letter OR are having one written (a pipeline run ``running`` / ``answered``, or\nqueued by the Overview's \"+ letters\": ``letter_queued``), by score. Filtered here rather\nthan in the sidebar so the ``limit`` can't drop them behind letter-less ones.\n\n``applied=false`` / ``true`` keeps only jobs not applied for / applied for (the Pipeline\ntab asks for ``applied=false``). Each row's ``fresh`` says whether the job passes the\nfreshness gate (``availability.llm_gate``): false = no model work until a check sees it live.",
     "operationId": "list_jobs_jobs_get",
     "parameters": [
      {
@@ -1895,10 +2172,28 @@
      },
      {
       "in": "query",
+      "name": "applied",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "boolean"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Applied"
+      }
+     },
+     {
+      "in": "query",
       "name": "limit",
       "required": false,
       "schema": {
        "default": 50,
+       "maximum": 500,
+       "minimum": 1,
        "title": "Limit",
        "type": "integer"
       }
@@ -1909,6 +2204,7 @@
       "required": false,
       "schema": {
        "default": 0,
+       "minimum": 0,
        "title": "Offset",
        "type": "integer"
       }
@@ -3218,6 +3514,58 @@
      }
     },
     "summary": "Update Status"
+   }
+  },
+  "/jobs/{job_id}/write-letter": {
+   "post": {
+    "description": "The Pipeline's \"Write a letter\" for one job below the auto-letter score\n(docs/pipeline-tab-plan.md D7): the same one-shot writer, rules and freshness gate as\n\"+ letters\", for one job. Never forces the full pipeline (that is /regenerate).\nReturns ``{\"queued\": 0|1, \"reason\": ...}`` (see ``letter_bands.claim_job``).",
+    "operationId": "write_one_letter_jobs__job_id__write_letter_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "job_id",
+      "required": true,
+      "schema": {
+       "title": "Job Id",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "profile_id",
+      "required": false,
+      "schema": {
+       "default": 1,
+       "title": "Profile Id",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Write One Letter Jobs  Job Id  Write Letter Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Write One Letter"
    }
   },
   "/letter-runs/waiting": {
