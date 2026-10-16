@@ -143,7 +143,7 @@ tabBtns.forEach(btn => {
     profileSection.hidden = tab !== 'profile';
     hdrJobsBtns.style.display = (tab === 'jobs' || tab === 'overview') ? '' : 'none';
     if (tab === 'profile' && !profileLoaded) loadProfile();
-    if (tab === 'profile') loadToWorkOn(); // counts move as new ads are scanned — always refresh
+    if (tab === 'jobs') { loadJobs(); loadSkillGaps(); loadToWorkOn(); } // counts move as ads are scanned
     if (tab === 'overview') loadOverview(); // always refresh: counts move as you apply
     if (tab === 'applied') loadAppliedPeriods(); // always refresh — cheap query, keeps it current
   });

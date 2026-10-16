@@ -20,7 +20,11 @@ Not collected by pytest (needs Chromium and a server). What it does:
    shadows; chip counts, filtering, the empty state; search; sort; the filter remembered across
    a panel reload), live reloads (scroll kept, an open detail kept), and the detail view (open,
    "← All jobs", Esc, scroll and focus restored, Open ad recorded, the letter editor, "Write a
-   letter" two-click with the estimate and one POST).
+   letter" two-click with the estimate and one POST), Needs your answer (the waiting run's
+   question card, View job, the Overview's link scrolling to it; never answered, since an
+   answered run would resume and call the model), the skills ads ask for (TypeScript covered by
+   "Typescript Programming"; Not yet -> To work on; I have it -> the profile; ✕ and Undo), To work
+   on (moved from Profile, which keeps a pointer; clear) and the two-click tidy-up.
 
 Exit code 0 = all checks passed.
 """
@@ -83,7 +87,8 @@ def seed(url: str) -> None:
     with Session(engine) as s:
         s.add(Profile(id=1, name="E2E Test", email="e2e@example.invalid", password_hash="x",
                       target_role="Software Developer", target_location="Brisbane",
-                      preferences=json.dumps({"auto_cover_letter_min_score": 100, "letter_loop_min_score": 100})))
+                      preferences=json.dumps({"auto_cover_letter_min_score": 100, "letter_loop_min_score": 100,
+                                              "obligation_cycle_start": dt.date.today().isoformat()})))
         s.add_all([Skill(user_id=1, name="Typescript Programming"), Skill(user_id=1, name="SQL")])
         s.flush()
         ids = iter(range(1, 1000))
@@ -120,7 +125,8 @@ def seed(url: str) -> None:
         job("Stale Job", 70, seen=NOW - dt.timedelta(days=3), skills=("Angular",))
         for i, score in enumerate(PLAIN_SCORES, start=1):
             captured = NOW - dt.timedelta(minutes=5) if f"Plain Job {i:02d}" == NEWEST else None
-            job(f"Plain Job {i:02d}", score, captured=captured, skills=("Angular",) if i % 3 == 0 else ())
+            skills = (("Angular",) if i % 3 == 0 else ()) + (("Docker",) if i % 4 == 0 else ())
+            job(f"Plain Job {i:02d}", score, captured=captured, skills=skills)
         job("Applied Job", 99, applied=True)
         job("Hidden Job", 98, hidden=True)
         job("Closed Job", 97, closed=True)
@@ -188,6 +194,9 @@ def run(headed: bool, keep: bool = False) -> int:
 
             run_list_checks(c, side, work)
             run_detail_checks(c, side, writes)
+            run_needs_checks(c, side)
+            run_skills_checks(c, side, con)
+            run_tidy_checks(c, side, con)
 
             c.check(not errors, f"no page errors {errors[:3]}")
             usage_after = con.execute("SELECT COUNT(*) FROM llm_usage").fetchone()[0]
@@ -366,6 +375,114 @@ def run_detail_checks(c: Checks, side, writes: list[str]) -> None:
             "Enter on a focused row opens it")
     c.check(side.inner_text("#pl-detail .pl-status") == "🕓 Check due", "the stale job's detail says 🕓 Check due")
     side.click("#pl-back")
+
+
+
+def run_needs_checks(c: Checks, side) -> None:
+    print("Needs your answer")
+    side.click("nav#tabs .tab[data-tab=jobs]")
+    needs = side.locator("#pl-needs")
+    c.check(wait_for(lambda: needs.is_visible()), "the section shows while a letter waits on an answer")
+    c.check(side.locator("#pl-needs .pl-need").count() == 1 and "Waiting Job" in side.inner_text("#pl-needs .pl-need-head"),
+            "one card, headed by its job")
+    c.check(wait_for(lambda: "Have you used Kubernetes?" in side.inner_text("#pl-needs .qcard")),
+            "the card shows the run's question")
+    c.check(side.locator("#pl-needs .qcard button", has_text="Yes, I have this").count() == 1
+            and side.locator("#pl-needs .qcard button", has_text="No").count() == 1, "with Yes and No")
+    c.check(side.locator("#pl-needs").evaluate("el => el.compareDocumentPosition(document.getElementById('pl-jobs')) & 4") > 0,
+            "it sits above the job list")
+    side.locator("#pl-needs .pl-link", has_text="View job").click()
+    c.check(wait_for(lambda: side.is_visible("#job-detail-view"))
+            and side.inner_text("#pl-detail .pl-d-title") == "Waiting Job", "View job opens that job's detail")
+    side.click("#pl-back")
+
+    # from the Overview's "❓ 1 letter needs your answer"
+    side.click("nav#tabs .tab[data-tab=overview]")
+    waiting = side.locator("#ov-progress .ov-waiting")
+    waiting.wait_for(timeout=10000)
+    side.evaluate("window.scrollTo(0, 0)")
+    waiting.click()
+    c.check(wait_for(lambda: side.locator("nav#tabs .tab.active").inner_text() == "Pipeline"), "the Overview link opens Pipeline")
+    in_view = lambda: side.evaluate("""(() => { const r = document.getElementById('pl-needs').getBoundingClientRect();
+        return r.top >= 0 && r.top < window.innerHeight; })()""")  # noqa: E731
+    c.check(wait_for(in_view), "...scrolled to the questions")
+
+
+def skill_rows(side) -> list[str]:
+    return side.evaluate("[...document.querySelectorAll('#pl-skills-list .sk-row strong')].map(e => e.textContent)")
+
+
+def run_skills_checks(c: Checks, side, con) -> None:
+    print("Skills ads ask for")
+    side.click("nav#tabs .tab[data-tab=overview]")
+    side.click("nav#tabs .tab[data-tab=jobs]")
+    c.check(wait_for(lambda: skill_rows(side) == ["Angular", "Kubernetes", "Docker"]),
+            f"the gaps, most asked first, TypeScript covered by 'Typescript Programming' ({skill_rows(side)})")
+    first = side.locator("#pl-skills-list .sk-row").first
+    c.check("asked in 7 of 16 ads" in first.inner_text(), f"each row says how many ads ask ({first.inner_text()!r})")
+    c.check("16 ads scored in the last 90 days" in side.inner_text("#pl-skills-note"), "the note names the window")
+    c.check(side.is_hidden("#pl-skills-more"), "no 'Show all' with 3 skills")
+
+    # Not yet -> To work on
+    kube = side.locator("#pl-skills-list .sk-row", has_text="Kubernetes")
+    kube.locator("button", has_text="Not yet").click()
+    c.check(wait_for(lambda: "Kubernetes is on To work on below" in side.inner_text("#pl-skills-list")),
+            "Not yet: the row says where it went")
+    c.check(wait_for(lambda: "Kubernetes" in side.inner_text("#towork-list")) and "6 ads" in side.inner_text("#towork-list"),
+            f"...and To work on lists it with its 6 ads ({side.inner_text('#towork-list')!r})")
+
+    # I have it -> the profile
+    side.locator("#pl-skills-list .sk-row", has_text="Angular").locator("button", has_text="I have it").click()
+    c.check(wait_for(lambda: "Angular added to your profile" in side.inner_text("#pl-skills-list")), "I have it: the row confirms")
+    row = con.execute("SELECT origin FROM skills WHERE user_id = 1 AND name = 'Angular'").fetchone()
+    c.check(row is not None and row[0] == "ask_user", f"...and the skill is in the profile, origin ask_user ({row})")
+
+    # ✕ and Undo
+    side.locator("#pl-skills-list .sk-row", has_text="Docker").locator(".sk-ignore").click()
+    c.check(wait_for(lambda: "Docker hidden" in side.inner_text("#pl-skills-list")), "✕ hides it, with Undo")
+    side.click("nav#tabs .tab[data-tab=overview]")
+    side.click("nav#tabs .tab[data-tab=jobs]")
+    c.check(wait_for(lambda: skill_rows(side) == [] and "Every skill" in side.inner_text("#pl-skills-note")),
+            f"after a reload all three are gone and the note says so ({skill_rows(side)}, {side.inner_text('#pl-skills-note')!r})")
+    # undo from a fresh row: ignore again, then Undo straight away
+    side.evaluate("""fetch(`${BACKEND}/gaps/market/unignore?profile_id=1`, {method: 'POST',
+        headers: {'Content-Type': 'application/json'}, body: JSON.stringify({skill: 'Docker'})}).then(() => loadSkillGaps())""")
+    c.check(wait_for(lambda: skill_rows(side) == ["Docker"]), "unignore brings it back")
+    side.locator("#pl-skills-list .sk-row", has_text="Docker").locator(".sk-ignore").click()
+    side.locator("#pl-skills-list .pl-link", has_text="Undo").click()
+    c.check(wait_for(lambda: skill_rows(side) == ["Docker"]), "Undo puts the row back")
+
+    # To work on: here, not in Profile; clear
+    c.check(side.locator("#profile-section #towork-list").count() == 0, "To work on is no longer in the Profile tab")
+    side.click("nav#tabs .tab[data-tab=profile]")
+    side.locator("#towork-goto").click()
+    c.check(wait_for(lambda: side.locator("nav#tabs .tab.active").inner_text() == "Pipeline"),
+            "Profile's pointer opens the Pipeline tab")
+    side.locator("#towork-list button", has_text="I've learned this").first.click()
+    c.check(wait_for(lambda: "Nothing yet" in side.inner_text("#towork-list")), "clearing it empties To work on")
+    c.check(wait_for(lambda: "Kubernetes" in skill_rows(side)), "...and it is back among the skills ads ask for")
+    c.check(side.locator("#settings-section #bulk-score").count() == 0, "Settings no longer holds the bulk hide")
+
+
+def run_tidy_checks(c: Checks, side, con) -> None:
+    print("Tidy up")
+    side.fill("#bulk-score", "10")
+    side.click("#bulk-delete-btn")
+    c.check(side.inner_text("#bulk-delete-btn") == "None below 10", "nothing below the score: it says so and hides nothing")
+    side.wait_for_timeout(2300)
+    side.fill("#bulk-score", "50")
+    side.click("#bulk-delete-btn")
+    c.check(side.inner_text("#bulk-delete-btn") == "Hide 3 jobs?", f"the first click counts ({side.inner_text('#bulk-delete-btn')})")
+    c.check(con.execute("SELECT COUNT(*) FROM matches WHERE hidden_at IS NOT NULL").fetchone()[0] == 1,
+            "one click hides nothing (only the seeded hidden job is hidden)")
+    side.wait_for_timeout(4300)
+    c.check(side.inner_text("#bulk-delete-btn") == "Hide", "left alone, it goes back to Hide")
+    side.click("#bulk-delete-btn")
+    side.click("#bulk-delete-btn")
+    c.check(wait_for(lambda: side.inner_text("#bulk-delete-btn") == "Hid 3"), "the second click hides them")
+    c.check(wait_for(lambda: len(rows(side)) == VISIBLE - 3), "...and they leave the list")
+    hidden = con.execute("SELECT COUNT(*) FROM matches WHERE hidden_at IS NOT NULL AND applied_at IS NULL").fetchone()[0]
+    c.check(hidden == 4, f"three more matches hidden in the DB ({hidden})")
 
 
 if __name__ == "__main__":

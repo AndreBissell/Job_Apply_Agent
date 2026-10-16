@@ -1,5 +1,5 @@
-// Profile tab: the profile editor (cards, skills, writing sample, save, dirty state) and
-// the To work on list. Classic script: sidebar.html loads it after sidebar_personalise.js
+// Profile tab: the profile editor (cards, skills, writing sample, save, dirty state) and a
+// pointer to To work on (now on the Pipeline tab). Classic script: loaded after sidebar_personalise.js
 // and before sidebar.js; all share one global scope (loadProfile writes profileLoaded).
 // ---------------------------------------------------------------------------
 // Profile tab — dynamic cards
@@ -496,65 +496,8 @@ document.getElementById('add-exp-btn').addEventListener('click', () =>
 
 document.getElementById('save-profile-btn').addEventListener('click', saveProfile);
 
-// -- To work on (plan §5.9): skills you said no to, ranked by how often ads ask for them --
-
-async function loadToWorkOn() {
-  const list = document.getElementById('towork-list');
-  try {
-    const res = await fetch(`${BACKEND}/gaps/to-work-on?profile_id=${PROFILE_ID}`);
-    if (!res.ok) throw new Error();
-    const { window_days, items } = await res.json();
-    renderToWorkOn(list, items, window_days);
-  } catch {
-    list.textContent = 'Could not load this list — is the backend running?';
-  }
-}
-
-function renderToWorkOn(list, items, windowDays) {
-  list.innerHTML = '';
-  if (!items.length) {
-    list.appendChild(mk('div', 'towork-empty',
-      'Nothing yet. When a cover letter asks whether you have a skill and you answer No, it lands here.'));
-    return;
-  }
-  for (const it of items) {
-    const card = mk('div', 'towork-item');
-    const head = mk('div', 'towork-head');
-    head.appendChild(mk('strong', null, it.label));
-    const parts = [`${it.recent} ad${it.recent === 1 ? '' : 's'} in the last ${windowDays} days`];
-    if (it.essential) parts.push(`${it.essential} essential`);
-    head.appendChild(mk('span', 'towork-count', parts.join(', ')));
-    card.appendChild(head);
-
-    const sub = [];
-    if (it.recent_titles?.length) sub.push(`Recently: ${it.recent_titles.join('; ')}`);
-    if (it.total > it.recent) sub.push(`${it.total} ads in all`);
-    if (it.said_no_at) {
-      sub.push(`You said no on ${new Date(it.said_no_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}`);
-    }
-    if (sub.length) card.appendChild(mk('div', 'towork-sub', sub.join(' · ')));
-
-    const actions = mk('div', 'card-actions');
-    const clear = mk('button', 'btn btn-sm', "I've learned this — clear");
-    clear.title = 'Takes it off this list. A later cover letter that needs it will ask you again.';
-    clear.addEventListener('click', async () => {
-      clear.disabled = true;
-      try {
-        const res = await fetch(`${BACKEND}/gaps/${it.id}/clear?profile_id=${PROFILE_ID}`, { method: 'POST' });
-        if (!res.ok) throw new Error();
-        loadToWorkOn();
-      } catch {
-        clear.disabled = false;
-        clear.textContent = 'Could not clear — try again';
-      }
-    });
-    actions.appendChild(clear);
-    card.appendChild(actions);
-    list.appendChild(card);
-  }
-}
-
-document.getElementById('towork-refresh').addEventListener('click', loadToWorkOn);
+// To work on moved to the Pipeline tab (sidebar_skills.js); this is the pointer left here.
+document.getElementById('towork-goto').addEventListener('click', () => showTab('jobs'));
 
 // Skill add UI
 function confirmSkill() {

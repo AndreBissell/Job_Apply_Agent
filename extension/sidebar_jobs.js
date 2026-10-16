@@ -1,6 +1,7 @@
-// Pipeline tab (docs/pipeline-tab-plan.md; its ids keep the old "jobs" name): every scored job
-// not applied for, as compact rows in a capped scroll box with filter chips, search and sort,
-// and a drill-in detail view (fillDetail) with the job's actions.
+// Pipeline tab (docs/pipeline-tab-plan.md; its ids keep the old "jobs" name): the letters
+// waiting on an answer, then every scored job not applied for as compact rows in a capped
+// scroll box (filter chips, search, sort), the tidy-up line, and a drill-in detail view
+// (fillDetail) with the job's actions. The skills sections below the list: sidebar_skills.js.
 // Classic script: sidebar.html loads it after sidebar_shared.js and before sidebar.js;
 // all of them share one global scope, so load order is the contract.
 // ---------------------------------------------------------------------------
@@ -170,7 +171,120 @@ async function loadJobs() {
   plJobs = Array.isArray(jobs) ? jobs : [];
   renderPipeline();
   refreshOpenDetail();
+  maybeLoadNeeds();
 }
+
+// ---------------------------------------------------------------------------
+// Needs your answer (plan D8): one question card per letter run waiting on the user
+// ---------------------------------------------------------------------------
+const plNeedsEl = document.getElementById('pl-needs');
+const plNeedsList = document.getElementById('pl-needs-list');
+let plNeedsKey = null;               // the waiting run ids drawn: a reload redraws only on a change
+let plNeedsLoad = Promise.resolve();
+
+function waitingRunsKey() {
+  return (plJobs || []).filter(j => j.letter_run?.status === 'waiting_user')
+    .map(j => j.letter_run.run_id).sort((a, b) => a - b).join(',');
+}
+
+// Redraw the cards when the set of waiting runs changed (or when forced), never while an
+// answer is being typed in them.
+function maybeLoadNeeds(force = false) {
+  const key = waitingRunsKey();
+  if ((!force && key === plNeedsKey) || typingIn(plNeedsEl)) return plNeedsLoad;
+  plNeedsKey = key;
+  plNeedsLoad = loadNeeds();
+  return plNeedsLoad;
+}
+
+async function loadNeeds() {
+  let runs = [];
+  try {
+    const res = await fetch(`${BACKEND}/letter-runs/waiting?profile_id=${PROFILE_ID}`);
+    if (!res.ok) throw new Error();
+    runs = (await res.json()).runs || [];
+  } catch { /* no section rather than a broken one */ }
+  plNeedsList.innerHTML = '';
+  plNeedsEl.hidden = !runs.length;
+  document.getElementById('pl-needs-count').textContent =
+    runs.length ? `${runs.length} letter${runs.length === 1 ? '' : 's'} waiting` : '';
+  for (const run of runs) {
+    const box = mk('div', 'pl-need');
+    box.dataset.runId = run.run_id;
+    const head = mk('div', 'pl-need-head');
+    const job = plJobs?.find(j => j.job_id === run.job_id);
+    if (job?.score != null) {
+      const s = mk('span', 'pl-score', String(Math.round(job.score)));
+      s.dataset.tier = tierOf(job.score);
+      head.appendChild(s);
+    }
+    const name = mk('strong', null, [run.job_title, run.company].filter(Boolean).join(' · ') || 'A cover letter');
+    name.title = name.textContent;
+    head.appendChild(name);
+    if (job) {
+      const view = mk('button', 'pl-link', 'View job ›');
+      view.type = 'button';
+      view.addEventListener('click', () => openJobDetail(job.job_id));
+      head.appendChild(view);
+    }
+    box.appendChild(head);
+    plNeedsList.appendChild(box);
+    renderQuestionCard(box, run.run_id);
+  }
+}
+
+// The Overview's "❓ N letters need your answer": open this tab at the questions.
+async function showNeeds() {
+  closeJobDetail();
+  showTab('jobs');
+  await maybeLoadNeeds(true);
+  if (!plNeedsEl.hidden) plNeedsEl.scrollIntoView({ block: 'start' });
+}
+
+// ---------------------------------------------------------------------------
+// Tidy up (plan D9): hide the jobs below a score, two clicks, with the count first
+// ---------------------------------------------------------------------------
+const bulkInput = document.getElementById('bulk-score');
+const bulkBtn = document.getElementById('bulk-delete-btn');
+let bulkTimer = null;
+
+function resetBulk(text = 'Hide', after = 0) {
+  clearTimeout(bulkTimer);
+  bulkTimer = setTimeout(() => {
+    bulkBtn.classList.remove('armed');
+    bulkBtn.textContent = 'Hide';
+    bulkBtn.disabled = false;
+  }, after);
+  bulkBtn.textContent = text;
+}
+
+bulkInput.addEventListener('input', () => resetBulk());
+
+bulkBtn.addEventListener('click', async () => {
+  const score = parseFloat(bulkInput.value);
+  if (isNaN(score)) return;
+  if (!bulkBtn.classList.contains('armed')) {
+    const n = (plJobs || []).filter(j => j.score != null && j.score < score).length;
+    if (!n) { resetBulk(`None below ${score}`, 2000); return; }
+    bulkBtn.classList.add('armed');
+    resetBulk(`Hide ${n} job${n === 1 ? '' : 's'}?`, 4000);
+    return;
+  }
+  clearTimeout(bulkTimer);
+  bulkBtn.classList.remove('armed');
+  bulkBtn.disabled = true;
+  bulkBtn.textContent = '…';
+  try {
+    const res = await fetch(`${BACKEND}/jobs?below_score=${score}&profile_id=${PROFILE_ID}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (!res.ok) throw new Error();
+    resetBulk(`Hid ${data.hidden ?? data.deleted}`, 2000);
+    loadJobs();
+    refreshDashboard();
+  } catch {
+    resetBulk('Error', 2000);
+  }
+});
 
 // ---------------------------------------------------------------------------
 // The list: chips, count, rows

@@ -158,7 +158,7 @@ function renderProgress() {
     const waiting = mk('button', 'ov-waiting');
     waiting.append(mk('span', null, `❓ ${plural(n, 'letter')} need${n === 1 ? 's' : ''} your answer`), mk('span', null, '›'));
     waiting.title = 'Open the Pipeline tab, where the questions are';
-    waiting.addEventListener('click', () => showTab('jobs'));
+    waiting.addEventListener('click', () => showNeeds());
     el.appendChild(waiting);
   }
 }

@@ -1,5 +1,5 @@
 // Settings (the ⚙ view; its controls keep their old "Personalise" ids): user-tunable
-// thresholds, letter limits, side-output toggles, search suggestions, bulk hide. Classic script: sidebar.html loads it after sidebar_scan.js and
+// thresholds, letter limits, side-output toggles, search suggestions. Classic script: sidebar.html loads it after sidebar_scan.js and
 // before sidebar.js; all share one global scope (it writes autoLetterMin and scanMaxPages).
 // ---------------------------------------------------------------------------
 // Settings — user-tunable thresholds (opened by ⚙: openSettings in sidebar_shared.js)
@@ -326,27 +326,5 @@ document.getElementById('search-perf-btn').addEventListener('click', async () =>
     searchPerfEl.hidden = false;
   } finally {
     btn.disabled = false;
-  }
-});
-
-document.getElementById('bulk-delete-btn').addEventListener('click', async () => {
-  const score = parseFloat(document.getElementById('bulk-score').value);
-  if (isNaN(score)) return;
-  const btn = document.getElementById('bulk-delete-btn');
-  btn.disabled = true;
-  btn.textContent = '…';
-  try {
-    const res = await fetch(`${BACKEND}/jobs?below_score=${score}&profile_id=${PROFILE_ID}`, { method: 'DELETE' });
-    const data = await res.json();
-    if (res.ok) {
-      btn.textContent = `Hid ${data.hidden ?? data.deleted}`;
-      setTimeout(() => { btn.textContent = 'Hide'; btn.disabled = false; }, 2000);
-      loadJobs();
-    } else {
-      throw new Error();
-    }
-  } catch {
-    btn.textContent = 'Error';
-    setTimeout(() => { btn.textContent = 'Hide'; btn.disabled = false; }, 2000);
   }
 });

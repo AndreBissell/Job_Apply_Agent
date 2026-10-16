@@ -403,4 +403,15 @@ docs/database-schema.md: note `gap_ignored` under `profiles.preferences` (no DDL
   animations, fold, section headers, two-column grid) is removed. e2e: new pipeline_e2e.py
   54/54; dashboard 199/199 (its delete checks now use the detail view); sidebar_load 65/65;
   quick_apply 124/124.
+- 2026-10-16: Step 4 done. Needs your answer (`maybeLoadNeeds` / `loadNeeds` / `showNeeds` in
+  sidebar_jobs.js) redraws only when the set of waiting runs changes, never while an answer is
+  typed; the Overview's ❓ link calls `showNeeds()`. Tidy-up (`#bulk-score`, default 60) is two
+  clicks with the count from the loaded list ("None below N" when there are none); it left
+  Settings. New `extension/sidebar_skills.js` (loaded after sidebar_jobs.js): the skills list
+  (top 8 + Show all; each answer leaves a one-line result in place rather than moving the list)
+  and To work on, moved from sidebar_profile.js; Profile keeps a pointer button (`#towork-goto`).
+  Opening the Pipeline tab refreshes the list, the skills and To work on. e2e pipeline 86/86
+  (never answers the seeded question: an answered run would resume and call the model);
+  sidebar_load 66/66, dashboard 199/199, availability 48/48, apply_sent 51/51, quick_apply
+  124/124; pytest 1794.
 

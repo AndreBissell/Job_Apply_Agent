@@ -165,6 +165,39 @@
     .pl-skel-pill { width: 30px; height: 18px; }
     .pl-skel-lines { flex: 1; height: 26px; }
 
+    .pl-note { font-size: 11px; color: #6b7280; line-height: 1.45; margin: 0 0 8px; }
+    .pl-link {
+      background: none; border: none; padding: 4px 0; font: inherit; font-size: 12px; font-weight: 600;
+      color: #2557a7; cursor: pointer; text-align: left;
+    }
+    .pl-link:hover { text-decoration: underline; }
+    .pl-tidy { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 10px 0 4px; font-size: 12px; color: #374151; }
+    .pl-tidy input { width: 52px; padding: 3px 6px; border: 1px solid #d1d5db; border-radius: 5px; font-size: 12px; text-align: center; }
+    .pl-tidy .btn.armed { background: #fff7ed; border-color: #f59e0b; color: #92400e; }
+    #pl-needs { scroll-margin-top: 90px; }
+    .pl-need { background: #fff; border: 1px solid #fcd34d; border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; }
+    .pl-need-head { display: flex; align-items: center; gap: 8px; }
+    .pl-need-head strong { flex: 1; min-width: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pl-need .qcard { margin-top: 6px; }
+    .pl-need textarea {
+      width: 100%; min-height: 64px; margin-top: 2px; padding: 6px 8px; border: 1px solid #d1d5db;
+      border-radius: 5px; font-size: 12px; font-family: inherit; color: #1c2330; resize: vertical;
+    }
+    .sk-list { list-style: none; margin: 0; padding: 0; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; }
+    .sk-list:empty { display: none; }
+    .sk-row { display: flex; align-items: center; gap: 8px; padding: 7px 10px; min-height: 40px; }
+    .sk-row + .sk-row { border-top: 1px solid #f0f2f5; }
+    .sk-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+    .sk-main strong { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sk-meta { font-size: 11px; color: #6b7280; }
+    .sk-actions { display: flex; gap: 4px; flex: none; }
+    .sk-actions .btn { padding: 2px 7px; }
+    .sk-ignore { background: none; border: none; color: #9ca3af; cursor: pointer; font-size: 13px; padding: 2px 4px; border-radius: 4px; }
+    .sk-ignore:hover { color: #374151; background: #f3f4f6; }
+    .sk-done { font-size: 12px; color: #059669; flex: 1; }
+    .sk-done.muted { color: #6b7280; }
+    .sk-done .pl-link { font-size: 12px; padding: 0 0 0 6px; }
+
     /* The detail view: replaces the page (D6) */
     .pl-detail-bar {
       position: sticky; top: 41px; z-index: 8; padding: 8px 14px; background: #f7f8fa;
@@ -781,6 +814,14 @@
   <div id="jobs-section" hidden>
     <div id="scanlog"></div>
     <div id="pl-page">
+      <section class="pl-block" id="pl-needs" hidden aria-labelledby="pl-needs-h">
+        <div class="pl-head">
+          <h2 id="pl-needs-h">❓ Needs your answer</h2>
+          <span class="pl-count" id="pl-needs-count"></span>
+        </div>
+        <p class="pl-note">These cover letters are paused until you answer. A No leaves the skill out of the letter and adds it to To work on below.</p>
+        <div id="pl-needs-list"></div>
+      </section>
       <section class="pl-block" id="pl-jobs">
         <div class="pl-head">
           <h2>Jobs not applied</h2>
@@ -803,6 +844,29 @@
           </div>
         </div>
         <div id="analysing-row" hidden></div>
+        <div class="pl-tidy">
+          <label for="bulk-score">Tidy up: hide jobs below</label>
+          <input id="bulk-score" type="number" min="0" max="100" value="60">
+          <button class="btn btn-sm" id="bulk-delete-btn" type="button">Hide</button>
+        </div>
+        <p class="pl-note">Hiding takes jobs off your lists and frees their stored ad text, but keeps the score: search suggestions are ranked against every score, so the weak ones still count. Applied jobs are never hidden.</p>
+      </section>
+      <section class="pl-block" id="pl-skills" aria-labelledby="pl-skills-h">
+        <div class="pl-head">
+          <h2 id="pl-skills-h">Skills ads ask for that you don't list</h2>
+          <span class="pl-count" id="pl-skills-count"></span>
+        </div>
+        <p class="pl-note" id="pl-skills-note"></p>
+        <ul class="sk-list" id="pl-skills-list"></ul>
+        <button class="pl-link" id="pl-skills-more" type="button" hidden></button>
+      </section>
+      <section class="pl-block" id="towork-section" aria-labelledby="pl-towork-h">
+        <div class="pl-head">
+          <h2 id="pl-towork-h">To work on</h2>
+          <button class="btn btn-sm" id="towork-refresh" type="button">Refresh</button>
+        </div>
+        <p class="pl-note">Skills you said "not yet" to, ranked by how many recent ads ask for them. Clear one once you've learned it.</p>
+        <div id="towork-list"></div>
       </section>
     </div>
     <div id="job-detail-view" hidden>
@@ -900,14 +964,9 @@
       </div>
     </div>
 
-    <!-- To work on: skills you said you don't have (plan §5.9) -->
-    <div class="p-section" id="towork-section">
-      <div class="p-section-hdr">
-        <h2>To work on</h2>
-        <button class="btn btn-sm" id="towork-refresh">Refresh</button>
-      </div>
-      <p class="writing-hint">Skills you told a cover letter you don't have, ranked by how many recent ads ask for them. Clear one once you've learned it.</p>
-      <div id="towork-list"></div>
+    <!-- To work on lives on the Pipeline tab now (docs/pipeline-tab-plan.md D11) -->
+    <div class="p-section" id="towork-pointer">
+      <button class="pl-link" id="towork-goto" type="button">To work on, and the skills ads ask for, are on the Pipeline tab ›</button>
     </div>
     </div><!-- /#profile-main -->
 
@@ -1064,17 +1123,6 @@
         <button class="btn" id="search-perf-btn">Show</button>
       </div>
       <div id="search-perf" hidden></div>
-      <h3 class="set-group">Job list</h3>
-      <div class="pref-row">
-        <span>Hide job apps below score</span>
-        <input id="bulk-score" type="number" min="0" max="100" value="70">
-        <button class="btn" id="bulk-delete-btn">Hide</button>
-      </div>
-      <p class="pref-note">
-        Removes them from your lists and frees their stored text, but keeps the
-        score — search suggestions are ranked against the average of all scored
-        jobs, so discarding the weak ones would flatten the ranking.
-      </p>
     </div>
   </div>
 
@@ -1083,6 +1131,7 @@
   <script src="screening_assist.js"></script>
   <script src="sidebar_shared.js"></script>
   <script src="sidebar_jobs.js"></script>
+  <script src="sidebar_skills.js"></script>
   <script src="sidebar_letter_notes.js"></script>
   <script src="sidebar_letter_card.js"></script>
   <script src="sidebar_evidence.js"></script>

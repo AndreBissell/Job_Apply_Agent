@@ -520,8 +520,9 @@ Descriptions come from reading each file's header docstring and, for the central
 | `sidebar_letter_card.js` | The ask_user question card with its profile-row editors, and the letter editor. |
 | `sidebar_evidence.js` | `evidenceNote`, `csvEscape` (shared with `dashboard.js`), the Export evidence button. |
 | `sidebar_scan.js` | Scan Page: `SCAN_DELAY_MS`, `SCAN_PAGES_CEILING`, `scanPage`, and the two functions injected into Seek tabs (`pageCollectJobLinks`, `pageScrapeDetail`). |
-| `sidebar_personalise.js` | The ⚙ Settings view's controls (ids still say "personalise"): thresholds, letter limits, toggles, `loadPreferences`, bulk hide. |
-| `sidebar_profile.js` | Profile tab: the profile editor and the To work on list. |
+| `sidebar_personalise.js` | The ⚙ Settings view's controls (ids still say "personalise"): thresholds, letter limits, toggles, `loadPreferences`. |
+| `sidebar_skills.js` | Pipeline tab, under the list: skills ads ask for that the profile lacks (`GET /gaps/market`; I have it / Not yet / ignore) and the To work on list. |
+| `sidebar_profile.js` | Profile tab: the profile editor (and a pointer to To work on, now on the Pipeline tab). |
 | `sidebar_seek_import.js` | Import from your own Seek profile (`seekProfileExtract`, injected) and profile export. |
 | `sidebar_events.js` | Live updates: `connectEvents` (SSE), `scheduleReload`, `typingIn`, the budget banner. |
 | `sidebar.js` | The env pill, zoom, and the `backendReady.then(...)` startup. |
