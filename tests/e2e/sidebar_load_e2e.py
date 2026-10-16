@@ -173,15 +173,39 @@ def run(headed: bool) -> int:
             c.check(shown == [tab], f"{tab} tab: only its section shows ({shown})")
             settle(f"opening the {tab} tab")
 
-        # --- Personalise --------------------------------------------------------
-        print("Personalise")
-        side.click("nav#tabs .tab[data-tab=jobs]")
-        side.click("#personalise-toggle")
-        c.check(side.get_attribute("#personalise-toggle", "aria-expanded") == "true"
-                and side.is_visible("#personalise-panel"), "Personalise opens")
-        settle("opening Personalise")
-        side.click("#personalise-toggle")
-        c.check(side.is_hidden("#personalise-panel"), "Personalise closes")
+        # --- Settings (the header's ⚙; docs/pipeline-tab-plan.md D12) ------------
+        print("Settings")
+        c.check(side.locator("nav#tabs .tab[data-tab=jobs]").inner_text() == "Pipeline",
+                "the Jobs tab is labelled Pipeline")
+        c.check(side.is_visible("#budget-banner") is False and side.locator("#jobs-section #budget-banner").count() == 0,
+                "the budget banner sits outside the tabs (hidden while nothing is blocked)")
+        c.check(side.locator("#suggestion-banner").count() == 0, "the old suggestion banner is gone")
+        side.click("nav#tabs .tab[data-tab=applied]")
+        side.click("#settings-btn")
+        shown = [t for t, sel in sections.items() if side.is_visible(sel)]
+        c.check(side.is_visible("#settings-section") and shown == []
+                and side.get_attribute("#settings-btn", "aria-expanded") == "true"
+                and side.locator("nav#tabs .tab.active").count() == 0,
+                f"⚙ opens Settings over every tab ({shown})")
+        c.check(side.is_visible("#auto-letter-min") and side.is_visible("#availability-checks")
+                and side.locator("#settings-section .set-group").count() >= 7, "Settings holds the grouped controls")
+        settle("opening Settings")
+        side.click("#settings-back")
+        c.check(side.is_hidden("#settings-section") and side.is_visible("#applied-section")
+                and side.locator("nav#tabs .tab.active").inner_text() == "Applied",
+                "Back returns to the tab Settings was opened from")
+        side.click("#settings-btn")
+        side.keyboard.press("Escape")
+        c.check(side.is_hidden("#settings-section") and side.is_visible("#applied-section"), "Esc closes Settings")
+        side.click("#settings-btn")
+        side.click("#settings-btn")
+        c.check(side.is_hidden("#settings-section") and side.is_visible("#applied-section"), "⚙ again closes Settings")
+        side.click("#settings-btn")
+        side.click("nav#tabs .tab[data-tab=profile]")
+        c.check(side.is_hidden("#settings-section") and side.is_visible("#profile-section")
+                and side.get_attribute("#settings-btn", "aria-expanded") == "false",
+                "clicking a tab closes Settings")
+        side.click("nav#tabs .tab[data-tab=overview]")
 
         # --- zoom ---------------------------------------------------------------
         print("Zoom")

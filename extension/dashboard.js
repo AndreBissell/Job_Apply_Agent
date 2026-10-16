@@ -157,7 +157,7 @@ function renderProgress() {
     const n = d.waiting_count;
     const waiting = mk('button', 'ov-waiting');
     waiting.append(mk('span', null, `❓ ${plural(n, 'letter')} need${n === 1 ? 's' : ''} your answer`), mk('span', null, '›'));
-    waiting.title = 'Open the Jobs tab, where the questions are';
+    waiting.title = 'Open the Pipeline tab, where the questions are';
     waiting.addEventListener('click', () => showTab('jobs'));
     el.appendChild(waiting);
   }
@@ -445,7 +445,7 @@ function renderMiniCard(job) {
   open.addEventListener('click', () => chrome.tabs.create({ url: job.url }));
   actions.appendChild(open);
   if (coverLetterState(job) === 'writing') {
-    // The same notice as the Jobs tab's badge; Copy appears when the letter lands.
+    // The same notice as the Pipeline tab's chip; Copy appears when the letter lands.
     card.classList.add('writing');
     actions.appendChild(mk('span', 'mc-writing', CL_BADGES.writing));
   } else {
@@ -560,7 +560,7 @@ function renderMiniDelete(job, card) {
       alert(`Could not delete the job: ${e.message}`);
       return;
     }
-    loadJobs(); // the Jobs tab drops it too
+    loadJobs(); // the Pipeline tab drops it too
     card.classList.add('leaving');
     setTimeout(() => {
       card.remove();
@@ -779,7 +779,7 @@ function renderAppliedPeriods() {
   const total = d.periods.reduce((n, p) => n + p.applied, 0);
   apStatusEl.textContent = total
     ? `${plural(total, 'application')} in ${plural(d.periods.filter(p => p.applied).length, 'period')}.`
-    : 'No applications logged yet. Mark a job applied on the Overview or Jobs tab.';
+    : 'No applications logged yet. Mark a job applied on the Overview or the Pipeline tab.';
 
   if (!d.cycle_start) {
     const note = mk('div', 'ap-note', 'Grouped by calendar month for now. ');
@@ -877,7 +877,7 @@ function renderPeriodJob(job) {
   });
   li.appendChild(iv);
 
-  // Deleting an application is deliberate and lives only here; the Jobs tab offers no
+  // Deleting an application is deliberate and lives only here; the Pipeline tab offers no
   // Delete for applied jobs and the backend refuses one without allow_applied.
   const del = mk('button', 'del-btn');
   del.title = 'Delete this application';

@@ -221,7 +221,7 @@ job-app-assistant/
     apply_flow.js      # Quick Apply "application sent" page: auto-register + screenshot
     sidebar.html       # side panel; its <script> tags load the panel's CLASSIC scripts in order:
     sidebar_shared.js sidebar_jobs.js sidebar_letter_notes.js sidebar_letter_card.js
-    sidebar_evidence.js sidebar_suggest.js sidebar_scan.js sidebar_personalise.js
+    sidebar_evidence.js sidebar_scan.js sidebar_personalise.js
     sidebar_profile.js sidebar_seek_import.js sidebar_events.js
     applied_record.js  # Applied tab: one application's read-only record (ad, match, letter)
     sidebar.js         # env pill, zoom, startup

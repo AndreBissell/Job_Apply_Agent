@@ -1,11 +1,9 @@
-// Personalise panel: user-tunable thresholds, letter limits, side-output toggles, search
-// suggestions, bulk hide. Classic script: sidebar.html loads it after sidebar_scan.js and
+// Settings (the ⚙ view; its controls keep their old "Personalise" ids): user-tunable
+// thresholds, letter limits, side-output toggles, search suggestions, bulk hide. Classic script: sidebar.html loads it after sidebar_scan.js and
 // before sidebar.js; all share one global scope (it writes autoLetterMin and scanMaxPages).
 // ---------------------------------------------------------------------------
-// Personalise metrics — collapsible panel of user-tunable thresholds
+// Settings — user-tunable thresholds (opened by ⚙: openSettings in sidebar_shared.js)
 // ---------------------------------------------------------------------------
-const personaliseToggle = document.getElementById('personalise-toggle');
-const personalisePanel = document.getElementById('personalise-panel');
 const autoLetterInput = document.getElementById('auto-letter-min');
 const autoLetterSaveBtn = document.getElementById('auto-letter-save');
 const scanPagesInput = document.getElementById('scan-pages');
@@ -104,12 +102,6 @@ async function savePref(body) {
     return false;
   }
 }
-
-personaliseToggle.addEventListener('click', () => {
-  const open = personalisePanel.hidden; // about to open
-  personalisePanel.hidden = !open;
-  personaliseToggle.setAttribute('aria-expanded', String(open));
-});
 
 // Resolves once the stored preferences (if reachable) have been applied, so the
 // first loadJobs() can classify "pending" letters against the real threshold.
@@ -242,8 +234,8 @@ scanPagesSaveBtn.addEventListener('click', async () => {
 });
 
 // Layer 4 opt-in. Unticked, /jobs/suggested-searches never reaches the LLM;
-// ticked, it spends one cached call. Ticking it also refreshes the banner
-// immediately so the effect is visible rather than deferred to the next load.
+// ticked, it spends one cached call. The Overview's suggestions pick it up the
+// next time that tab opens.
 llmSuggestCheckbox.addEventListener('change', async () => {
   const enabled = llmSuggestCheckbox.checked;
   llmSuggestCheckbox.disabled = true;
@@ -254,7 +246,6 @@ llmSuggestCheckbox.addEventListener('change', async () => {
       body: JSON.stringify({ llm_search_suggestions: enabled }),
     });
     if (!res.ok) throw new Error();
-    await maybeShowSuggestions({ ignoreCooldown: true });
   } catch {
     llmSuggestCheckbox.checked = !enabled; // revert — the setting didn't stick
   } finally {
@@ -263,12 +254,20 @@ llmSuggestCheckbox.addEventListener('change', async () => {
 });
 
 // Forces a refine even when the cache is still warm, and even when the
-// checkbox is off (a one-off look, without turning the feature on).
+// checkbox is off (a one-off look, without turning the feature on). The result
+// shows under the button, since there is no banner any more.
+const llmSuggestResult = document.getElementById('llm-suggest-result');
 llmSuggestRefreshBtn.addEventListener('click', async () => {
   llmSuggestRefreshBtn.disabled = true;
   llmSuggestRefreshBtn.textContent = '…';
   try {
-    await maybeShowSuggestions({ forceLlm: true, ignoreCooldown: true });
+    const res = await fetch(`${BACKEND}/jobs/suggested-searches?profile_id=${PROFILE_ID}&use_llm=true`);
+    if (!res.ok) throw new Error();
+    const { suggestions, llm_used } = await res.json();
+    llmSuggestResult.textContent = suggestions?.length
+      ? `${llm_used ? '✨ AI picks' : 'Mined (the AI step fell back)'}: ${suggestions.join(' · ')}`
+      : 'No suggestions yet: score a few more jobs first.';
+    llmSuggestResult.hidden = false;
     llmSuggestRefreshBtn.textContent = 'Done ✓';
   } catch {
     llmSuggestRefreshBtn.textContent = 'Error';

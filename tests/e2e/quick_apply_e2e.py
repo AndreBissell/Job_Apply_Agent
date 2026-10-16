@@ -841,8 +841,8 @@ def run(headed: bool) -> int:
             c.check(side.locator(".job-detail").first.is_visible(),
                     "sidebar: interacting with the section does not collapse the card")
 
-            # --- 9c: the Personalise checkbox switches all question help off ----------
-            side.locator("#personalise-toggle").click()
+            # --- 9c: the Settings checkbox switches all question help off -------------
+            side.locator("#settings-btn").click()
             box = side.locator("#qa-question-help")
             box.wait_for(timeout=5000)
             c.check(box.is_checked(), "sidebar: 'Help with Quick Apply questions' is on by default")

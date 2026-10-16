@@ -87,7 +87,6 @@ async function loadJobs() {
     if (longTail.length) jobListEl.appendChild(renderFold(longTail));
   }
 
-  maybeShowSuggestions();
 }
 
 // Long-tail (<60) jobs aren't rendered individually up front — just a count.

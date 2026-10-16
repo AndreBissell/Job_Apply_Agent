@@ -342,12 +342,11 @@ def run(headed: bool, keep: bool) -> int:
                     "...and the checks are paused again")
             sw.evaluate("chrome.storage.local.remove('availabilityCooldownUntil')")
 
-            # --- The Personalise toggle ----------------------------------------------------
+            # --- The Settings toggle --------------------------------------------------------
             print("Toggle")
-            side.click("nav#tabs .tab[data-tab=jobs]")  # Personalise lives on the Jobs tab
-            side.click("#personalise-toggle")
+            side.click("#settings-btn")  # the ⚙ Settings view (was Personalise on the Jobs tab)
             box = side.locator("#availability-checks")
-            c.check(box.is_checked(), "the Personalise checkbox is on by default")
+            c.check(box.is_checked(), "the Settings checkbox is on by default")
             box.uncheck()
             c.check(wait_for(lambda: api("/profile/1/preferences")["availability_checks_enabled"] is False),
                     "unticking saves availability_checks_enabled = false")

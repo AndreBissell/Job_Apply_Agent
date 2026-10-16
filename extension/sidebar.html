@@ -35,6 +35,13 @@
     /* Zoom controls: live in the header (not #hdr-jobs-btns, which is hidden on the
        Applied/Profile tabs) so they stay reachable everywhere. */
     #zoom-ctrls { display: flex; gap: 4px; }
+    #settings-btn {
+      width: 24px; height: 22px; padding: 0; border: 1px solid #d1d5db; border-radius: 4px;
+      background: #fff; font-size: 14px; line-height: 1; cursor: pointer; color: #374151;
+    }
+    #settings-btn:hover { background: #f0f4fb; }
+    #settings-btn[aria-expanded="true"] { background: #e8eef9; border-color: #2557a7; color: #2557a7; }
+    body.env-test #settings-btn { border-color: #fdba74; }
     #zoom-ctrls button {
       width: 22px; height: 22px; padding: 0; border: 1px solid #d1d5db; border-radius: 4px;
       background: #fff; font-size: 14px; font-weight: 700; line-height: 1;
@@ -70,17 +77,6 @@
     .btn-sm { font-size: 11px; padding: 3px 7px; }
 
     /* ── Jobs tab ─────────────────────────────────────────── */
-    #suggestion-banner {
-      font-size: 12px; color: #78350f; background: #fffbeb;
-      border-bottom: 1px solid #fde68a; padding: 6px 14px;
-      display: flex; align-items: center; justify-content: space-between; gap: 8px;
-    }
-    #suggestion-banner .sugg-links { display: flex; flex-wrap: wrap; gap: 6px; }
-    #suggestion-banner a { cursor: pointer; font-weight: 600; }
-    #suggestion-banner button.close-x {
-      background: none; border: none; cursor: pointer; color: #92400e;
-      font-size: 13px; padding: 0 2px; flex: none;
-    }
     #budget-banner {
       font-size: 12px; color: #7f1d1d; background: #fef2f2;
       border-bottom: 1px solid #fecaca; padding: 6px 14px;
@@ -188,16 +184,19 @@
     .job-detail .cl-actions { display: flex; gap: 6px; margin-top: 6px; }
     a { color: #2557a7; text-decoration: none; }
     a:hover { text-decoration: underline; }
-    #personalise { background: #fff; border-bottom: 1px solid #eef0f3; }
-    #personalise-toggle {
-      width: 100%; display: flex; align-items: center; justify-content: space-between;
-      padding: 7px 14px; background: none; border: none; cursor: pointer;
-      font-size: 12px; font-weight: 600; color: #374151; text-align: left;
+    /* Settings: a full-panel view opened by the header's ⚙ (plan D12), not a tab */
+    #settings-section { background: #fff; min-height: calc(100vh - 80px); }
+    .settings-bar {
+      display: flex; align-items: center; gap: 10px; padding: 8px 14px;
+      border-bottom: 1px solid #eef0f3; background: #fff; position: sticky; top: 41px; z-index: 8;
     }
-    #personalise-toggle:hover { background: #f3f4f6; }
-    #personalise-toggle .chev { color: #9ca3af; transition: transform 0.15s; }
-    #personalise-toggle[aria-expanded="true"] .chev { transform: rotate(180deg); }
-    #personalise-panel { padding: 2px 14px 10px; }
+    .settings-bar h2 { font-size: 14px; margin: 0; }
+    #personalise-panel { padding: 2px 14px 16px; }
+    .set-group {
+      font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+      color: #2557a7; margin: 16px 0 2px; padding-top: 10px; border-top: 1px solid #eef0f3;
+    }
+    .set-group:first-child { border-top: none; margin-top: 6px; padding-top: 0; }
     .pref-row {
       display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
       padding: 5px 0; font-size: 12px; color: #6b7280;
@@ -777,6 +776,7 @@
         <button class="btn" id="scan-btn">Scan Page</button>
         <button class="btn" id="refresh-btn">Refresh</button>
       </div>
+      <button id="settings-btn" title="Settings" aria-label="Settings" aria-expanded="false" aria-controls="settings-section">⚙</button>
       <div id="zoom-ctrls">
         <button id="zoom-out" title="Smaller">&#8722;</button>
         <button id="zoom-in" title="Larger">+</button>
@@ -786,10 +786,11 @@
 
   <nav id="tabs">
     <button class="tab active" data-tab="overview">Overview</button>
-    <button class="tab" data-tab="jobs">Jobs</button>
+    <button class="tab" data-tab="jobs">Pipeline</button>
     <button class="tab" data-tab="applied">Applied</button>
     <button class="tab" data-tab="profile">Profile</button>
   </nav>
+  <div id="budget-banner" role="status" hidden></div>
 
   <!-- ── Overview tab (dashboard.js) ─────────────────── -->
   <div id="overview-section">
@@ -829,150 +830,8 @@
     </section>
   </div>
 
-  <!-- ── Jobs tab ─────────────────────────────────────── -->
+  <!-- ── Pipeline tab (ids keep the old "jobs" name; plan D1) ── -->
   <div id="jobs-section" hidden>
-    <div id="budget-banner" hidden></div>
-    <div id="suggestion-banner" hidden>
-      <span>💡 Try searching:</span>
-      <span class="sugg-links" id="sugg-links"></span>
-      <button class="close-x" id="sugg-close" title="Dismiss">✕</button>
-    </div>
-    <div id="personalise">
-      <button id="personalise-toggle" aria-expanded="false" aria-controls="personalise-panel">
-        <span>⚙ Personalise metrics</span><span class="chev">▾</span>
-      </button>
-      <div id="personalise-panel" hidden>
-        <div class="pref-row">
-          <span>Hide job apps below score</span>
-          <input id="bulk-score" type="number" min="0" max="100" value="70">
-          <button class="btn" id="bulk-delete-btn">Hide</button>
-        </div>
-        <p class="pref-note">
-          Removes them from your lists and frees their stored text, but keeps the
-          score — search suggestions are ranked against the average of all scored
-          jobs, so discarding the weak ones would flatten the ranking.
-        </p>
-        <div class="pref-row">
-          <span>Auto-generate cover letters at or above score</span>
-          <input id="auto-letter-min" type="number" min="0" max="100" value="75">
-          <button class="btn" id="auto-letter-save">Save</button>
-        </div>
-        <div class="pref-row">
-          <label class="pref-check" for="letter-loop-enabled">
-            <input id="letter-loop-enabled" type="checkbox" checked>
-            <span>Check and revise letters for top matches</span>
-          </label>
-        </div>
-        <div class="pref-row">
-          <span>Full pipeline at or above score</span>
-          <input id="letter-loop-min" type="number" min="0" max="100" value="85">
-          <button class="btn" id="letter-loop-save">Save</button>
-        </div>
-        <div class="pref-row">
-          <span>Letter engine</span>
-          <select id="letter-engine">
-            <option value="agent">Agent (a model picks each step)</option>
-            <option value="workflow">Fixed workflow</option>
-          </select>
-        </div>
-        <p class="pref-note" id="letter-loop-note"></p>
-        <div class="pref-row">
-          <label class="pref-check" for="side-screening">
-            <input id="side-screening" type="checkbox" checked>
-            <span>Draft answers to screening questions in the ad</span>
-          </label>
-        </div>
-        <div class="pref-row">
-          <label class="pref-check" for="side-learning">
-            <input id="side-learning" type="checkbox" checked>
-            <span>Suggest ways to close gaps you said no to</span>
-          </label>
-        </div>
-        <div class="pref-row">
-          <label class="pref-check" for="side-resume">
-            <input id="side-resume" type="checkbox" checked>
-            <span>Résumé tailoring notes</span>
-          </label>
-        </div>
-        <p class="pref-note">
-          Extras beside a fact-checked letter (not the quick one-pass letters). Each adds
-          one model call to a full run when it has something to work on: résumé notes
-          about 1–2¢, screening answers about 2¢ (only when the ad asks questions), gap
-          suggestions under 1¢ (only for gaps you said no to).
-        </p>
-        <div class="pref-row">
-          <label class="pref-check" for="qa-question-help">
-            <input id="qa-question-help" type="checkbox" checked>
-            <span>Help with Quick Apply questions</span>
-          </label>
-        </div>
-        <p class="pref-note">
-          On Seek's "Answer employer questions" step, for jobs with a fact-checked letter:
-          what the job wants beside what your profile has, and a draft answer when you ask
-          for one (about 1–2¢ each). Off = every question is yours to answer, with no help.
-        </p>
-        <div class="pref-row">
-          <span>Max drafts per letter</span>
-          <input id="limit-drafts" type="number" min="1" max="5" step="1" value="3">
-          <button class="btn" id="limit-drafts-save">Save</button>
-        </div>
-        <div class="pref-row">
-          <span>Max tool calls per letter</span>
-          <input id="limit-tools" type="number" min="6" max="40" step="1" value="15">
-          <button class="btn" id="limit-tools-save">Save</button>
-        </div>
-        <div class="pref-row">
-          <span>Max spend per letter (US$)</span>
-          <input id="limit-usd" type="number" min="0.05" max="5" step="0.05" value="0.50">
-          <button class="btn" id="limit-usd-save">Save</button>
-        </div>
-        <p class="pref-note" id="limits-note">
-          Limits for one fact-checked letter. A letter that reaches one stops with its best
-          draft so far, and the sidebar lists what is still wrong with it. Each extra draft
-          needs 4 more tool calls (a full run with 3 drafts uses 14); the extras above don't
-          count towards the tool calls, but they do count towards the spend. Applies to
-          letters started after you save.
-        </p>
-        <div class="pref-row">
-          <span>Job pages opened per Scan Page</span>
-          <input id="scan-pages" type="number" min="1" max="25" value="10">
-          <button class="btn" id="scan-pages-save">Save</button>
-        </div>
-        <p class="pref-note">
-          Max 25. Each page is opened 5 seconds after the last, so a scan takes
-          roughly 5s × this number. Already-captured jobs are skipped and don't count.
-        </p>
-        <div class="pref-row">
-          <label class="pref-check" for="availability-checks">
-            <input id="availability-checks" type="checkbox" checked>
-            <span>Check in the background that jobs are still advertised</span>
-          </label>
-        </div>
-        <p class="pref-note">
-          While this panel is open, it quietly re-opens a few saved job pages (one at a time,
-          15 seconds apart, at most 8 per session and 24 a day, never during a Scan) and hides
-          ads that have closed. Matching and cover letters only run for an ad seen live in the
-          last 24 hours, so an old backlog waits for a check first. Applied jobs are never
-          touched. Off = no checks and no wait.
-        </p>
-        <div class="pref-row">
-          <label class="pref-check" for="llm-suggest">
-            <input id="llm-suggest" type="checkbox">
-            <span>Use AI to refine search suggestions</span>
-          </label>
-          <button class="btn" id="llm-suggest-refresh">Refresh now</button>
-        </div>
-        <p class="pref-note">
-          Off by default. Suggestions are mined from your match history for free;
-          this spends one small LLM call, cached until ~10 new jobs are scored.
-        </p>
-        <div class="pref-row">
-          <span>Search performance</span>
-          <button class="btn" id="search-perf-btn">Show</button>
-        </div>
-        <div id="search-perf" hidden></div>
-      </div>
-    </div>
     <div id="scanlog"></div>
     <div id="job-status">Loading…</div>
     <ul id="job-list"></ul>
@@ -1096,6 +955,154 @@
     </div>
   </div>
 
+  <!-- ── Settings (⚙ in the header; not a tab) ───────────── -->
+  <div id="settings-section" hidden>
+    <div class="settings-bar">
+      <button class="btn" id="settings-back" title="Back (Esc)">← Back</button>
+      <h2>Settings</h2>
+    </div>
+    <div id="personalise-panel">
+      <h3 class="set-group">Cover letters</h3>
+      <div class="pref-row">
+        <span>Auto-generate cover letters at or above score</span>
+        <input id="auto-letter-min" type="number" min="0" max="100" value="75">
+        <button class="btn" id="auto-letter-save">Save</button>
+      </div>
+      <div class="pref-row">
+        <label class="pref-check" for="letter-loop-enabled">
+          <input id="letter-loop-enabled" type="checkbox" checked>
+          <span>Check and revise letters for top matches</span>
+        </label>
+      </div>
+      <div class="pref-row">
+        <span>Full pipeline at or above score</span>
+        <input id="letter-loop-min" type="number" min="0" max="100" value="85">
+        <button class="btn" id="letter-loop-save">Save</button>
+      </div>
+      <div class="pref-row">
+        <span>Letter engine</span>
+        <select id="letter-engine">
+          <option value="agent">Agent (a model picks each step)</option>
+          <option value="workflow">Fixed workflow</option>
+        </select>
+      </div>
+      <p class="pref-note" id="letter-loop-note"></p>
+      <h3 class="set-group">Letter limits</h3>
+      <div class="pref-row">
+        <span>Max drafts per letter</span>
+        <input id="limit-drafts" type="number" min="1" max="5" step="1" value="3">
+        <button class="btn" id="limit-drafts-save">Save</button>
+      </div>
+      <div class="pref-row">
+        <span>Max tool calls per letter</span>
+        <input id="limit-tools" type="number" min="6" max="40" step="1" value="15">
+        <button class="btn" id="limit-tools-save">Save</button>
+      </div>
+      <div class="pref-row">
+        <span>Max spend per letter (US$)</span>
+        <input id="limit-usd" type="number" min="0.05" max="5" step="0.05" value="0.50">
+        <button class="btn" id="limit-usd-save">Save</button>
+      </div>
+      <p class="pref-note" id="limits-note">
+        Limits for one fact-checked letter. A letter that reaches one stops with its best
+        draft so far, and the sidebar lists what is still wrong with it. Each extra draft
+        needs 4 more tool calls (a full run with 3 drafts uses 14); the extras above don't
+        count towards the tool calls, but they do count towards the spend. Applies to
+        letters started after you save.
+      </p>
+      <h3 class="set-group">Extras beside a letter</h3>
+      <div class="pref-row">
+        <label class="pref-check" for="side-screening">
+          <input id="side-screening" type="checkbox" checked>
+          <span>Draft answers to screening questions in the ad</span>
+        </label>
+      </div>
+      <div class="pref-row">
+        <label class="pref-check" for="side-learning">
+          <input id="side-learning" type="checkbox" checked>
+          <span>Suggest ways to close gaps you said no to</span>
+        </label>
+      </div>
+      <div class="pref-row">
+        <label class="pref-check" for="side-resume">
+          <input id="side-resume" type="checkbox" checked>
+          <span>Résumé tailoring notes</span>
+        </label>
+      </div>
+      <p class="pref-note">
+        Extras beside a fact-checked letter (not the quick one-pass letters). Each adds
+        one model call to a full run when it has something to work on: résumé notes
+        about 1–2¢, screening answers about 2¢ (only when the ad asks questions), gap
+        suggestions under 1¢ (only for gaps you said no to).
+      </p>
+      <h3 class="set-group">Quick Apply</h3>
+      <div class="pref-row">
+        <label class="pref-check" for="qa-question-help">
+          <input id="qa-question-help" type="checkbox" checked>
+          <span>Help with Quick Apply questions</span>
+        </label>
+      </div>
+      <p class="pref-note">
+        On Seek's "Answer employer questions" step, for jobs with a fact-checked letter:
+        what the job wants beside what your profile has, and a draft answer when you ask
+        for one (about 1–2¢ each). Off = every question is yours to answer, with no help.
+      </p>
+      <h3 class="set-group">Scanning</h3>
+      <div class="pref-row">
+        <span>Job pages opened per Scan Page</span>
+        <input id="scan-pages" type="number" min="1" max="25" value="10">
+        <button class="btn" id="scan-pages-save">Save</button>
+      </div>
+      <p class="pref-note">
+        Max 25. Each page is opened 5 seconds after the last, so a scan takes
+        roughly 5s × this number. Already-captured jobs are skipped and don't count.
+      </p>
+      <h3 class="set-group">Availability checks</h3>
+      <div class="pref-row">
+        <label class="pref-check" for="availability-checks">
+          <input id="availability-checks" type="checkbox" checked>
+          <span>Check in the background that jobs are still advertised</span>
+        </label>
+      </div>
+      <p class="pref-note">
+        While this panel is open, it quietly re-opens a few saved job pages (one at a time,
+        15 seconds apart, at most 8 per session and 24 a day, never during a Scan) and hides
+        ads that have closed. Matching and cover letters only run for an ad seen live in the
+        last 24 hours, so an old backlog waits for a check first. Applied jobs are never
+        touched. Off = no checks and no wait.
+      </p>
+      <h3 class="set-group">Search suggestions</h3>
+      <div class="pref-row">
+        <label class="pref-check" for="llm-suggest">
+          <input id="llm-suggest" type="checkbox">
+          <span>Use AI to refine search suggestions</span>
+        </label>
+        <button class="btn" id="llm-suggest-refresh">Refresh now</button>
+      </div>
+      <p class="pref-note">
+        Off by default. Suggestions are mined from your match history for free;
+        this spends one small LLM call, cached until ~10 new jobs are scored.
+      </p>
+      <p class="pref-note" id="llm-suggest-result" hidden></p>
+      <div class="pref-row">
+        <span>Search performance</span>
+        <button class="btn" id="search-perf-btn">Show</button>
+      </div>
+      <div id="search-perf" hidden></div>
+      <h3 class="set-group">Job list</h3>
+      <div class="pref-row">
+        <span>Hide job apps below score</span>
+        <input id="bulk-score" type="number" min="0" max="100" value="70">
+        <button class="btn" id="bulk-delete-btn">Hide</button>
+      </div>
+      <p class="pref-note">
+        Removes them from your lists and frees their stored text, but keeps the
+        score — search suggestions are ranked against the average of all scored
+        jobs, so discarding the weak ones would flatten the ranking.
+      </p>
+    </div>
+  </div>
+
   <script src="config.js"></script>
   <script src="selectors.js"></script>
   <script src="screening_assist.js"></script>
@@ -1104,7 +1111,6 @@
   <script src="sidebar_letter_notes.js"></script>
   <script src="sidebar_letter_card.js"></script>
   <script src="sidebar_evidence.js"></script>
-  <script src="sidebar_suggest.js"></script>
   <script src="sidebar_scan.js"></script>
   <script src="sidebar_availability.js"></script>
   <script src="sidebar_personalise.js"></script>

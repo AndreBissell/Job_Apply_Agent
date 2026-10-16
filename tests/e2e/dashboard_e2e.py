@@ -364,7 +364,7 @@ def run(headed: bool, keep: bool = False) -> int:
             c.check(waiting.count() == 1 and "1 letter needs your answer" in waiting.inner_text(),
                     "waiting letters row: 1 letter needs your answer")
             waiting.click()
-            c.check(side.locator("nav#tabs .tab.active").inner_text() == "Jobs", "the waiting row opens the Jobs tab")
+            c.check(side.locator("nav#tabs .tab.active").inner_text() == "Pipeline", "the waiting row opens the Pipeline tab")
             side.click("nav#tabs .tab[data-tab=overview]")
             side.locator("#ov-progress .ov-count").wait_for(timeout=10000)
 

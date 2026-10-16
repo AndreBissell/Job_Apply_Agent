@@ -383,3 +383,11 @@ docs/database-schema.md: note `gap_ignored` under `profiles.preferences` (no DDL
   (`not_yet` relies on `gaps.save_no`, which already seeds the sightings). Read-only on real.db:
   57 ads, 282 gap skills, top Kubernetes 7, Angular 6, Spring Boot 6, Confluence 6, Next.js 5;
   no TypeScript/React/Docker. tests/test_pipeline_api.py (41).
+- 2026-10-16: Step 2 done. ⚙ (`#settings-btn`) opens `#settings-section`, holding the old
+  Personalise controls with their ids under 8 headings (the 7 planned + "Job list" for bulk hide
+  until Step 4). `openSettings` / `closeSettings` live in sidebar_shared.js; Back, Esc, ⚙ again or
+  any tab close it. The budget banner sits under the tab bar. sidebar_suggest.js is deleted and
+  `seekSearchUrl` is in sidebar_shared.js. "Refresh now" (AI suggestions) had no banner left to
+  show its result, so it now prints the picks under the button. The tab reads "Pipeline". e2e:
+  sidebar_load 65/65, availability 48/48, quick_apply 124/124, dashboard 197/197.
+

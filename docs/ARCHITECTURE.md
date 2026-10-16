@@ -514,14 +514,13 @@ Descriptions come from reading each file's header docstring and, for the central
 | `content_script.js` | Runs on Seek pages. `parseSearchPage` / `parseDetailPage` read the DOM, `ingest` sends data, `maybeInjectQuickApply` shows the letter panel, `parseQuestionnaire` captures Quick Apply questions, `main` is the page-type router. |
 | `background.js` | Service worker. Relays localhost calls for content scripts (`BACKEND_FETCH`, allow-listed to localhost ports 8000/8001 only), takes screenshots, counts captures for the icon badge. |
 | `sidebar.html` | The side panel's markup and CSS. Its `<script>` tags load the panel's classic scripts in a fixed order; they share one global scope, so **that order is the contract** (`scripts/js_globals.py --check` and `tests/e2e/sidebar_load_e2e.py` guard it). |
-| `sidebar_shared.js` | `PROFILE_ID`, score tiers, label tables, the `mk` DOM helper, tab switching, `markApplied`. Runs `announceSidebarOpen()` first. |
+| `sidebar_shared.js` | `PROFILE_ID`, score tiers, label tables, the `mk` DOM helper, tab switching, the ⚙ Settings view (`openSettings` / `closeSettings`), `markApplied`, `seekSearchUrl`. Runs `announceSidebarOpen()` first. |
 | `sidebar_jobs.js` | Jobs tab: `loadJobs`, `renderJob`, letter badges, `fillDetail` (a card's expanded detail). |
 | `sidebar_letter_notes.js` | Under an expanded card: Quick Apply question help, letter notes, side outputs. |
 | `sidebar_letter_card.js` | The ask_user question card with its profile-row editors, and the letter editor. |
 | `sidebar_evidence.js` | `evidenceNote`, `csvEscape` (shared with `dashboard.js`), the Export evidence button. |
-| `sidebar_suggest.js` | Suggested-searches banner, `seekSearchUrl`. |
 | `sidebar_scan.js` | Scan Page: `SCAN_DELAY_MS`, `SCAN_PAGES_CEILING`, `scanPage`, and the two functions injected into Seek tabs (`pageCollectJobLinks`, `pageScrapeDetail`). |
-| `sidebar_personalise.js` | The Personalise panel: thresholds, letter limits, toggles, `loadPreferences`, bulk hide. |
+| `sidebar_personalise.js` | The ⚙ Settings view's controls (ids still say "personalise"): thresholds, letter limits, toggles, `loadPreferences`, bulk hide. |
 | `sidebar_profile.js` | Profile tab: the profile editor and the To work on list. |
 | `sidebar_seek_import.js` | Import from your own Seek profile (`seekProfileExtract`, injected) and profile export. |
 | `sidebar_events.js` | Live updates: `connectEvents` (SSE), `scheduleReload`, `typingIn`, the budget banner. |

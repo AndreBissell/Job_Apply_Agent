@@ -1,5 +1,5 @@
 // Scan Page: the 1-hop scan (SCAN_DELAY_MS, SCAN_PAGES_CEILING, scanPage) and the two functions
-// injected into Seek tabs. Classic script: sidebar.html loads it after sidebar_suggest.js and
+// injected into Seek tabs. Classic script: sidebar.html loads it after sidebar_evidence.js and
 // before sidebar.js and dashboard.js (which uses scanBtn at load time); all share one scope.
 // ---------------------------------------------------------------------------
 // Scan Page (1-hop rule: links from a page the user opened, ≥5s apart, capped)
@@ -42,7 +42,7 @@ function scanNotice(msg) {
   scanStatus(msg);
 }
 
-// Only to the caller's status line: brief progress the Jobs tab doesn't show.
+// Only to the caller's status line: brief progress the Pipeline tab doesn't show.
 function scanStatus(msg) {
   try { scanStatusHook?.(msg); } catch { /* a broken status line must not stop the scan */ }
 }
