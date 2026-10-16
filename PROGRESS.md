@@ -5,6 +5,14 @@ one block per milestone.
 
 ---
 
+## 2026-10-16 — ⚙ Settings simplified — BUILT, manual checks pending
+
+- Branch `centrelink-ease-apply`. Plan `docs/settings-simplify-plan.md` (D1–D8 approved; manual checks at its end). UI only: no preference key, default or API bound changed.
+- Two groups, 9 controls, no Save buttons (save on change), an (i) note per row. One "Fact-check & revise" dropdown replaces the pipeline checkbox + score (REAL's auto 80 / pipeline 75 meant the 75 did nothing; it now reads "Every letter"). Engine and per-letter limits left the UI (code defaults). Three Extras checkboxes on one row. Search performance moved to the Overview ("How past searches did"). The quick-pass cost in the hint is live (`/jobs/letter-bands`), replacing the stale "10–15¢".
+- Tests: new `tests/e2e/settings_e2e.py` 46/46; sidebar_load 66, dashboard 199, pipeline 86, availability 48, quick_apply 124; pytest 1794. No paid call.
+
+---
+
 ## 2026-10-16 — Pipeline tab (was Jobs) + ⚙ Settings view — BUILT, manual checks pending
 
 - Branch `centrelink-ease-apply`. Plan `docs/pipeline-tab-plan.md` (D1–D14 approved by the owner; built in one go, manual checks batched at the end of the plan).

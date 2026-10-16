@@ -455,8 +455,8 @@ Eval `agent-v2-side` ($3.41): $0.227/letter, 229 s, 15/15 clean, same path as th
 has no screening questions, confirmed gaps or CVs, so the other two never fired: untested on a model.
 Per-run limits WIRED (2026-10-04): `letter_max_drafts` (1-5, 3), `letter_max_tool_calls` (6-40, 15),
 `llm_run_budget_usd` (0.05-5, $0.50) -> `letter_settings()["limits"]` -> `open_run` copies them into
-`state.budget` (a resumed run keeps its own); workflow revisions = max_drafts - 1; sidebar inputs in
-Personalise. Live gap run ($0.20, scratch copy of real.db, Tabcorp ad + 3 appended screening
+`state.budget` (a resumed run keeps its own); workflow revisions = max_drafts - 1; code defaults with
+NO sidebar input since 2026-10-16 (docs/settings-simplify-plan.md D3; the API still takes them). Live gap run ($0.20, scratch copy of real.db, Tabcorp ad + 3 appended screening
 questions): screening found and answered honestly (all three "answer this yourself"), résumé notes
 fine, but match_profile rated React Native/Flutter *partial* (React.js), so ask_user and
 suggest_learning were still not exercised on a model. The real profile's summary is "s" and its
@@ -573,6 +573,23 @@ in `evidence/<YYYY-MM>/(time)_(date)_(company).png`; "reported" is the `evidence
 screenshot never expires. Endpoints `/evidence/status|bundles|bundles/{id}/download`, SSE
 `evidence_changed`. 1655 tests; e2e `apply_sent_e2e.py` 51/51 (+ dashboard 92, sidebar_load 58).
 Part 2 NOT yet checked in the user's own Chrome.
+
+🔄 BUILT, AWAITING THE USER'S MANUAL CHECKS: Settings simplified — 2026-10-16 (branch `centrelink-ease-apply`)
+
+docs/settings-simplify-plan.md (D1–D8 approved; manual checks at its end). Side-panel UI only: every
+preference key, default and API bound is unchanged. ⚙ Settings is two groups (Cover letters, Finding
+jobs), 9 controls, no Save buttons (each saves on change; a number out of range snaps back), and an (i)
+per row that opens its note. "Fact-check & revise" (`#letter-quality`) replaces the pipeline checkbox and
+score: Every letter = `letter_loop_enabled` true + `letter_loop_min_score` 0 (0, so it stays "every" if
+the auto score moves); Score N+ = true + N; Never = false. Options at or below the auto score are never
+offered (the backend's bar is `max(auto, pipeline)`), and a stored non-preset score keeps its own option.
+The hint's quick-pass figure comes from `GET /jobs/letter-bands`. Letter engine and the three per-letter
+limits have no UI any more (D3). Search performance moved to the Overview's Scan more jobs card ("How past
+searches did", `#ov-search-perf`). e2e new `tests/e2e/settings_e2e.py` 46/46; sidebar_load 66, dashboard
+199, pipeline 86, availability 48, quick_apply 124 (its S5 sort check failed once on timing, then passed
+twice); pytest 1794. E2E NOTE: a context that routes
+through a Python predicate pauses every request until the sync API is pumped, so poll the DB with
+`side.wait_for_timeout`, never `time.sleep` (settings_e2e `wait_db`).
 
 🔄 BUILT, AWAITING THE USER'S MANUAL CHECKS: Pipeline tab — 2026-10-16 (branch `centrelink-ease-apply`)
 
