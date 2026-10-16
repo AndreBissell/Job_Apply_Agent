@@ -147,7 +147,7 @@ def run(headed: bool, keep: bool = False) -> int:
             run_number_checks(c, side, prefs)
             run_toggle_checks(c, side, prefs)
             run_reload_checks(c, side, prefs, panel)
-            run_search_perf_checks(c, side)
+            run_search_perf_checks(c, side, work)
 
             c.check(not errors, f"no page errors {errors[:3]}")
             (usage_after,), = con.execute("SELECT COUNT(*) FROM llm_usage").fetchall()
@@ -310,7 +310,7 @@ def run_reload_checks(c: Checks, side, prefs, panel: str) -> None:
             "the toggles survive a reload")
 
 
-def run_search_perf_checks(c: Checks, side) -> None:
+def run_search_perf_checks(c: Checks, side, work: Path) -> None:
     print("Overview: How past searches did")
     side.click("#settings-back")
     side.click("nav#tabs .tab[data-tab=overview]")
@@ -322,6 +322,10 @@ def run_search_perf_checks(c: Checks, side) -> None:
     c.check(cells == ["data analyst", "6", "0", "0%"], f"one row for 'data analyst': 6 jobs, 0 good ({cells})")
     c.check("weak" in (side.locator("#search-perf table tr").nth(1).get_attribute("class") or ""),
             "a big, low-yield search is marked weak")
+    edges = side.evaluate("""[...document.querySelectorAll('#search-perf tr')].map(tr =>
+        [...tr.cells].slice(1).map(c => Math.round(c.getBoundingClientRect().right)))""")
+    c.check(edges[0] == edges[1], f"each heading lines up with its figures ({edges})")
+    side.screenshot(path=str(work / "search_perf.png"), full_page=True)
 
 
 if __name__ == "__main__":

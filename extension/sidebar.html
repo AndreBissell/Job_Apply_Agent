@@ -350,7 +350,11 @@
       text-align: left; padding: 3px 4px; border-bottom: 1px solid #f3f4f6;
     }
     #search-perf th { color: #9ca3af; font-weight: 600; }
-    #search-perf td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    /* number columns: headings and figures both right-aligned, as narrow as they can be */
+    #search-perf .num {
+      text-align: right; font-variant-numeric: tabular-nums;
+      width: 1%; white-space: nowrap; padding-left: 14px;
+    }
     #search-perf tr.weak td { color: #b45309; }
     #analysing-row { font-size: 12px; color: #6b7280; padding: 6px 2px 0; }
 
