@@ -82,21 +82,110 @@
       border-bottom: 1px solid #fecaca; padding: 6px 14px;
     }
     #scanlog { font-size: 12px; color: #374151; padding: 0 14px; }
-    #job-status { font-size: 12px; color: #6b7280; padding: 8px 14px; }
+    #scanlog:not(:empty) { padding: 8px 14px 0; }
+    #job-status { font-size: 12px; color: #6b7280; padding: 6px 0; }
     #job-status:empty { display: none; }
-    ul#job-list { list-style: none; margin: 0; padding: 0; }
-    ul#job-list li {
-      background: #fff; border-bottom: 1px solid #eef0f3; padding: 10px 14px;
-      cursor: pointer;
+
+    /* ── Pipeline: compact rows in a capped scroll box (docs/pipeline-tab-plan.md D4) ── */
+    #jobs-section { --pl-row-h: 46px; }
+    #pl-page { padding: 12px 14px 24px; }
+    .pl-block + .pl-block { margin-top: 18px; }
+    .pl-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+    .pl-head h2 {
+      font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
+      color: #374151; margin: 0;
     }
-    ul#job-list li:hover { background: #f0f4fb; }
-    .job-row { display: flex; align-items: center; gap: 8px; }
-    .job-title { font-size: 13px; font-weight: 600; flex: 1; }
+    .pl-count { font-size: 11px; color: #6b7280; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .pl-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+    .pl-chip-btn {
+      display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600;
+      padding: 3px 8px; border-radius: 999px; border: 1px solid #d1d5db; background: #fff;
+      color: #374151; cursor: pointer; line-height: 1.4;
+    }
+    .pl-chip-btn:hover { background: #f3f4f6; }
+    .pl-chip-btn.empty { color: #9ca3af; }
+    .pl-chip-btn[aria-pressed="true"] { background: #2557a7; border-color: #2557a7; color: #fff; }
+    .pl-chip-n { font-weight: 500; opacity: .8; font-variant-numeric: tabular-nums; }
+    .pl-tools { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+    #pl-search {
+      flex: 1; min-width: 0; padding: 4px 8px; border: 1px solid #d1d5db; border-radius: 6px;
+      font-size: 12px; font-family: inherit;
+    }
+    #pl-search[hidden] { display: none; }
+    .pl-sort { margin-left: auto; font-size: 11px; color: #6b7280; display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+    .pl-sort select { font-size: 11px; padding: 2px 4px; border: 1px solid #d1d5db; border-radius: 5px; background: #fff; }
+
+    /* 7.5 rows, then it scrolls (the half row says "there's more"); never more than 55% of
+       the panel, so the sections below stay in reach. Fewer rows: the box shrinks to fit. */
+    .pl-box-wrap { position: relative; }
+    .pl-box {
+      max-height: min(calc(var(--pl-row-h) * 7.5), 55vh); overflow-y: auto; overscroll-behavior: contain;
+      background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;
+    }
+    .pl-box:focus-visible { outline: 2px solid #2557a7; outline-offset: 1px; }
+    .pl-box-wrap::before, .pl-box-wrap::after {
+      content: ""; position: absolute; left: 1px; right: 1px; height: 10px; pointer-events: none;
+      opacity: 0; transition: opacity .15s; z-index: 1;
+    }
+    .pl-box-wrap::before { top: 1px; border-radius: 8px 8px 0 0; background: linear-gradient(rgba(15, 23, 42, .12), transparent); }
+    .pl-box-wrap::after { bottom: 1px; border-radius: 0 0 8px 8px; background: linear-gradient(transparent, rgba(15, 23, 42, .12)); }
+    .pl-box-wrap.can-up::before, .pl-box-wrap.can-down::after { opacity: 1; }
+    ul#job-list { list-style: none; margin: 0; padding: 0; }
+    ul#job-list li + li { border-top: 1px solid #f0f2f5; }
+    .pl-row {
+      display: flex; align-items: center; gap: 8px; width: 100%; height: var(--pl-row-h);
+      padding: 0 10px; border: none; background: none; cursor: pointer; text-align: left;
+      font: inherit; color: inherit;
+    }
+    .pl-row:hover { background: #f0f4fb; }
+    .pl-row:focus-visible { outline: 2px solid #2557a7; outline-offset: -2px; }
+    .pl-row.pl-flash { background: #fef9c3; transition: background .6s; }
+    .pl-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+    .pl-title, .pl-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .pl-title { font-size: 13px; font-weight: 600; line-height: 1.3; }
+    .pl-sub { font-size: 11px; color: #6b7280; line-height: 1.3; }
+    .pl-score {
+      flex: none; min-width: 30px; text-align: center; font-size: 12px; font-weight: 700;
+      border-radius: 999px; padding: 2px 6px; color: #fff; background: #9ca3af; font-variant-numeric: tabular-nums;
+    }
+    .pl-score[data-tier="gold"] { background: #c98a00; }
+    .pl-score[data-tier="blue"] { background: #0e9ec4; }
+    .pl-score[data-tier="green"] { background: #059669; }
+    .pl-score[data-tier="amber"] { background: #d97706; }
+    .pl-status { flex: none; font-size: 11px; font-weight: 600; white-space: nowrap; color: #6b7280; }
+    .pl-status.st-letter { color: #059669; }
+    .pl-status.st-question { color: #b45309; }
+    .pl-status.st-writing, .pl-status.st-queued { color: #2557a7; }
+    .pl-status.st-failed { color: #b91c1c; }
+    .pl-status.st-check { color: #92400e; }
+    .pl-status.st-none { color: #9ca3af; font-weight: 500; }
+    li.pl-empty { padding: 14px 12px; font-size: 12px; color: #6b7280; line-height: 1.5; }
+    li.pl-skel { display: flex; align-items: center; gap: 8px; height: var(--pl-row-h); padding: 0 10px; }
+    .pl-skel-pill, .pl-skel-lines { display: block; border-radius: 6px; background: #eef0f3; }
+    .pl-skel-pill { width: 30px; height: 18px; }
+    .pl-skel-lines { flex: 1; height: 26px; }
+
+    /* The detail view: replaces the page (D6) */
+    .pl-detail-bar {
+      position: sticky; top: 41px; z-index: 8; padding: 8px 14px; background: #f7f8fa;
+      border-bottom: 1px solid #eef0f3;
+    }
+    #pl-detail { padding: 10px 14px 24px; }
+    .pl-d-head { display: flex; align-items: flex-start; gap: 8px; }
+    .pl-d-title { font-size: 15px; margin: 0; flex: 1; line-height: 1.3; }
+    .pl-d-meta { font-size: 12px; color: #6b7280; margin: 3px 0 4px; }
+    .pl-d-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 10px 0 4px; }
+    .pl-d-actions .btn.armed { background: #fff7ed; border-color: #f59e0b; color: #92400e; }
+    .pl-d-actions .del-btn { margin-left: auto; }
+    .pl-d-actions .del-btn.armed { font-size: 11px; font-weight: 600; color: #b91c1c; line-height: 1.4; padding: 3px 6px; }
+    .pl-d-why { margin-top: 10px; font-size: 12px; color: #374151; line-height: 1.45; }
+    .pl-d-why h5 { margin: 8px 0 2px; font-size: 11px; color: #6b7280; text-transform: uppercase; letter-spacing: .04em; }
+    @media (prefers-reduced-motion: reduce) { .pl-row.pl-flash, .pl-box-wrap::before, .pl-box-wrap::after { transition: none; } }
+
     .score {
       font-size: 12px; font-weight: 700; color: #fff; background: #2557a7;
       border-radius: 10px; padding: 2px 8px; flex: none;
     }
-    .job-meta { font-size: 12px; color: #6b7280; margin-top: 2px; }
     .evidence-note { font-size: 11px; color: #6b7280; margin-top: 2px; }
     .evidence-note.soon { color: #b45309; font-weight: 600; }
     .evidence-note .evidence-view { color: #2557a7; }
@@ -105,17 +194,7 @@
       padding: 3px; border-radius: 5px; line-height: 0; flex: none;
     }
     .del-btn:hover { color: #dc2626; background: #fee2e2; }
-    .cl-badge {
-      font-size: 11px; font-weight: 600; flex: none; white-space: nowrap;
-    }
-    .cl-badge.ready { color: #059669; }
-    .cl-badge.pending { color: #9ca3af; font-weight: 500; }
-    .cl-badge.question { color: #b45309; }
-    .cl-badge.writing { color: #2557a7; font-weight: 500; }
-    .cl-badge.failed { color: #b91c1c; }
     .elig-note { font-size: 11px; color: #92400e; margin-top: 3px; }
-    li.section-header.question { color: #b45309; border-top: 2px solid #f59e0b; }
-    body.w-wide ul#job-list li.section-header.question { border-top: 2px solid #f59e0b; }
 
     /* Cover-letter run UI: the question card, the letter's notes */
     .qcard {
@@ -169,13 +248,7 @@
     .towork-count { font-size: 11px; color: #b45309; font-weight: 600; white-space: nowrap; }
     .towork-sub { font-size: 11px; color: #6b7280; margin-top: 2px; line-height: 1.45; }
     .towork-empty { font-size: 12px; color: #6b7280; }
-    .apply-btn {
-      background: none; border: 1px solid #cbd5e1; border-radius: 5px;
-      cursor: pointer; font-size: 11px; padding: 2px 7px; flex: none; color: #374151;
-    }
-    .apply-btn:hover { background: #f3f4f6; }
-    .apply-btn.applied { border-color: #10b981; color: #059669; }
-    .job-detail { font-size: 12px; color: #374151; margin-top: 6px; white-space: pre-wrap; }
+    .job-detail { font-size: 12px; color: #374151; margin-top: 10px; white-space: pre-wrap; }
     .job-detail textarea {
       width: 100%; min-height: 140px; margin-top: 6px; padding: 6px 8px;
       border: 1px solid #d1d5db; border-radius: 5px; font-size: 12px;
@@ -220,133 +293,7 @@
     #search-perf th { color: #9ca3af; font-weight: 600; }
     #search-perf td.num { text-align: right; font-variant-numeric: tabular-nums; }
     #search-perf tr.weak td { color: #b45309; }
-    #analysing-row {
-      font-size: 12px; color: #6b7280; padding: 10px 14px;
-      border-top: 2px solid #d1d5db; margin-top: 4px;
-    }
-
-    /* ── Score tiers (gold >=95, blue >=90, green >=75, amber 60-74, long-tail <60) ──── */
-    ul#job-list li[data-tier="gold"]  { --tier-color: #d99a00; padding: 14px; }
-    ul#job-list li[data-tier="blue"]  { --tier-color: #22d3ee; --tier-bg: #ecfeff; padding: 14px; }
-    ul#job-list li[data-tier="green"] { --tier-color: #10b981; --tier-bg: #f0fdf6; padding: 11px 14px; }
-    ul#job-list li[data-tier="amber"] { --tier-color: #f59e0b; --tier-bg: #fffbeb; padding: 7px 14px; }
-    ul#job-list li[data-tier] { border-left: 4px solid var(--tier-color); background: var(--tier-bg); }
-    ul#job-list li[data-tier="blue"] .job-title,
-    ul#job-list li[data-tier="gold"] .job-title  { font-size: 15px; }
-    ul#job-list li[data-tier="amber"] .job-title { font-size: 12px; font-weight: 500; }
-    ul#job-list li[data-tier="amber"] .job-meta  { display: none; }
-
-    /* 95+ : bright gold card. A soft light band sweeps across every few seconds
-       and the glow gently pulses. Both are switched off under
-       prefers-reduced-motion (the static gold styling stays). */
-    ul#job-list li[data-tier="gold"] {
-      position: relative; overflow: hidden; color: #3b2a00;
-      background: linear-gradient(135deg, #fff3b0 0%, #ffe066 45%, #ffd23f 100%);
-      border-color: #f5c518; border-left-color: #d99a00;
-      box-shadow: 0 0 0 1px rgba(245, 197, 24, 0.55), 0 2px 14px rgba(245, 180, 0, 0.45);
-      animation: gold-glow 2.8s ease-in-out infinite;
-    }
-    ul#job-list li[data-tier="gold"]:hover { background: linear-gradient(135deg, #fff6c2 0%, #ffe680 45%, #ffdb57 100%); }
-    ul#job-list li[data-tier="gold"]::after {
-      content: ""; position: absolute; inset: 0; pointer-events: none;
-      background: linear-gradient(105deg, transparent 38%, rgba(255, 255, 255, 0.75) 50%, transparent 62%);
-      transform: translateX(-120%);
-      animation: gold-sheen 4.5s ease-in-out infinite;
-    }
-    ul#job-list li[data-tier="gold"] .job-title { font-weight: 700; color: #4a3500; }
-    ul#job-list li[data-tier="gold"] .job-meta,
-    ul#job-list li[data-tier="gold"] .job-preview { color: #6b4e00; }
-    ul#job-list li[data-tier="gold"] .score {
-      background: linear-gradient(135deg, #f5b800, #c98a00); color: #fff;
-      text-shadow: 0 1px 1px rgba(90, 60, 0, 0.5);
-      box-shadow: 0 0 8px rgba(245, 180, 0, 0.8);
-    }
-    ul#job-list li[data-tier="gold"] .score::before { content: "★ "; }
-    ul#job-list li[data-tier="gold"] .job-preview .chip { color: #7a5200; background: rgba(255, 255, 255, 0.65); }
-    @keyframes gold-sheen {
-      0%, 55% { transform: translateX(-120%); }
-      100%    { transform: translateX(120%); }
-    }
-    @keyframes gold-glow {
-      0%, 100% { box-shadow: 0 0 0 1px rgba(245, 197, 24, 0.55), 0 2px 10px rgba(245, 180, 0, 0.35); }
-      50%      { box-shadow: 0 0 0 1px rgba(245, 197, 24, 0.9),  0 2px 20px rgba(245, 180, 0, 0.7); }
-    }
-    @media (prefers-reduced-motion: reduce) {
-      ul#job-list li[data-tier="gold"], ul#job-list li[data-tier="gold"]::after,
-      ul#job-list li[data-tier="blue"]::after { animation: none; }
-    }
-
-    /* 90-94: cool blue card. A faint, slow light band. Quieter than gold:
-       no glow pulse, no star, longer pause between sweeps. */
-    ul#job-list li[data-tier="blue"] {
-      position: relative; overflow: hidden;
-      background: linear-gradient(135deg, #f0fdff 0%, #e3f8fd 55%, #d6f3fb 100%);
-      box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.35), 0 1px 8px rgba(14, 165, 233, 0.18);
-    }
-    ul#job-list li[data-tier="blue"]:hover { background: linear-gradient(135deg, #f5feff 0%, #e9fafe 55%, #ddf5fc 100%); }
-    ul#job-list li[data-tier="blue"]::after {
-      content: ""; position: absolute; inset: 0; pointer-events: none;
-      background: linear-gradient(105deg, transparent 40%, rgba(255, 255, 255, 0.5) 50%, transparent 60%);
-      transform: translateX(-120%);
-      animation: blue-sheen 7s ease-in-out infinite;
-    }
-    ul#job-list li[data-tier="blue"] .score { background: linear-gradient(135deg, #22d3ee, #0ea5e9); color: #fff; }
-    @keyframes blue-sheen {
-      0%, 70% { transform: translateX(-120%); }
-      100%    { transform: translateX(120%); }
-    }
-    .job-preview { font-size: 12px; color: #374151; margin-top: 5px; }
-    .job-preview .chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
-    .job-preview .chip {
-      font-size: 10px; font-weight: 600; color: #0e7490; background: #cffafe;
-      border-radius: 8px; padding: 2px 7px;
-    }
-    li.fold {
-      text-align: center; font-size: 12px; color: #6b7280; padding: 8px 14px !important;
-      background: #fafafa !important; border-left: none !important;
-    }
-    li.fold:hover { background: #f0f4fb !important; }
-
-    /* ── Section headers: ready-to-apply vs still-waiting-on-a-letter ─────── */
-    li.section-header {
-      font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
-      padding: 8px 14px 4px !important; cursor: default; border-left: none !important;
-      background: transparent !important;
-    }
-    li.section-header:hover { background: transparent !important; }
-    li.section-header.ready { color: #059669; border-top: 2px solid #059669; }
-    li.section-header.waiting { color: #9ca3af; border-top: 2px solid #d1d5db; margin-top: 4px; }
-    li.section-header:first-child { border-top: none; margin-top: 0; }
-
-    /* Wide panel (~2 cards comfortably side by side): switch the lists to a
-       two-column grid. Headers and the fold link span both columns. Cards in a
-       row stretch to the same height (grid default) — so expanding one card also
-       grows its neighbour, which keeps the rows tidy. Only the top/right/bottom
-       borders are set on cards so the tier colour's 4px border-left (above) is
-       left alone. */
-    body.w-wide ul#job-list {
-      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 8px; padding: 8px; align-items: stretch;
-    }
-    body.w-wide ul#job-list li {
-      min-width: 0; border-radius: 8px;
-      border-top: 1px solid #eef0f3; border-right: 1px solid #eef0f3;
-      border-bottom: 1px solid #eef0f3;
-    }
-    body.w-wide ul#job-list li.section-header, body.w-wide ul#job-list li.fold { grid-column: 1 / -1; border-radius: 0; }
-    /* Restore the header rules the card border above would otherwise outrank. */
-    body.w-wide ul#job-list li.section-header { border-right: none; border-bottom: none; border-top: none; }
-    body.w-wide ul#job-list li.section-header.ready { border-top: 2px solid #059669; }
-    body.w-wide ul#job-list li.section-header.waiting { border-top: 2px solid #d1d5db; }
-    body.w-wide ul#job-list li.section-header:first-child { border-top: none; }
-
-    /* Wider panel (dragged out): two-column meta layout on blue cards */
-    body.w-mid ul#job-list li[data-tier="blue"] .job-row,
-    body.w-mid ul#job-list li[data-tier="gold"] .job-row { flex-wrap: wrap; }
-    body.w-mid ul#job-list li[data-tier="blue"] .job-meta,
-    body.w-mid ul#job-list li[data-tier="gold"] .job-meta {
-      display: flex; gap: 10px; flex: 1 0 100%; margin-top: 4px;
-    }
+    #analysing-row { font-size: 12px; color: #6b7280; padding: 6px 2px 0; }
 
     /* ── Overview tab ─────────────────────────────────────── */
     #overview-section { padding: 12px 14px 24px; }
@@ -833,9 +780,37 @@
   <!-- ── Pipeline tab (ids keep the old "jobs" name; plan D1) ── -->
   <div id="jobs-section" hidden>
     <div id="scanlog"></div>
-    <div id="job-status">Loading…</div>
-    <ul id="job-list"></ul>
-    <div id="analysing-row" hidden></div>
+    <div id="pl-page">
+      <section class="pl-block" id="pl-jobs">
+        <div class="pl-head">
+          <h2>Jobs not applied</h2>
+          <span class="pl-count" id="pl-count" aria-live="polite"></span>
+        </div>
+        <div class="pl-chips" id="pl-chips" role="group" aria-label="Filter jobs by letter status"></div>
+        <div class="pl-tools">
+          <input type="search" id="pl-search" placeholder="Search title or company…" aria-label="Search jobs by title or company" hidden>
+          <label class="pl-sort">Sort
+            <select id="pl-sort" aria-label="Sort jobs">
+              <option value="score">Score</option>
+              <option value="newest">Newest</option>
+            </select>
+          </label>
+        </div>
+        <div id="job-status"></div>
+        <div class="pl-box-wrap" id="pl-box-wrap">
+          <div class="pl-box" id="pl-box" tabindex="0" role="region" aria-label="Jobs not applied (scrolls)">
+            <ul id="job-list"></ul>
+          </div>
+        </div>
+        <div id="analysing-row" hidden></div>
+      </section>
+    </div>
+    <div id="job-detail-view" hidden>
+      <div class="pl-detail-bar">
+        <button class="btn" id="pl-back" title="Back to the list (Esc)">← All jobs</button>
+      </div>
+      <div id="pl-detail"></div>
+    </div>
   </div>
 
   <!-- ── Applied tab ──────────────────────────────────── -->

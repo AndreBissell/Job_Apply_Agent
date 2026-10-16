@@ -447,7 +447,7 @@ function renderMiniCard(job) {
   if (coverLetterState(job) === 'writing') {
     // The same notice as the Pipeline tab's chip; Copy appears when the letter lands.
     card.classList.add('writing');
-    actions.appendChild(mk('span', 'mc-writing', CL_BADGES.writing));
+    actions.appendChild(mk('span', 'mc-writing', '✍ Writing…'));
   } else {
     const copy = mk('button', 'btn btn-sm', '⧉ Letter');
     copy.title = 'Copy the cover letter (your edits if you made any)';

@@ -515,7 +515,7 @@ Descriptions come from reading each file's header docstring and, for the central
 | `background.js` | Service worker. Relays localhost calls for content scripts (`BACKEND_FETCH`, allow-listed to localhost ports 8000/8001 only), takes screenshots, counts captures for the icon badge. |
 | `sidebar.html` | The side panel's markup and CSS. Its `<script>` tags load the panel's classic scripts in a fixed order; they share one global scope, so **that order is the contract** (`scripts/js_globals.py --check` and `tests/e2e/sidebar_load_e2e.py` guard it). |
 | `sidebar_shared.js` | `PROFILE_ID`, score tiers, label tables, the `mk` DOM helper, tab switching, the ⚙ Settings view (`openSettings` / `closeSettings`), `markApplied`, `seekSearchUrl`. Runs `announceSidebarOpen()` first. |
-| `sidebar_jobs.js` | Jobs tab: `loadJobs`, `renderJob`, letter badges, `fillDetail` (a card's expanded detail). |
+| `sidebar_jobs.js` | Pipeline tab (ids still say "jobs"): `loadJobs`, the compact rows in a capped scroll box (`renderPipeline`, `rowStatus`, filter chips, search, sort), `coverLetterState`, the drill-in detail view (`openJobDetail`, `fillDetail`) and its actions. |
 | `sidebar_letter_notes.js` | Under an expanded card: Quick Apply question help, letter notes, side outputs. |
 | `sidebar_letter_card.js` | The ask_user question card with its profile-row editors, and the letter editor. |
 | `sidebar_evidence.js` | `evidenceNote`, `csvEscape` (shared with `dashboard.js`), the Export evidence button. |

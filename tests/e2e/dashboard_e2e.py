@@ -45,8 +45,8 @@ Not collected by pytest (needs Chromium and a server). What it does:
    "No cover letter was saved" and the dead ad ("Ad closed", "The ad text wasn't kept"); a
    click inside it doesn't collapse it, it survives a reload, and "Open ad on Seek" is the
    one way to the ad (recorded, never opened). Then deleting:
-   no Delete on an applied job's Jobs card (a row with applied_at set but status 'new'
-   shows ✓ Applied there too), the backend's 409, and the Applied tab's Delete
+   applied jobs (even a row with applied_at set but status 'new') never in the Pipeline list,
+   Mark applied from a Pipeline job's detail (two clicks), the backend's 409, and the Applied tab's Delete
    (cancel, confirm, the row, DB rows and period count gone).
 
 Exit code 0 = all checks passed.
@@ -1048,7 +1048,7 @@ def run_applied_checks(c: Checks, side, con, work: Path) -> None:
 
 
 def run_delete_checks(c: Checks, side, con) -> None:
-    """An applied job is evidence: no Delete on its Jobs card, the backend refuses it
+    """An applied job is evidence: never in the Pipeline list, the backend refuses it
     without allow_applied, and the Applied tab's own Delete removes it after a confirm.
     Runs after run_applied_checks (no start date: calendar-month periods)."""
     print("Delete")
@@ -1064,18 +1064,25 @@ def run_delete_checks(c: Checks, side, con) -> None:
     con.commit()
     side.click("nav#tabs .tab[data-tab=jobs]")
     side.click("#refresh-btn")
-    card_drift = side.locator("#job-list li", has_text="Drifted Status Row")
-    card_drift.wait_for(timeout=10000)
-    c.check(card_drift.locator(".apply-btn").inner_text() == "✓ Applied",
-            "Jobs tab: a row with applied_at set (status still 'new') shows ✓ Applied")
-    c.check(card_drift.locator(".del-btn").count() == 0, "...and has no Delete")
-    card_a = side.locator("#job-list li", has_text="Current Analyst A")
-    card_a.wait_for(timeout=10000)
-    c.check(card_a.locator(".del-btn").count() == 0, "Jobs tab: an applied job's card has no Delete")
     card_new = side.locator("#job-list li", has_text="No Letter Yet")
-    c.check(card_new.locator(".del-btn").count() == 1, "Jobs tab: an unapplied job's card keeps Delete")
-    card_new.locator(".apply-btn").click()
-    c.check(wait_for(lambda: card_new.locator(".del-btn").count() == 0), "Mark Applied on a card removes its Delete")
+    card_new.wait_for(timeout=10000)
+    c.check(side.locator("#job-list li", has_text="Drifted Status Row").count() == 0,
+            "Pipeline: a row with applied_at set (status still 'new') is not listed")
+    c.check(side.locator("#job-list li", has_text="Current Analyst A").count() == 0,
+            "Pipeline: an applied job is not listed (the Applied tab owns it)")
+    card_new.locator(".pl-row").click()
+    detail = side.locator("#job-detail-view")
+    detail.locator(".pl-d-del").wait_for(timeout=5000)
+    c.check(detail.locator(".pl-d-del").count() == 1, "Pipeline: an unapplied job's detail has Delete")
+    apply_btn = detail.locator(".pl-apply")
+    apply_btn.click()
+    c.check(apply_btn.inner_text() == "Confirm applied?", "Mark applied asks to confirm first")
+    apply_btn.click()
+    c.check(wait_for(lambda: "on the Applied tab" in apply_btn.inner_text()), "the second click marks it applied")
+    c.check(wait_for(lambda: detail.locator(".pl-gone").count() == 1), "the open detail says the job left the list")
+    side.click("#pl-back")
+    c.check(wait_for(lambda: side.locator("#job-list li", has_text="No Letter Yet").count() == 0),
+            "...and the row has left the list")
 
     req = urllib.request.Request(f"{BACKEND}/jobs/1?profile_id=1", method="DELETE")
     try:
@@ -1120,9 +1127,9 @@ def run_delete_checks(c: Checks, side, con) -> None:
     c.check(wait_for(lambda: period.locator(".p-count").inner_text().startswith(f"{n_before - 1}/")),
             f"the period count drops by one (was {count_before})")
     side.click("nav#tabs .tab[data-tab=jobs]")
-    c.check(wait_for(lambda: side.locator("#job-list li", has_text="Current Analyst A").count() == 1)
+    c.check(wait_for(lambda: side.locator("#job-list li", has_text="Band 93").count() == 1)
             and side.locator("#job-list li", has_text="Current Analyst C").count() == 0,
-            "the Jobs tab no longer lists it")
+            "the Pipeline tab still lists only unapplied jobs")
 
 
 if __name__ == "__main__":

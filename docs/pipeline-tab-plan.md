@@ -390,4 +390,17 @@ docs/database-schema.md: note `gap_ignored` under `profiles.preferences` (no DDL
   `seekSearchUrl` is in sidebar_shared.js. "Refresh now" (AI suggestions) had no banner left to
   show its result, so it now prints the picks under the button. The tab reads "Pipeline". e2e:
   sidebar_load 65/65, availability 48/48, quick_apply 124/124, dashboard 197/197.
+- 2026-10-16: Step 3 done. sidebar_jobs.js rewritten: `loadJobs` fetches
+  `/jobs?applied=false&limit=500` once; `renderPipeline` draws chips, count and rows from it;
+  `rowStatus` gives one status per row. Rows are 46 px (`--pl-row-h`) in `#pl-box`
+  (`max-height: min(7.5 rows, 55vh)`), with edge shadows on `#pl-box-wrap`. Small changes from
+  the plan: the "❓ Answer" chip shows only when a job needs an answer; the detail's action bar
+  has no Copy (the letter editor below already has Copy and Save); the detail adds "Why N" and
+  the scorer's gaps (useful when tuning the agent); an open detail redraws itself when its job's
+  letter state changes (a letter lands) unless the user is typing in it. "Generate cover letter
+  anyway" (→ full pipeline) is gone; a failed run's "Try again now" stays. The reload guard is
+  `plBusy()` (typing in the tab, the search box excepted). The old card CSS (tiers, sheen
+  animations, fold, section headers, two-column grid) is removed. e2e: new pipeline_e2e.py
+  54/54; dashboard 199/199 (its delete checks now use the detail view); sidebar_load 65/65;
+  quick_apply 124/124.
 

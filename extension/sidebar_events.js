@@ -36,7 +36,7 @@ let reloadTimer = null;
 function scheduleReload(delay = 400) {
   clearTimeout(reloadTimer);
   reloadTimer = setTimeout(function tryReload() {
-    if (typingIn(jobListEl) || typingIn(overviewSection) || typingIn(appliedSection)) {
+    if (plBusy() || typingIn(overviewSection) || typingIn(appliedSection)) {
       reloadTimer = setTimeout(tryReload, 5000);
       return;
     }
