@@ -382,15 +382,35 @@ class JobListing(Base):
         DateTime(timezone=True)
     )
     quick_screen_score: Mapped[int | None] = mapped_column(Integer)
-    # Stamped opportunistically when the extension revisits this job's detail
-    # page and finds no description where one was previously captured — see
-    # content_script.js::main()'s waitFor-timeout branch. Never set proactively
-    # (the Seek Access Policy forbids backend/agent-initiated requests to Seek),
-    # so this only reflects listings the user's own browsing happened to
-    # revisit, not a full sweep.
+    # Flagged when the listing looks closed: a revisit found no description where one
+    # was captured (content_script.js::main(), on a page the user opened), or the side
+    # panel's background re-check saw it twice (app/availability.py). The backend never
+    # visits Seek itself (Seek Access Policy). Cleared again by any later capture that
+    # carries a description (POST /ingest). Never set on an applied job.
     expired_detected_at: Mapped[datetime.datetime | None] = mapped_column(
         DateTime(timezone=True)
     )
+    # Availability re-checks (app/availability.py, docs/database-schema.md):
+    # last_seen_live_at is the last time the listing was seen live (a capture with its
+    # page open, or a re-check that found the description). It defaults to creation,
+    # because a row is only ever created from a page the user had open. The LLM pipeline
+    # only spends on a job seen live recently. availability_checked_at is the last
+    # re-check verdict of any kind (drives "due" and the daily cap);
+    # availability_misses counts consecutive "description gone" verdicts (two flag it).
+    last_seen_live_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.datetime.now(datetime.timezone.utc)
+    )
+    availability_checked_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    availability_misses: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0"), default=0
+    )
+    # How Seek takes applications for this ad: 'quick' (Seek's own Quick Apply flow) or
+    # 'external' (the employer's site), read from the detail page's Apply button text
+    # (extension/selectors.js detectApplyType). Seeing the Quick Apply flow's "application
+    # sent" page sets 'quick' too. NULL = not known yet; treated like 'external'.
+    apply_type: Mapped[str | None] = mapped_column(Text)
     date_scraped: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -479,6 +499,11 @@ class Match(Base):
     applied_at: Mapped[datetime.datetime | None] = mapped_column(
         DateTime(timezone=True)
     )
+    # How applied_at was recorded, set together with it (never changed afterwards):
+    # 'auto' = the extension saw Seek's Quick Apply "application sent" page
+    # (POST /jobs/{id}/quick-apply-sent); 'manual' = the user pressed Mark Applied.
+    # NULL on rows applied before migration c4e8a2f6b913.
+    applied_via: Mapped[str | None] = mapped_column(Text)
     # The user recorded an interview for this application (Applied tab's "+ Interview").
     # Status stays 'applied' and applied_at stays set, so the GET /jobs?status=applied
     # filter (applied_at IS NOT NULL) is unaffected.
@@ -753,6 +778,55 @@ class JobScreeningQuestion(Base):
 
     __table_args__ = (
         Index("idx_job_screening_questions_question", "question_id"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Centrelink evidence bundles (docs/centrelink-ease-apply-plan.md, part 2)
+# ---------------------------------------------------------------------------
+class EvidenceBundle(Base):
+    """One PDF of Quick Apply screenshots made for upload to Centrelink. The file lives
+    in ``<screenshots folder>/centrelink_ready/<filename>`` and is kept forever; deleting
+    the row (Undo) puts its applications back as unreported."""
+
+    __tablename__ = "evidence_bundles"
+
+    id: Mapped[int] = mapped_column(BIG_INT_PK, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        BIG_INT_FK, ForeignKey("profiles.id", ondelete="CASCADE"), nullable=False
+    )
+    filename: Mapped[str] = mapped_column(Text, nullable=False)
+    job_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    items: Mapped[list["EvidenceBundleItem"]] = relationship(
+        back_populates="bundle", passive_deletes=True
+    )
+
+
+class EvidenceBundleItem(Base):
+    """An application whose screenshot went into a bundle, i.e. has been reported.
+    ``match_id`` is unique: an application is reported once. "Unreported" = applied,
+    with a screenshot, and no row here."""
+
+    __tablename__ = "evidence_bundle_items"
+
+    id: Mapped[int] = mapped_column(BIG_INT_PK, primary_key=True)
+    bundle_id: Mapped[int] = mapped_column(
+        BIG_INT_FK, ForeignKey("evidence_bundles.id", ondelete="CASCADE"), nullable=False
+    )
+    match_id: Mapped[int] = mapped_column(
+        BIG_INT_FK, ForeignKey("matches.id", ondelete="CASCADE"), nullable=False
+    )
+
+    bundle: Mapped["EvidenceBundle"] = relationship(back_populates="items")
+
+    __table_args__ = (
+        UniqueConstraint("match_id", name="uq_evidence_bundle_items_match"),
+        Index("idx_evidence_bundle_items_bundle", "bundle_id"),
     )
 
 

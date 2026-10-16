@@ -6,7 +6,9 @@
 // Classic script loaded last, after sidebar.js and the sidebar_*.js files, sharing their
 // globals (scripts/js_globals.py prints where each lives): PROFILE_ID, mk,
 // tierOf, coverLetterState, autoLetterMin, seekSearchUrl, markApplied, loadJobs, showTab,
-// typingIn, overviewSection, appliedSection, evidenceNote, csvEscape, TRASH_SVG, and
+// scanPage, scanning, scanMaxPages, waitForTabComplete (sidebar_scan.js),
+// typingIn, overviewSection, appliedSection, evidenceNote, csvEscape, TRASH_SVG,
+// apRecordOpen / toggleAppliedRecord / showAppliedRecord (applied_record.js), and
 // scanBtn (used at load time, so it must be declared by an earlier script). BACKEND
 // comes from config.js.
 
@@ -62,7 +64,12 @@ const ovNav = document.getElementById('ov-nav');
 const ovPrev = document.getElementById('ov-prev');
 const ovNext = document.getElementById('ov-next');
 const ovSearchesEl = document.getElementById('ov-searches');
-const ovSearchHint = document.getElementById('ov-search-hint');
+const ovScanLine = document.getElementById('ov-scan-line');
+const ovScanStatus = document.getElementById('ov-scan-status');
+const ovBandsEl = document.getElementById('ov-bands');
+const ovBandsSub = document.getElementById('ov-bands-sub');
+const ovBandGrid = document.getElementById('ov-band-grid');
+const ovBandNote = document.getElementById('ov-band-note');
 
 let ovData = null;     // the last GET /obligation payload
 let ovEditing = false; // the start-date editor is open: reloads wait so it isn't wiped
@@ -70,13 +77,17 @@ let ovSeq = 0;         // drops a slow response that a newer load has overtaken
 
 async function loadOverview() {
   const seq = ++ovSeq;
-  let obligation, ready, suggestions;
+  let obligation, ready, suggestions, evidence, bands;
   try {
-    [obligation, ready, suggestions] = await Promise.all([
+    [obligation, ready, suggestions, evidence, bands] = await Promise.all([
       getJson(`${BACKEND}/obligation?profile_id=${PROFILE_ID}`),
       getJson(`${BACKEND}/jobs?profile_id=${PROFILE_ID}&ready=true&limit=200`),
       // A nicety: the rest of the tab still works without it.
       getJson(`${BACKEND}/jobs/suggested-searches?profile_id=${PROFILE_ID}`).catch(() => null),
+      // So is this (an older backend has no /evidence/status).
+      getJson(`${BACKEND}/evidence/status?profile_id=${PROFILE_ID}`).catch(() => null),
+      // And this: the "no letter yet" bands.
+      getJson(`${BACKEND}/jobs/letter-bands?profile_id=${PROFILE_ID}`).catch(() => null),
     ]);
   } catch {
     if (seq !== ovSeq) return;
@@ -87,8 +98,11 @@ async function loadOverview() {
   ovStatusEl.textContent = '';
   ovData = obligation;
   if (!ovEditing) renderProgress();
-  // A letter being rewritten, or paused on a question, isn't ready to send yet.
-  renderReady(ready.filter(job => coverLetterState(job) === 'ready'));
+  renderEvidence(evidence);
+  // Letters ready to send, and letters being written (shown with a notice); one paused on
+  // a question is on the progress card instead.
+  renderReady(ready.filter(job => ['ready', 'writing'].includes(coverLetterState(job))));
+  renderBands(bands);
   renderSuggestions(suggestions);
 }
 
@@ -143,9 +157,163 @@ function renderProgress() {
     const n = d.waiting_count;
     const waiting = mk('button', 'ov-waiting');
     waiting.append(mk('span', null, `❓ ${plural(n, 'letter')} need${n === 1 ? 's' : ''} your answer`), mk('span', null, '›'));
-    waiting.title = 'Open the Jobs tab, where the questions are';
-    waiting.addEventListener('click', () => showTab('jobs'));
+    waiting.title = 'Open the Pipeline tab, where the questions are';
+    waiting.addEventListener('click', () => showNeeds());
     el.appendChild(waiting);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Centrelink evidence card: Centrelink takes one file per upload (under 3 MB) and asks how
+// many applications it covers. Quick Apply screenshots wait here as "not yet reported"
+// until Collate turns them into one PDF (GET/POST /evidence/..., app/api/evidence.py),
+// saved in the app's centrelink_ready folder and downloaded. Plain code, no AI.
+// ---------------------------------------------------------------------------
+const ovEvidenceEl = document.getElementById('ov-evidence');
+let evMessage = null; // {text, err}: the last collate/undo result, kept across reloads
+let evBusy = false;
+let evArmed = null;   // {id, timer}: the bundle whose Undo is waiting for its second click
+
+function fmtBytes(n) {
+  return n >= 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1e3))} KB`;
+}
+
+function renderEvidence(status) {
+  const el = ovEvidenceEl;
+  el.innerHTML = '';
+  if (!status) return; // no backend support: the card stays hidden (.ov-card:empty)
+  el.appendChild(mk('h3', null, 'Centrelink evidence'));
+
+  const n = status.unreported;
+  const count = mk('div', n ? 'ev-count' : 'ev-count done');
+  if (n) {
+    count.append(mk('span', 'big', String(n)),
+      mk('span', null, `Quick Apply ${n === 1 ? 'application' : 'applications'} not yet reported`));
+    count.title = status.jobs.map(j => [j.title, j.company].filter(Boolean).join(' — ')).join('\n');
+  } else {
+    count.textContent = status.bundles.length
+      ? 'All Quick Apply applications reported ✓'
+      : 'Quick Apply screenshots collect here until you report them.';
+  }
+  el.appendChild(count);
+
+  if (status.missing_files) {
+    el.appendChild(mk('div', 'ev-warn',
+      `${plural(status.missing_files, 'screenshot')} missing from the folder, so not included.`));
+  }
+
+  const btn = mk('button', 'ev-collate', evBusy ? 'Making the PDF…'
+    : n ? `📄 Collate ${plural(n, 'screenshot')} into a PDF` : '📄 Collate evidence PDF');
+  btn.disabled = !n || evBusy;
+  btn.title = `Saved in ${status.folder} and downloaded, ready to upload to Centrelink`;
+  btn.addEventListener('click', () => collateEvidence(btn));
+  el.appendChild(btn);
+
+  if (evMessage) el.appendChild(mk('div', evMessage.err ? 'ev-msg err' : 'ev-msg', evMessage.text));
+
+  if (status.bundles.length) {
+    const list = mk('div', 'ev-list');
+    list.appendChild(mk('div', 'ev-list-head', 'Recent PDFs'));
+    for (const b of status.bundles.slice(0, 5)) list.appendChild(renderBundleRow(b));
+    el.appendChild(list);
+  }
+}
+
+function renderBundleRow(b) {
+  const row = mk('div', 'ev-row');
+  const name = mk('span', 'ev-name', b.filename);
+  name.title = b.filename;
+  row.append(name, mk('span', 'ev-meta', `${plural(b.job_count, 'job')} · ${fmtBytes(b.size_bytes)}`));
+
+  const dl = mk('button', null, 'Download');
+  dl.disabled = !b.on_disk;
+  dl.title = b.on_disk ? 'Download this PDF again' : 'The file is no longer in the folder';
+  dl.addEventListener('click', async () => {
+    dl.disabled = true;
+    try { await downloadBundle(b); } catch { evMessage = { text: 'Could not download the PDF.', err: true }; loadOverview(); }
+    dl.disabled = false;
+  });
+
+  // Two clicks: Undo deletes the PDF and puts its applications back as unreported. The
+  // first click's "Sure?" is kept in evArmed, not on the button, so a live reload of the
+  // card (one per scanned job during a scan) doesn't reset it between the two clicks.
+  const undo = mk('button', 'ev-undo', 'Undo');
+  undo.title = `Delete this PDF and put its ${plural(b.job_count, 'application')} back as not yet reported`;
+  const paintArmed = () => {
+    const on = evArmed && evArmed.id === b.id;
+    undo.classList.toggle('confirm', !!on);
+    undo.textContent = on ? 'Sure?' : 'Undo';
+  };
+  paintArmed();
+  undo.addEventListener('click', async () => {
+    if (!(evArmed && evArmed.id === b.id)) {
+      if (evArmed) clearTimeout(evArmed.timer);
+      evArmed = { id: b.id, timer: setTimeout(disarmUndo, 4000) };
+      paintArmed();
+      return;
+    }
+    clearTimeout(evArmed.timer);
+    evArmed = null;
+    undo.disabled = true;
+    try {
+      const res = await fetch(`${BACKEND}/evidence/bundles/${b.id}?profile_id=${PROFILE_ID}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      evMessage = { text: `Undone: ${b.filename} deleted, ${plural(b.job_count, 'application')} back to not yet reported.` };
+    } catch {
+      evMessage = { text: 'Could not undo — is the backend running?', err: true };
+    }
+    loadOverview();
+  });
+  row.append(dl, undo);
+  return row;
+}
+
+// The 4 s "Sure?" ran out: repaint whichever Undo buttons the card holds now.
+function disarmUndo() {
+  evArmed = null;
+  for (const btn of ovEvidenceEl.querySelectorAll('.ev-undo')) {
+    btn.classList.remove('confirm');
+    btn.textContent = 'Undo';
+  }
+}
+
+async function downloadBundle(b) {
+  const res = await fetch(`${BACKEND}${b.download_url}?profile_id=${PROFILE_ID}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = b.filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function collateEvidence(btn) {
+  evBusy = true;
+  btn.disabled = true;
+  btn.textContent = 'Making the PDF…';
+  try {
+    const res = await fetch(`${BACKEND}/evidence/bundles?profile_id=${PROFILE_ID}`, { method: 'POST' });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
+    const { bundles } = await res.json();
+    try {
+      for (const b of bundles) await downloadBundle(b);
+    } catch {
+      evMessage = { text: 'The PDF is saved in the app, but the download failed: press Download below.', err: true };
+      return;
+    }
+    evMessage = {
+      text: bundles.length === 1
+        ? `Saved ${bundles[0].filename} (${fmtBytes(bundles[0].size_bytes)}) to Downloads and the app. `
+          + `Upload it to Centrelink and enter ${bundles[0].job_count} as the number of applications.`
+        : `Too big for one upload, so it was split into ${bundles.length} PDFs (in Downloads and the app): `
+          + bundles.map(b => `${b.filename} = ${plural(b.job_count, 'application')}`).join('; ') + '.',
+    };
+  } catch (err) {
+    evMessage = { text: `Could not make the PDF: ${err.message}`, err: true };
+  } finally {
+    evBusy = false;
+    loadOverview();
   }
 }
 
@@ -219,11 +387,17 @@ function renderStartDateEditor(el, { setup }) {
   el.appendChild(wrap);
 }
 
-// The Keep Applying row: one mini-card per job with a letter, best match first.
+// The Keep Applying row: one mini-card per job with a letter, or with one being written,
+// best match first. While any is being written, reload every 15 s: a band letter the worker
+// skips sends no event, so its "Writing" card would otherwise stay.
+let ovWritingPoll = null;
 function renderReady(jobs) {
   const keepLeft = ovScroller.scrollLeft;
   ovScroller.innerHTML = '';
-  setReadyCount(jobs.length);
+  clearTimeout(ovWritingPoll);
+  const writing = jobs.filter(job => coverLetterState(job) === 'writing').length;
+  if (writing) ovWritingPoll = setTimeout(refreshDashboard, 15000);
+  setReadyCount(jobs.length - writing, writing);
   if (!jobs.length) {
     ovScroller.appendChild(mk('div', 'ov-empty',
       `No cover letters waiting. Letters are written for matches scoring ${autoLetterMin}+, so scan more jobs below.`));
@@ -237,8 +411,10 @@ function renderReady(jobs) {
   updateArrows();
 }
 
-function setReadyCount(n) {
-  ovReadyCountEl.textContent = n ? `${plural(n, 'letter')} ready to send` : 'No letters ready';
+function setReadyCount(n, writing = 0) {
+  const parts = [n ? `${plural(n, 'letter')} ready to send` : 'No letters ready'];
+  if (writing) parts.push(`${writing} being written`);
+  ovReadyCountEl.textContent = parts.join(' · ');
   ovReadyCountEl.classList.toggle('none', !n);
 }
 
@@ -254,6 +430,8 @@ function renderMiniCard(job) {
     loc.title = job.location;
     top.appendChild(loc);
   }
+  // Not on a card still being written: its letter is in flight.
+  if (coverLetterState(job) !== 'writing') top.appendChild(renderMiniDelete(job, card));
   card.appendChild(top);
 
   const title = mk('div', 'mc-title', job.title || '(untitled)');
@@ -265,10 +443,17 @@ function renderMiniCard(job) {
   const open = mk('button', 'btn btn-sm', 'Open ad');
   open.title = 'Open the ad on Seek; the Quick Apply panel there has the letter';
   open.addEventListener('click', () => chrome.tabs.create({ url: job.url }));
-  const copy = mk('button', 'btn btn-sm', '⧉ Letter');
-  copy.title = 'Copy the cover letter (your edits if you made any)';
-  copy.addEventListener('click', () => copyLetter(job.job_id, copy));
-  actions.append(open, copy);
+  actions.appendChild(open);
+  if (coverLetterState(job) === 'writing') {
+    // The same notice as the Pipeline tab's chip; Copy appears when the letter lands.
+    card.classList.add('writing');
+    actions.appendChild(mk('span', 'mc-writing', '✍ Writing…'));
+  } else {
+    const copy = mk('button', 'btn btn-sm', '⧉ Letter');
+    copy.title = 'Copy the cover letter (your edits if you made any)';
+    copy.addEventListener('click', () => copyLetter(job.job_id, copy));
+    actions.appendChild(copy);
+  }
   card.appendChild(actions);
 
   // Two clicks: an application can't be un-marked (it's Centrelink evidence), so a
@@ -344,37 +529,255 @@ function scrollStep() {
   return Math.max(1, Math.floor(ovScroller.clientWidth / card)) * card;
 }
 
+// The bin: two clicks, like Mark applied (the first arms it, 4 s to confirm), then the Jobs
+// tab's own Delete (DELETE /jobs/{id}; the backend refuses an applied job, and these never are).
+function renderMiniDelete(job, card) {
+  const del = mk('button', 'del-btn mc-del');
+  del.title = 'Delete this job';
+  del.innerHTML = TRASH_SVG;
+  let disarm = null;
+  const reset = () => {
+    del.classList.remove('confirm');
+    del.innerHTML = TRASH_SVG;
+    del.title = 'Delete this job';
+  };
+  del.addEventListener('click', async () => {
+    if (!del.classList.contains('confirm')) {
+      del.classList.add('confirm');
+      del.textContent = 'Delete?';
+      del.title = 'Click again to delete this job';
+      disarm = setTimeout(reset, 4000);
+      return;
+    }
+    clearTimeout(disarm);
+    del.disabled = true;
+    try {
+      const res = await fetch(`${BACKEND}/jobs/${job.job_id}?profile_id=${PROFILE_ID}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
+    } catch (e) {
+      del.disabled = false;
+      reset();
+      alert(`Could not delete the job: ${e.message}`);
+      return;
+    }
+    loadJobs(); // the Pipeline tab drops it too
+    card.classList.add('leaving');
+    setTimeout(() => {
+      card.remove();
+      const left = ovScroller.querySelectorAll('.mini-card');
+      setReadyCount([...left].filter(c => !c.classList.contains('writing')).length,
+        ovScroller.querySelectorAll('.mini-card.writing').length);
+      if (!left.length) renderReady([]);
+      updateArrows();
+    }, 260);
+  });
+  return del;
+}
+
 ovPrev.addEventListener('click', () => ovScroller.scrollBy({ left: -scrollStep(), behavior: 'smooth' }));
 ovNext.addEventListener('click', () => ovScroller.scrollBy({ left: scrollStep(), behavior: 'smooth' }));
 ovScroller.addEventListener('scroll', updateArrows, { passive: true });
 window.addEventListener('resize', updateArrows);
 
-// Scan More Jobs: the next 3 suggested searches. Ignores the Jobs-tab banner's 7-day
-// dismissal: this tab is where you come to pick the next search. Opening one is a normal
-// user-initiated tab (no request to Seek from here).
+// ---------------------------------------------------------------------------
+// No letter yet: scored jobs below the auto-letter score, one thin card per 5-point band
+// (GET /jobs/letter-bands, docs/overview-applied-rework-plan.md D3-D6). One card has
+// "+ letters": the highest band with jobs it can write now (the user, 2026-10-15), so after a
+// click it stays on that band while the band has more, then moves down. One-shot letters for
+// its best jobs (at most 10), after a confirming click.
+// ---------------------------------------------------------------------------
+let bandArmed = null;  // {key, timer}: the "+ letters" waiting for its confirming click
+let bandNotice = '';   // the last write's result, when it queued nothing
+
+function renderBands(data) {
+  ovBandGrid.innerHTML = '';
+  const bands = data?.bands || [];
+  ovBandsEl.hidden = !bands.length;
+  if (!bands.length) return;
+  ovBandsSub.textContent = `${data.total} scored below ${data.bar}`;
+  // Jobs being written have left the bands, and jobs waiting for an availability check
+  // can't be written yet, so `ready` is what a click can write.
+  const writable = bands.find(b => b.ready > 0);
+  for (const band of bands) ovBandGrid.appendChild(renderBandCard(band, band === writable ? data : null));
+
+  const waiting = bands.reduce((n, b) => n + b.waiting_check, 0);
+  const notes = [];
+  if (bandNotice) notes.push(bandNotice);
+  if (waiting) {
+    notes.push(`${waiting} waiting for an availability check: letters are only written for ads seen live in the last day.`);
+  }
+  ovBandNote.textContent = notes.join(' ');
+  ovBandNote.hidden = !notes.length;
+}
+
+// `top`: the bands payload, passed only for the band that gets the button.
+function renderBandCard(band, top) {
+  const card = mk('div', 'band-card');
+  card.dataset.tier = tierOf(band.lo);
+  card.title = `${plural(band.count, 'job')} scored ${band.lo}–${band.hi} with no cover letter`;
+  card.append(mk('span', 'bc-range', `${band.hi}–${band.lo}`), mk('span', 'bc-count', String(band.count)));
+  if (top) {
+    const btn = renderBandButton(band, top);
+    if (btn) card.appendChild(btn);
+  }
+  return card;
+}
+
+// "≈ 36¢", or "≈ US$1.20" from a dollar up
+function fmtEstimate(usd) {
+  return usd < 1 ? `≈ ${Math.max(1, Math.round(usd * 100))}¢` : `≈ US$${usd.toFixed(2)}`;
+}
+
+const EST_BASIS = {
+  one_pass: 'your recent one-pass letters',
+  draft: 'your full-pipeline draft calls (no one-pass letter yet)',
+  default: 'a rough default (no letter cost logged yet)',
+};
+
+function renderBandButton(band, data) {
+  const key = `${band.lo}-${band.hi}`;
+  // Fresh jobs (queued ones have left the bands), at most 10 a click (the backend's cap).
+  const n = Math.min(band.ready, 10);
+  if (!n) return null;
+  const each = data.est_usd_per_letter;
+  const btn = mk('button', 'bc-btn', '+ letters');
+  btn.title = `Write one-pass letters for the best ${plural(n, 'job')} in this band, `
+    + `${fmtEstimate(each)} each (estimated from ${EST_BASIS[data.est_basis] || 'past letters'})`;
+  const arm = () => {
+    btn.classList.add('confirm');
+    btn.textContent = `Write ${n}? ${fmtEstimate(n * each)}`;
+  };
+  if (bandArmed?.key === key) arm(); // a live reload mustn't drop the first click
+  btn.addEventListener('click', async () => {
+    if (bandArmed?.key !== key) {
+      clearTimeout(bandArmed?.timer);
+      bandNotice = '';
+      bandArmed = { key, timer: setTimeout(() => { bandArmed = null; loadOverview(); }, 4000) };
+      arm();
+      return;
+    }
+    clearTimeout(bandArmed.timer);
+    bandArmed = null;
+    btn.disabled = true;
+    btn.textContent = 'Queuing…';
+    try {
+      const res = await getJson(`${BACKEND}/jobs/letter-bands/write?profile_id=${PROFILE_ID}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lo: band.lo, hi: band.hi }),
+      });
+      if (!res.queued) bandNotice = 'Nothing to write in that band right now.';
+    } catch {
+      alert('Could not start the letters — is the backend running?');
+    }
+    loadOverview(); // the queued jobs move to Keep Applying as "Writing…" at once
+  });
+  return btn;
+}
+
+// Scan More Jobs: the top 3 suggested searches, one row each with its own Scan more button
+// (the user's update to D7/D8, 2026-10-15). A click opens THAT search in a new tab and scans it.
+// One search per click: it never moves on to another suggestion or to Seek's page 2 by itself.
+// The tab is opened by the user's click, so it is the page the user opened (CLAUDE.md, Seek
+// access policy); the scan reads it by its id, so the user can move to another tab at once.
+// Ignores the Jobs-tab banner's 7-day dismissal: this tab is where you come to pick a search.
+let scanMoreBusy = false; // from the click until its scan ends (scanPage sets `scanning` later)
+
 function renderSuggestions(data) {
   ovSearchesEl.innerHTML = '';
   const list = (data?.suggestions || []).slice(0, 3);
-  ovSearchHint.hidden = !list.length;
+  const where = data?.location || '';
   if (!list.length) {
-    ovSearchesEl.appendChild(mk('div', 'ov-empty',
-      'No suggestions yet. They come from the jobs you match well: search Seek yourself, then press Scan Page.'));
+    ovScanLine.textContent = 'No suggestions yet. They come from the jobs you match well: search Seek '
+      + 'yourself, then press Scan Page.';
     return;
   }
-  const where = data.location || '';
-  for (const phrase of list) {
-    const row = mk('button', 'ov-search');
-    row.title = `Open a Seek search for "${phrase}"${where ? ` in ${where}` : ''}`;
-    row.append(mk('span', null, '🔍'), mk('span', 'q', phrase));
-    if (where) row.appendChild(mk('span', 'where', where));
-    row.appendChild(mk('span', 'chev', '›'));
-    row.addEventListener('click', () => chrome.tabs.create({ url: seekSearchUrl(phrase, where) }));
-    ovSearchesEl.appendChild(row);
+  ovScanLine.textContent = `Each opens a Seek search${where ? ` in ${where}` : ''} and scans up to `
+    + `${plural(scanMaxPages, 'new job')}.`;
+  for (const phrase of list) ovSearchesEl.appendChild(renderSearchRow(phrase, where));
+}
+
+function renderSearchRow(phrase, where) {
+  const row = mk('div', 'ov-search');
+  row.append(mk('span', null, '🔍'), mk('span', 'q', phrase));
+  if (where) row.appendChild(mk('span', 'where', where));
+  const btn = mk('button', 'btn btn-sm ov-scan-more', 'Scan more');
+  btn.title = `Open a Seek search for "${phrase}"${where ? ` in ${where}` : ''} and scan it`;
+  btn.disabled = scanning || scanMoreBusy;
+  btn.addEventListener('click', () => scanMore(phrase, where));
+  row.appendChild(btn);
+  return row;
+}
+
+async function scanMore(phrase, where) {
+  if (scanning || scanMoreBusy) return;
+  // Busy and every button off at once: a double click, or a live reload re-enabling the
+  // buttons while the search page loads, must not open a second search before scanPage
+  // sets `scanning`.
+  scanMoreBusy = true;
+  setScanMoreButtons(true);
+  scanBtn.disabled = true;
+  const say = msg => { ovScanStatus.textContent = `${phrase}: ${msg}`; };
+  say('Opening the search…');
+  try {
+    const tab = await chrome.tabs.create({ url: seekSearchUrl(phrase, where), active: true });
+    await waitForTabComplete(tab.id, 15000);
+    await scanPage({ tabId: tab.id, onStatus: say });
+  } catch (e) {
+    say(`Could not open the search (${e.message}).`);
+  } finally {
+    scanMoreBusy = false;
+    scanBtn.disabled = scanning;
+    setScanMoreButtons(scanning);
   }
 }
 
+function setScanMoreButtons(off) {
+  for (const btn of ovSearchesEl.querySelectorAll('.ov-scan-more')) btn.disabled = off;
+}
+
+// "How past searches did" (moved here from Settings, docs/settings-simplify-plan.md D6): which
+// searches paid off. Volume is also the LLM cost of a search, so a big-volume/low-yield row is
+// the one worth retiring. Fetched each time the disclosure opens (one cheap query).
+const searchPerfEl = document.getElementById('search-perf');
+document.getElementById('ov-search-perf').addEventListener('toggle', async (e) => {
+  if (!e.target.open) return;
+  searchPerfEl.textContent = 'Loading…';
+  try {
+    const res = await fetch(`${BACKEND}/jobs/search-performance?profile_id=${PROFILE_ID}`);
+    if (!res.ok) throw new Error();
+    const { performance, underperforming } = await res.json();
+    if (!performance.length) {
+      searchPerfEl.textContent = 'No data yet: searches are tracked from the next results page you open.';
+      return;
+    }
+    const weak = new Set(underperforming);
+    const table = document.createElement('table');
+    const head = table.insertRow();
+    ['Search', 'Jobs', 'Good', 'Yield'].forEach((label, i) => {
+      const th = document.createElement('th');
+      th.textContent = label;
+      if (i > 0) th.className = 'num';
+      head.appendChild(th);
+    });
+    for (const row of performance) {
+      const tr = table.insertRow();
+      if (weak.has(row.query)) tr.className = 'weak';
+      tr.insertCell().textContent = row.query;
+      [row.volume, row.hits, `${Math.round(row.yield * 100)}%`].forEach((v) => {
+        const td = tr.insertCell();
+        td.textContent = v;
+        td.className = 'num';
+      });
+    }
+    searchPerfEl.replaceChildren(table);
+  } catch {
+    searchPerfEl.textContent = 'Could not load search performance.';
+  }
+});
+
 // Scan Page from the Overview: the Jobs list is the scan's progress display (and where
-// its notices appear), so go there.
+// its notices appear), so go there. (Scan more stays here: it calls scanPage itself.)
 scanBtn.addEventListener('click', () => {
   if (!overviewSection.hidden) showTab('jobs');
 });
@@ -416,7 +819,7 @@ function renderAppliedPeriods() {
   const total = d.periods.reduce((n, p) => n + p.applied, 0);
   apStatusEl.textContent = total
     ? `${plural(total, 'application')} in ${plural(d.periods.filter(p => p.applied).length, 'period')}.`
-    : 'No applications logged yet. Mark a job applied on the Overview or Jobs tab.';
+    : 'No applications logged yet. Mark a job applied on the Overview or the Pipeline tab.';
 
   if (!d.cycle_start) {
     const note = mk('div', 'ap-note', 'Grouped by calendar month for now. ');
@@ -484,12 +887,17 @@ function periodCostText(period) {
 function renderPeriodJob(job) {
   const li = document.createElement('li');
   li.dataset.jobId = job.job_id;
-  li.title = 'Open the ad';
-  li.addEventListener('click', () => chrome.tabs.create({ url: job.url }));
+  // The row opens the application's record in place (applied_record.js); the ad itself is
+  // the record's first button, so a closed ad still has its letter and summary.
+  li.title = 'Show this application';
+  li.addEventListener('click', () => toggleAppliedRecord(li, job));
 
+  li.appendChild(mk('span', 'p-chev', '▶'));
   const main = mk('div', 'pj-main');
   main.appendChild(mk('div', 'pj-title', job.title || '(untitled)'));
   const meta = [job.company, `Applied ${fmtDay(localDay(job.applied_at))}`];
+  // Recorded by the extension on Seek's "application sent" page, not by a click.
+  if (job.applied_via === 'auto') meta.push('recorded from Seek');
   if (job.cost_usd != null) meta.push(`≈ US$${job.cost_usd.toFixed(2)}`);
   main.appendChild(mk('div', 'pj-meta', meta.filter(Boolean).join(' · ')));
   const evidence = evidenceNote(job);
@@ -509,16 +917,17 @@ function renderPeriodJob(job) {
   });
   li.appendChild(iv);
 
-  // Deleting an application is deliberate and lives only here; the Jobs tab offers no
+  // Deleting an application is deliberate and lives only here; the Pipeline tab offers no
   // Delete for applied jobs and the backend refuses one without allow_applied.
   const del = mk('button', 'del-btn');
   del.title = 'Delete this application';
   del.innerHTML = TRASH_SVG;
   del.addEventListener('click', (e) => {
-    e.stopPropagation(); // the row opens the ad
+    e.stopPropagation(); // the row toggles its record
     deleteApplication(job, del);
   });
   li.appendChild(del);
+  if (apRecordOpen.has(job.job_id)) showAppliedRecord(li, job);
   return li;
 }
 
@@ -574,7 +983,8 @@ async function toggleInterview(job, btn) {
 
 // CSV for Centrelink: one row per application (the same columns as before the periods).
 function appliedCsv(jobs) {
-  const rows = [['Date Applied', 'Job Title', 'Employer', 'Location', 'Source URL', 'Screenshot Evidence']];
+  const rows = [['Date Applied', 'Job Title', 'Employer', 'Location', 'Source URL', 'Screenshot Evidence',
+    'Recorded']];
   for (const job of jobs) {
     rows.push([
       job.applied_at ? localDay(job.applied_at) : '',
@@ -585,6 +995,8 @@ function appliedCsv(jobs) {
       // taken_at outlives the file, so distinguish expired from never-captured.
       job.screenshot_url ? job.screenshot_taken_at.slice(0, 10)
         : job.screenshot_taken_at ? `${job.screenshot_taken_at.slice(0, 10)} (file expired)` : 'No',
+      // Same wording as the evidence zip's CSV (app/api/evidence.py _RECORDED).
+      { auto: 'Seek confirmation page', manual: 'Marked by hand' }[job.applied_via] || '',
     ]);
   }
   return rows.map(r => r.map(csvEscape).join(',')).join('\r\n');

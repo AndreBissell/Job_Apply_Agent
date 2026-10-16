@@ -12,12 +12,14 @@ from __future__ import annotations
 import logging
 from concurrent.futures import ThreadPoolExecutor
 
+from app import letter_bands
 from app.api import events
 from app.db import SessionLocal
 from app.llm.client import BudgetExceededError, DailyQuotaError
 from app.llm.extract import extract_job
 from app.llm.letter import production as letter_production
 from app.llm.match import match_job
+from app.preferences import letter_settings
 
 logger = logging.getLogger(__name__)
 
@@ -84,3 +86,42 @@ def _process_listing(
             "matching until a detail page is ingested.",
             job_id,
         )
+
+
+def _write_band_letters(job_ids: list[int], profile_id: int) -> None:
+    """Background task: the Overview's "+ cover letters" for a score band below the
+    auto-letter bar (docs/overview-applied-rework-plan.md, Step 3, D5/D6), best first.
+
+    Each job is checked again first: a letter, an application, a hide, a closed ad or a
+    stale sighting since the click drops it. The kind comes from ``kind_for``, so below the
+    bar it is the one-shot. A USD guard / daily quota stop ends the batch and tells the
+    sidebar, as the idle loop does. Every id leaves ``letter_bands.queued`` when its turn
+    ends, and the rest do when the batch stops.
+    """
+    try:
+        for job_id in job_ids:
+            try:
+                with SessionLocal() as db:
+                    score = letter_bands.still_eligible(db, profile_id, job_id)
+                    if score is None:
+                        logger.info("band letter: job %s no longer qualifies, skipped", job_id)
+                        continue
+                    kind = letter_production.kind_for(letter_settings(db, profile_id), score)
+                    landed = letter_production.run_work(
+                        letter_production.Work(kind, job_id, below_bar=True),
+                        profile_id, events.broadcast_from_thread, db=db,
+                    )
+                if landed.account_limit:
+                    logger.warning("band letters: %s — stopping the batch", landed.account_limit)
+                    events.broadcast_from_thread("llm_budget_blocked", {"reason": landed.account_limit})
+                    return
+            except (DailyQuotaError, BudgetExceededError) as exc:
+                logger.warning("band letters: %s — stopping the batch", exc)
+                events.broadcast_from_thread("llm_budget_blocked", {"reason": str(exc)})
+                return
+            except Exception:  # noqa: BLE001 — one bad job must not end the batch
+                logger.exception("band letter failed for job %s", job_id)
+            finally:
+                letter_bands.release(job_id)
+    finally:
+        letter_bands.release(*job_ids)

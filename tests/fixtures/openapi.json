@@ -51,6 +51,24 @@
     "title": "AnswersIn",
     "type": "object"
    },
+   "BandWrite": {
+    "properties": {
+     "hi": {
+      "title": "Hi",
+      "type": "integer"
+     },
+     "lo": {
+      "title": "Lo",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "lo",
+     "hi"
+    ],
+    "title": "BandWrite",
+    "type": "object"
+   },
    "CaptureIn": {
     "properties": {
      "questions": {
@@ -325,6 +343,21 @@
    },
    "IngestListing": {
     "properties": {
+     "apply_type": {
+      "anyOf": [
+       {
+        "enum": [
+         "quick",
+         "external"
+        ],
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Apply Type"
+     },
      "classification": {
       "anyOf": [
        {
@@ -447,6 +480,21 @@
     "title": "InterviewIn",
     "type": "object"
    },
+   "MarketSkillIn": {
+    "properties": {
+     "skill": {
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Skill",
+      "type": "string"
+     }
+    },
+    "required": [
+     "skill"
+    ],
+    "title": "MarketSkillIn",
+    "type": "object"
+   },
    "OptionIn": {
     "properties": {
      "label": {
@@ -481,6 +529,17 @@
        }
       ],
       "title": "Auto Cover Letter Min Score"
+     },
+     "availability_checks_enabled": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Availability Checks Enabled"
      },
      "learning_suggestions_enabled": {
       "anyOf": [
@@ -1229,6 +1288,24 @@
     ],
     "title": "ValidationError",
     "type": "object"
+   },
+   "Verdict": {
+    "properties": {
+     "verdict": {
+      "enum": [
+       "live",
+       "missing",
+       "unknown"
+      ],
+      "title": "Verdict",
+      "type": "string"
+     }
+    },
+    "required": [
+     "verdict"
+    ],
+    "title": "Verdict",
+    "type": "object"
    }
   }
  },
@@ -1238,6 +1315,111 @@
  },
  "openapi": "3.1.0",
  "paths": {
+  "/availability/next": {
+   "get": {
+    "description": "The next listing to re-check, or ``job: null``.\n\n``exclude`` is a comma-separated list of internal job ids the panel already looked at\nthis session. ``remaining_today`` is the rolling 24-hour allowance left; at 0 (or with\nthe checks switched off) no job is offered.",
+    "operationId": "next_check_availability_next_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "profile_id",
+      "required": false,
+      "schema": {
+       "default": 1,
+       "title": "Profile Id",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "exclude",
+      "required": false,
+      "schema": {
+       "default": "",
+       "title": "Exclude",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Next Check Availability Next Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Next Check"
+   }
+  },
+  "/availability/{job_id}": {
+   "post": {
+    "description": "Record what a re-check found: ``live``, ``missing`` (no description) or ``unknown``.\n\nThe second ``missing`` in a row flags the job expired; ``live`` un-expires it. An applied\njob is never flagged (the response carries ``note: \"applied\"``).",
+    "operationId": "record_check_availability__job_id__post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "job_id",
+      "required": true,
+      "schema": {
+       "title": "Job Id",
+       "type": "integer"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/Verdict"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Record Check Availability  Job Id  Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Record Check"
+   }
+  },
   "/events": {
    "get": {
     "description": "Server-Sent Events stream. Pushes job_processed and cover_letter_ready events.",
@@ -1253,6 +1435,463 @@
      }
     },
     "summary": "Sse Events"
+   }
+  },
+  "/evidence/bundles": {
+   "post": {
+    "description": "Collate every unreported Quick Apply screenshot into PDF(s) for Centrelink.\n\nUsually one PDF; more only when one would pass the 3 MB upload limit. Each is saved\nin ``centrelink_ready/`` and its applications count as reported from then on (their\nscreenshots stay in ``evidence/<month>/`` until the normal expiry). Undo is\n``DELETE /evidence/bundles/{id}``. No LLM call anywhere in this path.",
+    "operationId": "create_bundles_evidence_bundles_post",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "profile_id",
+      "required": false,
+      "schema": {
+       "default": 1,
+       "title": "Profile Id",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Create Bundles Evidence Bundles Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Create Bundles"
+   }
+  },
+  "/evidence/bundles/{bundle_id}": {
+   "delete": {
+    "description": "Undo a collate: delete the PDF and put its applications back as unreported.\n\nTheir screenshots were never moved, so nothing else changes.",
+    "operationId": "undo_bundle_evidence_bundles__bundle_id__delete",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "bundle_id",
+      "required": true,
+      "schema": {
+       "title": "Bundle Id",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "profile_id",
+      "required": false,
+      "schema": {
+       "default": 1,
+       "title": "Profile Id",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Undo Bundle Evidence Bundles  Bundle Id  Delete",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Undo Bundle"
+   }
+  },
+  "/evidence/bundles/{bundle_id}/download": {
+   "get": {
+    "operationId": "download_bundle_evidence_bundles__bundle_id__download_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "bundle_id",
+      "required": true,
+      "schema": {
+       "title": "Bundle Id",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "profile_id",
+      "required": false,
+      "schema": {
+       "default": 1,
+       "title": "Profile Id",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Download Bundle"
+   }
+  },
+  "/evidence/status": {
+   "get": {
+    "description": "What the Overview's Centrelink card shows: applications not yet reported, and\nthe most recent bundles (newest first).",
+    "operationId": "evidence_status_evidence_status_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "profile_id",
+      "required": false,
+      "schema": {
+       "default": 1,
+       "title": "Profile Id",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 10,
+       "title": "Limit",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Evidence Status Evidence Status Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Evidence Status"
+   }
+  },
+  "/gaps/market": {
+   "get": {
+    "operationId": "market_gaps_gaps_market_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "profile_id",
+      "required": false,
+      "schema": {
+       "default": 1,
+       "title": "Profile Id",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "days",
+      "required": false,
+      "schema": {
+       "default": 90,
+       "title": "Days",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Market Gaps Gaps Market Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Market Gaps"
+   }
+  },
+  "/gaps/market/have": {
+   "post": {
+    "description": "Add the skill to the profile (skill only, ``origin='ask_user'``; no model call).",
+    "operationId": "market_have_gaps_market_have_post",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "profile_id",
+      "required": false,
+      "schema": {
+       "default": 1,
+       "title": "Profile Id",
+       "type": "integer"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/MarketSkillIn"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Market Have Gaps Market Have Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Market Have"
+   }
+  },
+  "/gaps/market/ignore": {
+   "post": {
+    "operationId": "market_ignore_gaps_market_ignore_post",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "profile_id",
+      "required": false,
+      "schema": {
+       "default": 1,
+       "title": "Profile Id",
+       "type": "integer"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/MarketSkillIn"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Market Ignore Gaps Market Ignore Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Market Ignore"
+   }
+  },
+  "/gaps/market/not-yet": {
+   "post": {
+    "description": "Remember a \"no\": the skill moves to the to-work-on list.",
+    "operationId": "market_not_yet_gaps_market_not_yet_post",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "profile_id",
+      "required": false,
+      "schema": {
+       "default": 1,
+       "title": "Profile Id",
+       "type": "integer"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/MarketSkillIn"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Market Not Yet Gaps Market Not Yet Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Market Not Yet"
+   }
+  },
+  "/gaps/market/unignore": {
+   "post": {
+    "operationId": "market_unignore_gaps_market_unignore_post",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "profile_id",
+      "required": false,
+      "schema": {
+       "default": 1,
+       "title": "Profile Id",
+       "type": "integer"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/MarketSkillIn"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Market Unignore Gaps Market Unignore Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Market Unignore"
    }
   },
   "/gaps/to-work-on": {
@@ -1422,7 +2061,7 @@
   },
   "/jobs": {
    "delete": {
-    "description": "Hide every match for a profile scoring below ``below_score``.\n\nA *soft* delete, despite the verb: the match row survives with\n``hidden_at`` stamped, and only ``raw_description`` \u2014 the bulk of the\nstorage \u2014 is discarded. The user sees the same thing either way (the job\nleaves every list in the sidebar), but the score survives, and the score is\nwhat the suggestion miner needs.\n\nHard-deleting these was actively harmful. Phrase ranking is\n``(shrunk_mean - baseline) * log1p(support)``, so the low scorers are the\ncontrast that makes a good phrase measurably good; deleting them raised the\ndev profile's baseline from 69.4 to 82.5 in one click and flattened the\nsignal. ``GET /jobs/search-performance`` needs them for the same reason \u2014\na query's yield is meaningless if the misses are erased and only the hits\nremain.\n\nIdempotent: already-hidden matches are skipped, so re-running it at the\nsame threshold reports 0.",
+    "description": "Hide every match for a profile scoring below ``below_score``.\n\nA *soft* delete, despite the verb: the match row survives with\n``hidden_at`` stamped, and only ``raw_description`` \u2014 the bulk of the\nstorage \u2014 is discarded. The user sees the same thing either way (the job\nleaves every list in the sidebar), but the score survives, and the score is\nwhat the suggestion miner needs.\n\nHard-deleting these was actively harmful. Phrase ranking is\n``(shrunk_mean - baseline) * log1p(support)``, so the low scorers are the\ncontrast that makes a good phrase measurably good; deleting them raised the\ndev profile's baseline from 69.4 to 82.5 in one click and flattened the\nsignal. ``GET /jobs/search-performance`` needs them for the same reason \u2014\na query's yield is meaningless if the misses are erased and only the hits\nremain.\n\nApplied matches (``applied_at`` set) are skipped: never hidden, and they keep\ntheir ``raw_description``. They are the application record and Centrelink\nevidence, and the Applied tab shows the ad text.\n\nIdempotent: already-hidden matches are skipped, so re-running it at the\nsame threshold reports 0.",
     "operationId": "bulk_hide_jobs_jobs_delete",
     "parameters": [
      {
@@ -1472,7 +2111,7 @@
     "summary": "Bulk Hide Jobs"
    },
    "get": {
-    "description": "Matched jobs for a profile.\n\nOnly returns jobs that have a scored ``matches`` row (>= ``min_score``); jobs\nawaiting the LLM pass simply don't appear yet. Without ``status``, ranked by\nscore desc (the normal Jobs tab). With ``status`` (e.g. ``applied``), ranked\nby ``applied_at`` desc instead \u2014 that's the Applied tab / Centrelink export,\nwhere recency of application matters more than match quality. ``status=applied``\nmeans ``applied_at IS NOT NULL``; any other value filters the ``status`` column.\n\nJobs flagged ``expired_detected_at`` (see PATCH /jobs/{id}/expired) are\nexcluded from the default (no-``status``) view \u2014 the Jobs tab should only\never show listings the user can actually still apply to. This filter is\nskipped for ``status`` queries: a listing closing after the user already\napplied doesn't invalidate that application as Centrelink evidence.\n``include_expired=true`` lifts the filter on the default view too, mainly\nfor debugging/verification.\n\nMatches hidden by the bulk low-score action (``hidden_at``) are excluded\nfrom every view here, including the Applied tab. They still exist, and\nstill feed the suggestion baseline and the search-performance yield \u2014 see\nDELETE /jobs for why they are kept rather than deleted.\n\n``ready=true`` (the Overview's Keep Applying row): only jobs with a cover letter\nthat aren't applied yet, by score. Filtered here rather than in the sidebar so the\n``limit`` can't drop ready jobs behind letter-less ones.",
+    "description": "Matched jobs for a profile.\n\nOnly returns jobs that have a scored ``matches`` row (>= ``min_score``); jobs\nawaiting the LLM pass simply don't appear yet. Without ``status``, ranked by\nscore desc (the normal Jobs tab). With ``status`` (e.g. ``applied``), ranked\nby ``applied_at`` desc instead \u2014 that's the Applied tab / Centrelink export,\nwhere recency of application matters more than match quality. ``status=applied``\nmeans ``applied_at IS NOT NULL``; any other value filters the ``status`` column.\n\nJobs flagged ``expired_detected_at`` (see PATCH /jobs/{id}/expired) are\nexcluded from the default (no-``status``) view \u2014 the Jobs tab should only\never show listings the user can actually still apply to. This filter is\nskipped for ``status`` queries: a listing closing after the user already\napplied doesn't invalidate that application as Centrelink evidence.\n``include_expired=true`` lifts the filter on the default view too, mainly\nfor debugging/verification.\n\nMatches hidden by the bulk low-score action (``hidden_at``) are excluded\nfrom every view here, including the Applied tab. They still exist, and\nstill feed the suggestion baseline and the search-performance yield \u2014 see\nDELETE /jobs for why they are kept rather than deleted.\n\n``ready=true`` (the Overview's Keep Applying row): jobs not applied yet that have a\ncover letter OR are having one written (a pipeline run ``running`` / ``answered``, or\nqueued by the Overview's \"+ letters\": ``letter_queued``), by score. Filtered here rather\nthan in the sidebar so the ``limit`` can't drop them behind letter-less ones.\n\n``applied=false`` / ``true`` keeps only jobs not applied for / applied for (the Pipeline\ntab asks for ``applied=false``). Each row's ``fresh`` says whether the job passes the\nfreshness gate (``availability.llm_gate``): false = no model work until a check sees it live.",
     "operationId": "list_jobs_jobs_get",
     "parameters": [
      {
@@ -1533,10 +2172,28 @@
      },
      {
       "in": "query",
+      "name": "applied",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "boolean"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Applied"
+      }
+     },
+     {
+      "in": "query",
       "name": "limit",
       "required": false,
       "schema": {
        "default": 50,
+       "maximum": 500,
+       "minimum": 1,
        "title": "Limit",
        "type": "integer"
       }
@@ -1547,6 +2204,7 @@
       "required": false,
       "schema": {
        "default": 0,
+       "minimum": 0,
        "title": "Offset",
        "type": "integer"
       }
@@ -1665,7 +2323,7 @@
   },
   "/jobs/known-ids": {
    "get": {
-    "description": "Return all source_job_ids already in the database so the extension can skip re-scraping.",
+    "description": "The source_job_ids Scan Page skips: jobs it has nothing to add to.\n\nThat is a job with its ad text, or one already scored (a bulk-hidden job lost its text\nbut keeps its score), or one flagged closed. NOT a card-only row: the content script\nstores every card on a search page as soon as it loads, before Scan Page runs, so\ncounting those made the scan skip every job on the page without opening one.",
     "operationId": "known_job_ids_jobs_known_ids_get",
     "responses": {
      "200": {
@@ -1682,6 +2340,102 @@
      }
     },
     "summary": "Known Job Ids"
+   }
+  },
+  "/jobs/letter-bands": {
+   "get": {
+    "description": "The Overview's \"no letter yet\" cards: scored jobs below the auto-letter score, in\n5-point bands anchored on it, the 6 highest non-empty bands first (app/letter_bands.py).",
+    "operationId": "get_letter_bands_jobs_letter_bands_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "profile_id",
+      "required": false,
+      "schema": {
+       "default": 1,
+       "title": "Profile Id",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Get Letter Bands Jobs Letter Bands Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Get Letter Bands"
+   }
+  },
+  "/jobs/letter-bands/write": {
+   "post": {
+    "description": "Queue one-shot letters for a band's best jobs (at most 10) on the single worker.\n\nThe jobs come from the database, not the request: the same filter as the cards, and\nonly jobs seen live recently (the availability gate); the rest are counted as\n``waiting_check``. 400 when (lo, hi) is not a band below the auto-letter score.",
+    "operationId": "write_letter_band_jobs_letter_bands_write_post",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "profile_id",
+      "required": false,
+      "schema": {
+       "default": 1,
+       "title": "Profile Id",
+       "type": "integer"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/BandWrite"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Write Letter Band Jobs Letter Bands Write Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Write Letter Band"
    }
   },
   "/jobs/pending-count": {
@@ -1891,7 +2645,7 @@
     "summary": "Delete Job"
    },
    "get": {
-    "description": "Full detail for one job: listing fields + this profile's match + cover letter.",
+    "description": "Full detail for one job: listing fields + this profile's match + cover letter.\n\nAlso serves the Applied tab's read-only record, so it carries the extracted fields\n(summary, responsibilities, seniority, skills), the availability stamps, the\ninterview date and the letter's timestamps. Keys are only ever added: the Seek\noverlay and the sidebar read the older ones.",
     "operationId": "get_job_jobs__job_id__get",
     "parameters": [
      {
@@ -2005,7 +2759,7 @@
   },
   "/jobs/{job_id}/expired": {
    "patch": {
-    "description": "Flag a listing as no longer available.\n\nCalled by content_script.js when a revisit to a job's detail page finds no\ndescription where one was previously captured (see main()'s waitFor-timeout\nbranch) \u2014 the only compliant signal available, since the Seek Access Policy\nforbids the backend from checking listings on its own. Idempotent: stamps\nexpired_detected_at only the first time.",
+    "description": "Flag a listing as no longer available.\n\nCalled by content_script.js when a revisit to a job's detail page finds no\ndescription where one was previously captured (see main()'s waitFor-timeout\nbranch) \u2014 the only compliant signal available, since the Seek Access Policy\nforbids the backend from checking listings on its own. Idempotent: stamps\nexpired_detected_at only the first time. A job the user has applied to is never\nflagged (Centrelink evidence): the call is then a no-op and ``expired_detected_at``\ncomes back null. The side panel's background re-checks report through\nPOST /availability/{job_id} instead, which adds the two-strike rule.",
     "operationId": "mark_expired_jobs__job_id__expired_patch",
     "parameters": [
      {
@@ -2156,6 +2910,58 @@
      }
     },
     "summary": "Letter Info"
+   }
+  },
+  "/jobs/{job_id}/quick-apply-sent": {
+   "post": {
+    "description": "The extension saw Seek's Quick Apply \"application sent\" page for this job.\n\nCalled by extension/apply_flow.js on ``/job/{id}/apply/success`` once\n``h1#applicationSent`` is on the page (docs/centrelink-ease-apply-plan.md): Seek has\naccepted the application, so it is recorded with no click. Marks the job\n``apply_type='quick'`` (the flow itself is the proof) and stamps ``applied_at`` with\n``applied_via='auto'``.\n\nIdempotent: a refresh or a return to the page keeps the first date (and a manual mark\nmade earlier stays ``'manual'``); ``newly_applied`` says whether this call recorded it.\n\nCreates the match when there is none yet (a job the user applied to before it was\nscored): unscored, status ``applied``. An application counts whether or not the app\nscored the job, and the idle loop never scores a job that already has a match, so this\ncosts no AI call.",
+    "operationId": "quick_apply_sent_jobs__job_id__quick_apply_sent_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "job_id",
+      "required": true,
+      "schema": {
+       "title": "Job Id",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "profile_id",
+      "required": false,
+      "schema": {
+       "default": 1,
+       "title": "Profile Id",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Quick Apply Sent Jobs  Job Id  Quick Apply Sent Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Quick Apply Sent"
    }
   },
   "/jobs/{job_id}/quick-screen": {
@@ -2708,6 +3514,58 @@
      }
     },
     "summary": "Update Status"
+   }
+  },
+  "/jobs/{job_id}/write-letter": {
+   "post": {
+    "description": "The Pipeline's \"Write a letter\" for one job below the auto-letter score\n(docs/pipeline-tab-plan.md D7): the same one-shot writer, rules and freshness gate as\n\"+ letters\", for one job. Never forces the full pipeline (that is /regenerate).\nReturns ``{\"queued\": 0|1, \"reason\": ...}`` (see ``letter_bands.claim_job``).",
+    "operationId": "write_one_letter_jobs__job_id__write_letter_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "job_id",
+      "required": true,
+      "schema": {
+       "title": "Job Id",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "profile_id",
+      "required": false,
+      "schema": {
+       "default": 1,
+       "title": "Profile Id",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Write One Letter Jobs  Job Id  Write Letter Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Write One Letter"
    }
   },
   "/letter-runs/waiting": {

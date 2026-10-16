@@ -107,12 +107,12 @@ class TestScreenshotUpload:
         assert match.screenshot_taken_at is not None
 
         saved_dir = paths._screenshots_dir
-        files = list(saved_dir.glob("*.png"))
+        files = list(saved_dir.rglob("*.png"))  # evidence/<month>/
         assert len(files) == 1
 
     def test_repeat_upload_replaces_old_file(self, client, db):
-        # Two captures within the same second can share a filename (the naming
-        # scheme is second-resolution) — the real invariant under test is disk
+        # Two captures within the same minute share a filename (the naming
+        # scheme is minute-resolution) — the real invariant under test is disk
         # usage: repeat captures never accumulate old files, latest always wins.
         match = _seed_match(db)
 
@@ -124,7 +124,7 @@ class TestScreenshotUpload:
         assert match.screenshot_path is not None
 
         saved_dir = paths._screenshots_dir
-        files = list(saved_dir.glob("*.png"))
+        files = list(saved_dir.rglob("*.png"))  # evidence/<month>/
         assert len(files) == 1  # old file was deleted, not accumulated
 
     def test_malformed_data_url_returns_400(self, client, db):

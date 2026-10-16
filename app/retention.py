@@ -26,13 +26,16 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import quote
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
-from app.models import Experience, JobListing, Match, Profile, Qualification, Skill
+from app.models import (
+    EvidenceBundleItem, Experience, JobListing, Match, Profile, Qualification, Skill,
+)
 from app.preferences import get_preferences, set_preferences
-from app.screenshots import expire_screenshots, unlink_screenshot
+from app.screenshots import expire_screenshots, screenshot_relpath, unlink_screenshot
 
 logger = logging.getLogger(__name__)
 
@@ -46,10 +49,11 @@ DEFAULT_WINDOW_DAYS = 122
 # corpus out and leave the miner with nothing. 150 matches is only ~375 KB.
 DEFAULT_FLOOR_MATCHES = 150
 
-# Screenshot files are deleted this long after capture. Shorter than the match
-# window because they are the only heavy artefact (~1 MB each) and the user
-# uploads them to Centrelink straight away.
-DEFAULT_SCREENSHOT_TTL_DAYS = 30
+# Screenshot files are deleted this long after capture: a rolling ~5 months of
+# evidence (owner decision 2026-10-14). ~100 KB each. A screenshot not yet in a
+# Centrelink bundle never expires (app/screenshots.py::expire_screenshots), and
+# the bundle PDFs themselves are kept forever.
+DEFAULT_SCREENSHOT_TTL_DAYS = 150
 
 # Weight of a match scored BEFORE the profile last changed, against 1.0 for one
 # scored after. Binary on purpose: "scored against the current profile" or not
@@ -107,16 +111,30 @@ def utc(dt: datetime | None) -> datetime | None:
     return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
 
 
-def screenshot_fields(match: Match, ttl: timedelta) -> dict:
-    """A match's screenshot evidence as the API shows it (Jobs, Applied periods)."""
+def reported_match_ids(db: Session, match_ids: list[int]) -> set[int]:
+    """Which of ``match_ids`` are in a Centrelink evidence bundle."""
+    if not match_ids:
+        return set()
+    return set(db.scalars(
+        select(EvidenceBundleItem.match_id).where(EvidenceBundleItem.match_id.in_(match_ids))
+    ).all())
+
+
+def screenshot_fields(match: Match, ttl: timedelta, reported: bool) -> dict:
+    """A match's screenshot evidence as the API shows it (Jobs, Applied periods).
+    ``reported``: the screenshot is in a Centrelink bundle (``reported_match_ids``)."""
     return {
         "screenshot_taken_at": match.screenshot_taken_at.isoformat() if match.screenshot_taken_at else None,
-        "screenshot_url": f"/screenshots/{Path(match.screenshot_path).name}" if match.screenshot_path else None,
+        "screenshot_url": (
+            f"/screenshots/{quote(rel)}" if (rel := screenshot_relpath(match.screenshot_path)) else None
+        ),
+        "screenshot_reported": reported,
         # When the FILE will be deleted (null once it already has been:
-        # screenshot_taken_at set with no screenshot_url means "expired").
+        # screenshot_taken_at set with no screenshot_url means "expired"). Also null
+        # while unreported: the expiry clock only applies once it is in a bundle.
         "screenshot_expires_at": (
             (utc(match.screenshot_taken_at) + ttl).isoformat()
-            if match.screenshot_path and match.screenshot_taken_at else None
+            if match.screenshot_path and match.screenshot_taken_at and reported else None
         ),
     }
 

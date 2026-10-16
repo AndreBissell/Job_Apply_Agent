@@ -33,6 +33,7 @@ from typing import Callable
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app import availability
 from app.db import SessionLocal
 from app.llm.client import BudgetExceededError, DailyQuotaError
 from app.llm.cover_letter import generate_cover_letter
@@ -64,6 +65,9 @@ class Work:
     kind: str  # PIPELINE | ONESHOT | RESUME
     job_id: int
     run_id: int | None = None  # RESUME only
+    # ONESHOT only: the user asked for this letter below the auto-letter bar (the Overview's
+    # "+ cover letters"), so the one-shot writer's own score gate must not refuse it.
+    below_bar: bool = False
 
 
 @dataclass
@@ -140,10 +144,15 @@ def next_work(db: Session, profile_id: int, *, now: datetime.datetime | None = N
     """The one thing the worker does on this pass, or None when there is no letter work."""
     now = now or _now()
 
+    # Neither a resumed run nor a new letter is paid for unless the ad is not flagged closed
+    # and was seen live recently (app/availability.py): a letter for a dead ad is wasted money.
+    gate = availability.llm_gate(db, profile_id, now)
     resumable = db.execute(
         select(LetterRun.id, Match.job_id)
         .join(Match, Match.id == LetterRun.match_id)
+        .join(JobListing, JobListing.id == Match.job_id)
         .where(LetterRun.status == "answered", Match.user_id == profile_id, Match.hidden_at.is_(None))
+        .where(gate)
         .order_by(LetterRun.id)
         .limit(1)
     ).first()
@@ -158,6 +167,7 @@ def next_work(db: Session, profile_id: int, *, now: datetime.datetime | None = N
         .where(CoverLetter.id.is_(None))
         .where(Match.user_id == profile_id)
         .where(Match.hidden_at.is_(None))  # never write a letter for a hidden job
+        .where(gate)
         .where(Match.score >= settings["auto_min_score"])
         .where(JobListing.extracted_at.isnot(None))
         .order_by(Match.score.desc())
@@ -228,7 +238,7 @@ def run_work(work: Work, profile_id: int, emit: Emit | None = None, *, db: Sessi
     session = db or SessionLocal()
     try:
         if work.kind == ONESHOT:
-            return _run_oneshot(session, work.job_id, profile_id, emit)
+            return _run_oneshot(session, work.job_id, profile_id, emit, below_bar=work.below_bar)
         return _run_pipeline(session, work.job_id, profile_id, emit, run_id=work.run_id)
     finally:
         if own:
@@ -257,9 +267,14 @@ def generate_for(
     return _run_pipeline(db, job_id, profile_id, emit)
 
 
-def _run_oneshot(db: Session, job_id: int, profile_id: int, emit: Emit | None, *, force: bool = False) -> Landed:
+def _run_oneshot(
+    db: Session, job_id: int, profile_id: int, emit: Emit | None, *, force: bool = False, below_bar: bool = False,
+) -> Landed:
+    # force (regenerate) replaces a letter and ignores the bar; below_bar only ignores the bar.
     try:
-        cl = generate_cover_letter(job_id, profile_id, session=db, force=force, bypass_threshold=force)
+        cl = generate_cover_letter(
+            job_id, profile_id, session=db, force=force, bypass_threshold=force or below_bar,
+        )
     except (BudgetExceededError, DailyQuotaError) as exc:
         return Landed(ONESHOT, job_id, "budget_stopped", reason=str(exc), account_limit=str(exc))
     if cl is None:

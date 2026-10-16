@@ -1,4 +1,5 @@
-"""The job write endpoints: quick screen, status, expired, cover letter, regenerate, delete.
+"""The job write endpoints: quick screen, status, Quick Apply sent, expired, cover letter,
+regenerate, delete.
 
 ``regenerate`` queues its work on the single worker as ``worker._bg_executor.submit(
 worker._process_listing, ...)`` (looked up at call time, plan rule M1). ``delete_job`` reads the
@@ -16,7 +17,8 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from app.api import paths, worker
+from app import availability
+from app.api import events, paths, worker
 from app.api.deps import get_db
 from app.llm.client import DailyQuotaError
 from app.llm.quickscreen import quick_screen
@@ -95,14 +97,77 @@ def update_status(
         )
 
     match.status = body.status
-    if body.status == "applied" and match.applied_at is None:
-        match.applied_at = datetime.now(timezone.utc)
+    if body.status == "applied":
+        _stamp_applied(db, match, job_id, via="manual")
     db.commit()
 
     return {
         "job_id": job_id,
         "status": match.status,
         "applied_at": match.applied_at.isoformat() if match.applied_at else None,
+        "applied_via": match.applied_via,
+    }
+
+
+def _stamp_applied(db: Session, match: Match, job_id: int, via: str) -> bool:
+    """Mark a match applied. ``applied_at`` and ``applied_via`` are set only the first
+    time (True then); a repeat keeps the original date and how it was recorded. The
+    caller commits.
+
+    An applied job is evidence, never "closed": a flag that arrived before the user
+    applied is lifted, so the job stays on the Jobs tab beside its "Applied" mark.
+    """
+    match.status = "applied"
+    stamped = match.applied_at is None
+    if stamped:
+        match.applied_at = datetime.now(timezone.utc)
+        match.applied_via = via
+    job = db.get(JobListing, job_id)
+    if job is not None:
+        job.expired_detected_at = None
+        job.availability_misses = 0
+    return stamped
+
+
+@router.post("/jobs/{job_id}/quick-apply-sent")
+def quick_apply_sent(job_id: int, profile_id: int = 1, db: Session = Depends(get_db)) -> dict:
+    """The extension saw Seek's Quick Apply "application sent" page for this job.
+
+    Called by extension/apply_flow.js on ``/job/{id}/apply/success`` once
+    ``h1#applicationSent`` is on the page (docs/centrelink-ease-apply-plan.md): Seek has
+    accepted the application, so it is recorded with no click. Marks the job
+    ``apply_type='quick'`` (the flow itself is the proof) and stamps ``applied_at`` with
+    ``applied_via='auto'``.
+
+    Idempotent: a refresh or a return to the page keeps the first date (and a manual mark
+    made earlier stays ``'manual'``); ``newly_applied`` says whether this call recorded it.
+
+    Creates the match when there is none yet (a job the user applied to before it was
+    scored): unscored, status ``applied``. An application counts whether or not the app
+    scored the job, and the idle loop never scores a job that already has a match, so this
+    costs no AI call.
+    """
+    job = db.get(JobListing, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    job.apply_type = "quick"
+
+    match = db.scalar(
+        select(Match).where(Match.user_id == profile_id, Match.job_id == job_id)
+    )
+    if match is None:
+        match = Match(user_id=profile_id, job_id=job_id, status="applied")
+        db.add(match)
+    newly = _stamp_applied(db, match, job_id, via="auto")
+    db.commit()
+
+    # The side panel reloads its lists (Overview count, Applied tab) on this.
+    events.broadcast_from_thread("job_applied", {"job_id": job_id, "applied_via": match.applied_via})
+    return {
+        "job_id": job_id,
+        "applied_at": match.applied_at.isoformat(),
+        "applied_via": match.applied_via,
+        "newly_applied": newly,
     }
 
 
@@ -114,17 +179,22 @@ def mark_expired(job_id: int, db: Session = Depends(get_db)) -> dict:
     description where one was previously captured (see main()'s waitFor-timeout
     branch) — the only compliant signal available, since the Seek Access Policy
     forbids the backend from checking listings on its own. Idempotent: stamps
-    expired_detected_at only the first time.
+    expired_detected_at only the first time. A job the user has applied to is never
+    flagged (Centrelink evidence): the call is then a no-op and ``expired_detected_at``
+    comes back null. The side panel's background re-checks report through
+    POST /availability/{job_id} instead, which adds the two-strike rule.
     """
     job = db.get(JobListing, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    if job.expired_detected_at is None:
-        job.expired_detected_at = datetime.now(timezone.utc)
+    if availability.flag_expired(db, job):
         db.commit()
 
-    return {"job_id": job_id, "expired_detected_at": job.expired_detected_at.isoformat()}
+    return {
+        "job_id": job_id,
+        "expired_detected_at": job.expired_detected_at.isoformat() if job.expired_detected_at else None,
+    }
 
 
 @router.patch("/jobs/{job_id}/cover-letter")
@@ -205,6 +275,10 @@ def bulk_hide_jobs(
     a query's yield is meaningless if the misses are erased and only the hits
     remain.
 
+    Applied matches (``applied_at`` set) are skipped: never hidden, and they keep
+    their ``raw_description``. They are the application record and Centrelink
+    evidence, and the Applied tab shows the ad text.
+
     Idempotent: already-hidden matches are skipped, so re-running it at the
     same threshold reports 0.
     """
@@ -214,6 +288,7 @@ def bulk_hide_jobs(
         .where(Match.user_id == profile_id)
         .where(Match.score < below_score)
         .where(Match.hidden_at.is_(None))
+        .where(Match.applied_at.is_(None))
     ).all()
 
     now = datetime.now(timezone.utc)

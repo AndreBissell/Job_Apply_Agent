@@ -282,10 +282,39 @@ class TestBulkHide:
     def test_hidden_jobs_stay_out_of_the_applied_tab(self, client, db):
         _profile(db)
         _scored(db, [("Warehouse Operator", 20)])
-        db.query(Match).update({"status": "applied", "applied_at": datetime.now(timezone.utc)})
+        now = datetime.now(timezone.utc)
+        db.query(Match).update({"status": "applied", "applied_at": now, "hidden_at": now})
         db.commit()
-        client.request("DELETE", "/jobs", params={"below_score": 70})
         assert client.get("/jobs", params={"status": "applied"}).json() == []
+
+    def test_applied_jobs_are_never_hidden_or_stripped(self, client, db):
+        """Applied matches are the application record: the bulk hide leaves them alone."""
+        _profile(db)
+        db.add(JobListing(
+            id=1, source="seek", source_job_id="j1", url="u1", title="Applied Role",
+            raw_description="the ad text we applied against",
+        ))
+        db.add(JobListing(
+            id=2, source="seek", source_job_id="j2", url="u2", title="Warehouse Operator",
+            raw_description="a very long job description",
+        ))
+        db.add(Match(user_id=1, job_id=1, score=20, status="applied",
+                     applied_at=datetime.now(timezone.utc)))
+        db.add(Match(user_id=1, job_id=2, score=20, status="new"))
+        db.commit()
+
+        resp = client.request("DELETE", "/jobs", params={"below_score": 70}).json()
+        assert resp["hidden"] == 1
+
+        applied = db.query(Match).filter_by(job_id=1).one()
+        other = db.query(Match).filter_by(job_id=2).one()
+        applied_job, other_job = db.get(JobListing, 1), db.get(JobListing, 2)
+        for row in (applied, other, applied_job, other_job):
+            db.refresh(row)
+        assert applied.hidden_at is None
+        assert applied_job.raw_description == "the ad text we applied against"
+        assert other.hidden_at is not None
+        assert other_job.raw_description is None
 
 
 class TestSearchLocation:

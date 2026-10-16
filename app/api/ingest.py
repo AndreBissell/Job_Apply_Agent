@@ -6,11 +6,14 @@ Makes no LLM call: the idle loop does the AI work later.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app import availability
 from app.api.deps import get_db
 from app.models import JobListing
 
@@ -31,6 +34,9 @@ class IngestListing(BaseModel):
     salary: str | None = None
     raw_description: str | None = None
     discovered_query: str | None = None
+    # From the detail page's Apply button (extension/selectors.js detectApplyType);
+    # None when the page didn't show a button we recognise.
+    apply_type: Literal["quick", "external"] | None = None
 
 
 class IngestBody(BaseModel):
@@ -81,11 +87,12 @@ def ingest(
                 salary=item.salary,
                 discovered_query=item.discovered_query,
                 raw_description=item.raw_description,
+                apply_type=item.apply_type,
             )
             db.add(job)
             db.flush()  # assign job.id before we report it back
             new += 1
-            job_ids.append(job.id)
+            job_ids.append(job.id)  # last_seen_live_at defaults to now: it was just captured
         else:
             # A listing is typically ingested twice — once as a search-results
             # card (which carries discovered_query but no description or
@@ -95,6 +102,18 @@ def ingest(
             # never overwritten: the first capture of a field is the one made
             # while the page was actually open.
             changed = False
+            # A stub row (created from a Quick Apply page before its ad was ever captured)
+            # carries a placeholder title. The first capture with a description is the ad
+            # page itself, so its title replaces the placeholder.
+            if existing.raw_description is None and item.raw_description and item.title \
+                    and item.title != existing.title:
+                existing.title = item.title
+                changed = True
+            # The Apply button is read fresh on every detail page; the latest reading wins.
+            # A capture that couldn't read it (None) never erases a known value.
+            if item.apply_type and item.apply_type != existing.apply_type:
+                existing.apply_type = item.apply_type
+                changed = True
             for attr in (
                 "raw_description",
                 "classification",
@@ -113,6 +132,12 @@ def ingest(
                     changed = True
             if changed:
                 updated += 1
+            # A capture that carries a description is proof the ad is live right now (the
+            # page was open with its description on it): un-expire a job flagged closed,
+            # clear its strikes and refresh the "seen live" stamp the LLM gate reads. A
+            # card or a "NO DESCRIPTION" scan proves nothing and changes none of this.
+            if (item.raw_description or "").strip():
+                availability.mark_live(existing)
             job_ids.append(existing.id)
 
     db.commit()

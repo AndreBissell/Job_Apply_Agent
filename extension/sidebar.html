@@ -35,6 +35,13 @@
     /* Zoom controls: live in the header (not #hdr-jobs-btns, which is hidden on the
        Applied/Profile tabs) so they stay reachable everywhere. */
     #zoom-ctrls { display: flex; gap: 4px; }
+    #settings-btn {
+      width: 24px; height: 22px; padding: 0; border: 1px solid #d1d5db; border-radius: 4px;
+      background: #fff; font-size: 14px; line-height: 1; cursor: pointer; color: #374151;
+    }
+    #settings-btn:hover { background: #f0f4fb; }
+    #settings-btn[aria-expanded="true"] { background: #e8eef9; border-color: #2557a7; color: #2557a7; }
+    body.env-test #settings-btn { border-color: #fdba74; }
     #zoom-ctrls button {
       width: 22px; height: 22px; padding: 0; border: 1px solid #d1d5db; border-radius: 4px;
       background: #fff; font-size: 14px; font-weight: 700; line-height: 1;
@@ -70,55 +77,157 @@
     .btn-sm { font-size: 11px; padding: 3px 7px; }
 
     /* ── Jobs tab ─────────────────────────────────────────── */
-    #suggestion-banner {
-      font-size: 12px; color: #78350f; background: #fffbeb;
-      border-bottom: 1px solid #fde68a; padding: 6px 14px;
-      display: flex; align-items: center; justify-content: space-between; gap: 8px;
-    }
-    #suggestion-banner .sugg-links { display: flex; flex-wrap: wrap; gap: 6px; }
-    #suggestion-banner a { cursor: pointer; font-weight: 600; }
-    #suggestion-banner button.close-x {
-      background: none; border: none; cursor: pointer; color: #92400e;
-      font-size: 13px; padding: 0 2px; flex: none;
-    }
     #budget-banner {
       font-size: 12px; color: #7f1d1d; background: #fef2f2;
       border-bottom: 1px solid #fecaca; padding: 6px 14px;
     }
     #scanlog { font-size: 12px; color: #374151; padding: 0 14px; }
-    #job-status { font-size: 12px; color: #6b7280; padding: 8px 14px; }
+    #scanlog:not(:empty) { padding: 8px 14px 0; }
+    #job-status { font-size: 12px; color: #6b7280; padding: 6px 0; }
     #job-status:empty { display: none; }
-    ul#job-list { list-style: none; margin: 0; padding: 0; }
-    ul#job-list li {
-      background: #fff; border-bottom: 1px solid #eef0f3; padding: 10px 14px;
-      cursor: pointer;
+
+    /* ── Pipeline: compact rows in a capped scroll box (docs/pipeline-tab-plan.md D4) ── */
+    #jobs-section { --pl-row-h: 46px; }
+    #pl-page { padding: 12px 14px 24px; }
+    .pl-block + .pl-block { margin-top: 18px; }
+    .pl-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+    .pl-head h2 {
+      font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
+      color: #374151; margin: 0;
     }
-    ul#job-list li:hover { background: #f0f4fb; }
-    .job-row { display: flex; align-items: center; gap: 8px; }
-    .job-title { font-size: 13px; font-weight: 600; flex: 1; }
+    .pl-count { font-size: 11px; color: #6b7280; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .pl-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+    .pl-chip-btn {
+      display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600;
+      padding: 3px 8px; border-radius: 999px; border: 1px solid #d1d5db; background: #fff;
+      color: #374151; cursor: pointer; line-height: 1.4;
+    }
+    .pl-chip-btn:hover { background: #f3f4f6; }
+    .pl-chip-btn.empty { color: #9ca3af; }
+    .pl-chip-btn[aria-pressed="true"] { background: #2557a7; border-color: #2557a7; color: #fff; }
+    .pl-chip-n { font-weight: 500; opacity: .8; font-variant-numeric: tabular-nums; }
+    .pl-tools { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+    #pl-search {
+      flex: 1; min-width: 0; padding: 4px 8px; border: 1px solid #d1d5db; border-radius: 6px;
+      font-size: 12px; font-family: inherit;
+    }
+    #pl-search[hidden] { display: none; }
+    .pl-sort { margin-left: auto; font-size: 11px; color: #6b7280; display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+    .pl-sort select { font-size: 11px; padding: 2px 4px; border: 1px solid #d1d5db; border-radius: 5px; background: #fff; }
+
+    /* 7.5 rows, then it scrolls (the half row says "there's more"); never more than 55% of
+       the panel, so the sections below stay in reach. Fewer rows: the box shrinks to fit. */
+    .pl-box-wrap { position: relative; }
+    .pl-box {
+      max-height: min(calc(var(--pl-row-h) * 7.5), 55vh); overflow-y: auto; overscroll-behavior: contain;
+      background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;
+    }
+    .pl-box:focus-visible { outline: 2px solid #2557a7; outline-offset: 1px; }
+    .pl-box-wrap::before, .pl-box-wrap::after {
+      content: ""; position: absolute; left: 1px; right: 1px; height: 10px; pointer-events: none;
+      opacity: 0; transition: opacity .15s; z-index: 1;
+    }
+    .pl-box-wrap::before { top: 1px; border-radius: 8px 8px 0 0; background: linear-gradient(rgba(15, 23, 42, .12), transparent); }
+    .pl-box-wrap::after { bottom: 1px; border-radius: 0 0 8px 8px; background: linear-gradient(transparent, rgba(15, 23, 42, .12)); }
+    .pl-box-wrap.can-up::before, .pl-box-wrap.can-down::after { opacity: 1; }
+    ul#job-list { list-style: none; margin: 0; padding: 0; }
+    ul#job-list li + li { border-top: 1px solid #f0f2f5; }
+    .pl-row {
+      display: flex; align-items: center; gap: 8px; width: 100%; height: var(--pl-row-h);
+      padding: 0 10px; border: none; background: none; cursor: pointer; text-align: left;
+      font: inherit; color: inherit;
+    }
+    .pl-row:hover { background: #f0f4fb; }
+    .pl-row:focus-visible { outline: 2px solid #2557a7; outline-offset: -2px; }
+    .pl-row.pl-flash { background: #fef9c3; transition: background .6s; }
+    .pl-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+    .pl-title, .pl-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .pl-title { font-size: 13px; font-weight: 600; line-height: 1.3; }
+    .pl-sub { font-size: 11px; color: #6b7280; line-height: 1.3; }
+    .pl-score {
+      flex: none; min-width: 30px; text-align: center; font-size: 12px; font-weight: 700;
+      border-radius: 999px; padding: 2px 6px; color: #fff; background: #9ca3af; font-variant-numeric: tabular-nums;
+    }
+    .pl-score[data-tier="gold"] { background: #c98a00; }
+    .pl-score[data-tier="blue"] { background: #0e9ec4; }
+    .pl-score[data-tier="green"] { background: #059669; }
+    .pl-score[data-tier="amber"] { background: #d97706; }
+    .pl-status { flex: none; font-size: 11px; font-weight: 600; white-space: nowrap; color: #6b7280; }
+    .pl-status.st-letter { color: #059669; }
+    .pl-status.st-question { color: #b45309; }
+    .pl-status.st-writing, .pl-status.st-queued { color: #2557a7; }
+    .pl-status.st-failed { color: #b91c1c; }
+    .pl-status.st-check { color: #92400e; }
+    .pl-status.st-none { color: #9ca3af; font-weight: 500; }
+    li.pl-empty { padding: 14px 12px; font-size: 12px; color: #6b7280; line-height: 1.5; }
+    li.pl-skel { display: flex; align-items: center; gap: 8px; height: var(--pl-row-h); padding: 0 10px; }
+    .pl-skel-pill, .pl-skel-lines { display: block; border-radius: 6px; background: #eef0f3; }
+    .pl-skel-pill { width: 30px; height: 18px; }
+    .pl-skel-lines { flex: 1; height: 26px; }
+
+    .pl-note { font-size: 11px; color: #6b7280; line-height: 1.45; margin: 0 0 8px; }
+    .pl-link {
+      background: none; border: none; padding: 4px 0; font: inherit; font-size: 12px; font-weight: 600;
+      color: #2557a7; cursor: pointer; text-align: left;
+    }
+    .pl-link:hover { text-decoration: underline; }
+    .pl-tidy { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 10px 0 4px; font-size: 12px; color: #374151; }
+    .pl-tidy input { width: 52px; padding: 3px 6px; border: 1px solid #d1d5db; border-radius: 5px; font-size: 12px; text-align: center; }
+    .pl-tidy .btn.armed { background: #fff7ed; border-color: #f59e0b; color: #92400e; }
+    #pl-needs { scroll-margin-top: 90px; }
+    .pl-need { background: #fff; border: 1px solid #fcd34d; border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; }
+    .pl-need-head { display: flex; align-items: center; gap: 8px; }
+    .pl-need-head strong { flex: 1; min-width: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pl-need .qcard { margin-top: 6px; }
+    .pl-need textarea {
+      width: 100%; min-height: 64px; margin-top: 2px; padding: 6px 8px; border: 1px solid #d1d5db;
+      border-radius: 5px; font-size: 12px; font-family: inherit; color: #1c2330; resize: vertical;
+    }
+    .sk-list { list-style: none; margin: 0; padding: 0; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; }
+    .sk-list:empty { display: none; }
+    .sk-row { display: flex; align-items: center; gap: 8px; padding: 7px 10px; min-height: 40px; }
+    .sk-row + .sk-row { border-top: 1px solid #f0f2f5; }
+    .sk-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+    .sk-main strong { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sk-meta { font-size: 11px; color: #6b7280; }
+    .sk-actions { display: flex; gap: 4px; flex: none; }
+    .sk-actions .btn { padding: 2px 7px; }
+    .sk-ignore { background: none; border: none; color: #9ca3af; cursor: pointer; font-size: 13px; padding: 2px 4px; border-radius: 4px; }
+    .sk-ignore:hover { color: #374151; background: #f3f4f6; }
+    .sk-done { font-size: 12px; color: #059669; flex: 1; }
+    .sk-done.muted { color: #6b7280; }
+    .sk-done .pl-link { font-size: 12px; padding: 0 0 0 6px; }
+
+    /* The detail view: replaces the page (D6) */
+    .pl-detail-bar {
+      position: sticky; top: 41px; z-index: 8; padding: 8px 14px; background: #f7f8fa;
+      border-bottom: 1px solid #eef0f3;
+    }
+    #pl-detail { padding: 10px 14px 24px; }
+    .pl-d-head { display: flex; align-items: flex-start; gap: 8px; }
+    .pl-d-title { font-size: 15px; margin: 0; flex: 1; line-height: 1.3; }
+    .pl-d-meta { font-size: 12px; color: #6b7280; margin: 3px 0 4px; }
+    .pl-d-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 10px 0 4px; }
+    .pl-d-actions .btn.armed { background: #fff7ed; border-color: #f59e0b; color: #92400e; }
+    .pl-d-actions .del-btn { margin-left: auto; }
+    .pl-d-actions .del-btn.armed { font-size: 11px; font-weight: 600; color: #b91c1c; line-height: 1.4; padding: 3px 6px; }
+    .pl-d-why { margin-top: 10px; font-size: 12px; color: #374151; line-height: 1.45; }
+    .pl-d-why h5 { margin: 8px 0 2px; font-size: 11px; color: #6b7280; text-transform: uppercase; letter-spacing: .04em; }
+    @media (prefers-reduced-motion: reduce) { .pl-row.pl-flash, .pl-box-wrap::before, .pl-box-wrap::after { transition: none; } }
+
     .score {
       font-size: 12px; font-weight: 700; color: #fff; background: #2557a7;
       border-radius: 10px; padding: 2px 8px; flex: none;
     }
-    .job-meta { font-size: 12px; color: #6b7280; margin-top: 2px; }
     .evidence-note { font-size: 11px; color: #6b7280; margin-top: 2px; }
     .evidence-note.soon { color: #b45309; font-weight: 600; }
+    .evidence-note .evidence-view { color: #2557a7; }
     .del-btn {
       background: none; border: none; cursor: pointer; color: #9ca3af;
       padding: 3px; border-radius: 5px; line-height: 0; flex: none;
     }
     .del-btn:hover { color: #dc2626; background: #fee2e2; }
-    .cl-badge {
-      font-size: 11px; font-weight: 600; flex: none; white-space: nowrap;
-    }
-    .cl-badge.ready { color: #059669; }
-    .cl-badge.pending { color: #9ca3af; font-weight: 500; }
-    .cl-badge.question { color: #b45309; }
-    .cl-badge.writing { color: #2557a7; font-weight: 500; }
-    .cl-badge.failed { color: #b91c1c; }
     .elig-note { font-size: 11px; color: #92400e; margin-top: 3px; }
-    li.section-header.question { color: #b45309; border-top: 2px solid #f59e0b; }
-    body.w-wide ul#job-list li.section-header.question { border-top: 2px solid #f59e0b; }
 
     /* Cover-letter run UI: the question card, the letter's notes */
     .qcard {
@@ -172,13 +281,7 @@
     .towork-count { font-size: 11px; color: #b45309; font-weight: 600; white-space: nowrap; }
     .towork-sub { font-size: 11px; color: #6b7280; margin-top: 2px; line-height: 1.45; }
     .towork-empty { font-size: 12px; color: #6b7280; }
-    .apply-btn {
-      background: none; border: 1px solid #cbd5e1; border-radius: 5px;
-      cursor: pointer; font-size: 11px; padding: 2px 7px; flex: none; color: #374151;
-    }
-    .apply-btn:hover { background: #f3f4f6; }
-    .apply-btn.applied { border-color: #10b981; color: #059669; }
-    .job-detail { font-size: 12px; color: #374151; margin-top: 6px; white-space: pre-wrap; }
+    .job-detail { font-size: 12px; color: #374151; margin-top: 10px; white-space: pre-wrap; }
     .job-detail textarea {
       width: 100%; min-height: 140px; margin-top: 6px; padding: 6px 8px;
       border: 1px solid #d1d5db; border-radius: 5px; font-size: 12px;
@@ -187,166 +290,73 @@
     .job-detail .cl-actions { display: flex; gap: 6px; margin-top: 6px; }
     a { color: #2557a7; text-decoration: none; }
     a:hover { text-decoration: underline; }
-    #personalise { background: #fff; border-bottom: 1px solid #eef0f3; }
-    #personalise-toggle {
-      width: 100%; display: flex; align-items: center; justify-content: space-between;
-      padding: 7px 14px; background: none; border: none; cursor: pointer;
-      font-size: 12px; font-weight: 600; color: #374151; text-align: left;
+    /* Settings: a full-panel view opened by the header's ⚙ (plan D12), not a tab */
+    #settings-section { background: #fff; min-height: calc(100vh - 80px); }
+    .settings-bar {
+      display: flex; align-items: center; gap: 10px; padding: 8px 14px;
+      border-bottom: 1px solid #eef0f3; background: #fff; position: sticky; top: 41px; z-index: 8;
     }
-    #personalise-toggle:hover { background: #f3f4f6; }
-    #personalise-toggle .chev { color: #9ca3af; transition: transform 0.15s; }
-    #personalise-toggle[aria-expanded="true"] .chev { transform: rotate(180deg); }
-    #personalise-panel { padding: 2px 14px 10px; }
+    .settings-bar h2 { font-size: 14px; margin: 0; }
+    #personalise-panel { padding: 2px 14px 16px; }
+    .set-group {
+      font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+      color: #2557a7; margin: 16px 0 2px; padding-top: 10px; border-top: 1px solid #eef0f3;
+    }
+    .set-group:first-child { border-top: none; margin-top: 6px; padding-top: 0; }
+    /* One setting per row: label, control, a short "Saved ✓", and an (i) that opens its note */
     .pref-row {
-      display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
-      padding: 5px 0; font-size: 12px; color: #6b7280;
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+      padding: 6px 0; font-size: 12px; color: #374151;
     }
-    .pref-row > span { flex: 1 1 150px; }
+    .pref-label, .pref-check { flex: 1 1 auto; min-width: 0; }
+    .pref-check { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+    .pref-row input[type="checkbox"] { margin: 0; flex: none; }
     .pref-row input[type="number"] {
       width: 52px; padding: 3px 6px; border: 1px solid #d1d5db;
       border-radius: 5px; font-size: 12px; text-align: center;
     }
-    .pref-row .btn { padding: 3px 8px; font-size: 12px; }
-    .pref-check { flex: 1 1 150px; display: flex; align-items: center; gap: 6px; cursor: pointer; }
-    .pref-check input { margin: 0; flex: none; }
+    .pref-row select {
+      padding: 3px 4px; border: 1px solid #d1d5db; border-radius: 5px;
+      font-size: 12px; font-family: inherit; background: #fff; color: #1c2330;
+    }
+    /* the Extras boxes wrap onto their own line under the label */
+    .pref-extras { order: 9; flex: 1 0 100%; display: flex; flex-wrap: wrap; gap: 4px 12px; padding-left: 2px; }
+    .pref-extras label { display: flex; align-items: center; gap: 5px; cursor: pointer; white-space: nowrap; }
+    .pref-saved { font-size: 11px; color: #059669; white-space: nowrap; }
+    .pref-saved.err { color: #dc2626; }
+    .pref-saved:empty { display: none; }
+    .pref-info, .pref-icon {
+      flex: none; width: 18px; height: 18px; padding: 0; border-radius: 50%;
+      border: 1px solid #d1d5db; background: #fff; color: #6b7280; cursor: pointer;
+      font: italic 600 11px/1 Georgia, serif;
+    }
+    .pref-icon { font-style: normal; font-weight: 400; font-size: 13px; font-family: inherit; border-radius: 4px; width: 22px; }
+    .pref-info:hover, .pref-icon:hover:not(:disabled) { border-color: #2557a7; color: #2557a7; }
+    .pref-info[aria-expanded="true"] { background: #e8eef9; border-color: #2557a7; color: #2557a7; }
+    .pref-hint { margin: -4px 0 4px; font-size: 11px; color: #9ca3af; line-height: 1.4; }
+    .pref-more {
+      margin: 0 0 6px; padding: 6px 8px; border-radius: 6px; background: #f6f8fb;
+      font-size: 11px; line-height: 1.45; color: #4b5563;
+    }
     .pref-note {
       margin: 0 0 4px; font-size: 11px; line-height: 1.4; color: #9ca3af;
     }
-    #search-perf { font-size: 11px; color: #6b7280; padding: 2px 0 6px; }
+    /* Overview → Scan more jobs → "How past searches did" (moved from Settings) */
+    #ov-search-perf { margin-top: 8px; }
+    #ov-search-perf summary { cursor: pointer; font-size: 12px; color: #2557a7; }
+    #search-perf { font-size: 11px; color: #6b7280; padding: 6px 0 2px; }
     #search-perf table { width: 100%; border-collapse: collapse; }
     #search-perf th, #search-perf td {
       text-align: left; padding: 3px 4px; border-bottom: 1px solid #f3f4f6;
     }
     #search-perf th { color: #9ca3af; font-weight: 600; }
-    #search-perf td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    /* number columns: headings and figures both right-aligned, as narrow as they can be */
+    #search-perf .num {
+      text-align: right; font-variant-numeric: tabular-nums;
+      width: 1%; white-space: nowrap; padding-left: 14px;
+    }
     #search-perf tr.weak td { color: #b45309; }
-    #analysing-row {
-      font-size: 12px; color: #6b7280; padding: 10px 14px;
-      border-top: 2px solid #d1d5db; margin-top: 4px;
-    }
-
-    /* ── Score tiers (gold >=95, blue >=90, green >=75, amber 60-74, long-tail <60) ──── */
-    ul#job-list li[data-tier="gold"]  { --tier-color: #d99a00; padding: 14px; }
-    ul#job-list li[data-tier="blue"]  { --tier-color: #22d3ee; --tier-bg: #ecfeff; padding: 14px; }
-    ul#job-list li[data-tier="green"] { --tier-color: #10b981; --tier-bg: #f0fdf6; padding: 11px 14px; }
-    ul#job-list li[data-tier="amber"] { --tier-color: #f59e0b; --tier-bg: #fffbeb; padding: 7px 14px; }
-    ul#job-list li[data-tier] { border-left: 4px solid var(--tier-color); background: var(--tier-bg); }
-    ul#job-list li[data-tier="blue"] .job-title,
-    ul#job-list li[data-tier="gold"] .job-title  { font-size: 15px; }
-    ul#job-list li[data-tier="amber"] .job-title { font-size: 12px; font-weight: 500; }
-    ul#job-list li[data-tier="amber"] .job-meta  { display: none; }
-
-    /* 95+ : bright gold card. A soft light band sweeps across every few seconds
-       and the glow gently pulses. Both are switched off under
-       prefers-reduced-motion (the static gold styling stays). */
-    ul#job-list li[data-tier="gold"] {
-      position: relative; overflow: hidden; color: #3b2a00;
-      background: linear-gradient(135deg, #fff3b0 0%, #ffe066 45%, #ffd23f 100%);
-      border-color: #f5c518; border-left-color: #d99a00;
-      box-shadow: 0 0 0 1px rgba(245, 197, 24, 0.55), 0 2px 14px rgba(245, 180, 0, 0.45);
-      animation: gold-glow 2.8s ease-in-out infinite;
-    }
-    ul#job-list li[data-tier="gold"]:hover { background: linear-gradient(135deg, #fff6c2 0%, #ffe680 45%, #ffdb57 100%); }
-    ul#job-list li[data-tier="gold"]::after {
-      content: ""; position: absolute; inset: 0; pointer-events: none;
-      background: linear-gradient(105deg, transparent 38%, rgba(255, 255, 255, 0.75) 50%, transparent 62%);
-      transform: translateX(-120%);
-      animation: gold-sheen 4.5s ease-in-out infinite;
-    }
-    ul#job-list li[data-tier="gold"] .job-title { font-weight: 700; color: #4a3500; }
-    ul#job-list li[data-tier="gold"] .job-meta,
-    ul#job-list li[data-tier="gold"] .job-preview { color: #6b4e00; }
-    ul#job-list li[data-tier="gold"] .score {
-      background: linear-gradient(135deg, #f5b800, #c98a00); color: #fff;
-      text-shadow: 0 1px 1px rgba(90, 60, 0, 0.5);
-      box-shadow: 0 0 8px rgba(245, 180, 0, 0.8);
-    }
-    ul#job-list li[data-tier="gold"] .score::before { content: "★ "; }
-    ul#job-list li[data-tier="gold"] .job-preview .chip { color: #7a5200; background: rgba(255, 255, 255, 0.65); }
-    @keyframes gold-sheen {
-      0%, 55% { transform: translateX(-120%); }
-      100%    { transform: translateX(120%); }
-    }
-    @keyframes gold-glow {
-      0%, 100% { box-shadow: 0 0 0 1px rgba(245, 197, 24, 0.55), 0 2px 10px rgba(245, 180, 0, 0.35); }
-      50%      { box-shadow: 0 0 0 1px rgba(245, 197, 24, 0.9),  0 2px 20px rgba(245, 180, 0, 0.7); }
-    }
-    @media (prefers-reduced-motion: reduce) {
-      ul#job-list li[data-tier="gold"], ul#job-list li[data-tier="gold"]::after,
-      ul#job-list li[data-tier="blue"]::after { animation: none; }
-    }
-
-    /* 90-94: cool blue card. A faint, slow light band. Quieter than gold:
-       no glow pulse, no star, longer pause between sweeps. */
-    ul#job-list li[data-tier="blue"] {
-      position: relative; overflow: hidden;
-      background: linear-gradient(135deg, #f0fdff 0%, #e3f8fd 55%, #d6f3fb 100%);
-      box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.35), 0 1px 8px rgba(14, 165, 233, 0.18);
-    }
-    ul#job-list li[data-tier="blue"]:hover { background: linear-gradient(135deg, #f5feff 0%, #e9fafe 55%, #ddf5fc 100%); }
-    ul#job-list li[data-tier="blue"]::after {
-      content: ""; position: absolute; inset: 0; pointer-events: none;
-      background: linear-gradient(105deg, transparent 40%, rgba(255, 255, 255, 0.5) 50%, transparent 60%);
-      transform: translateX(-120%);
-      animation: blue-sheen 7s ease-in-out infinite;
-    }
-    ul#job-list li[data-tier="blue"] .score { background: linear-gradient(135deg, #22d3ee, #0ea5e9); color: #fff; }
-    @keyframes blue-sheen {
-      0%, 70% { transform: translateX(-120%); }
-      100%    { transform: translateX(120%); }
-    }
-    .job-preview { font-size: 12px; color: #374151; margin-top: 5px; }
-    .job-preview .chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
-    .job-preview .chip {
-      font-size: 10px; font-weight: 600; color: #0e7490; background: #cffafe;
-      border-radius: 8px; padding: 2px 7px;
-    }
-    li.fold {
-      text-align: center; font-size: 12px; color: #6b7280; padding: 8px 14px !important;
-      background: #fafafa !important; border-left: none !important;
-    }
-    li.fold:hover { background: #f0f4fb !important; }
-
-    /* ── Section headers: ready-to-apply vs still-waiting-on-a-letter ─────── */
-    li.section-header {
-      font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
-      padding: 8px 14px 4px !important; cursor: default; border-left: none !important;
-      background: transparent !important;
-    }
-    li.section-header:hover { background: transparent !important; }
-    li.section-header.ready { color: #059669; border-top: 2px solid #059669; }
-    li.section-header.waiting { color: #9ca3af; border-top: 2px solid #d1d5db; margin-top: 4px; }
-    li.section-header:first-child { border-top: none; margin-top: 0; }
-
-    /* Wide panel (~2 cards comfortably side by side): switch the lists to a
-       two-column grid. Headers and the fold link span both columns. Cards in a
-       row stretch to the same height (grid default) — so expanding one card also
-       grows its neighbour, which keeps the rows tidy. Only the top/right/bottom
-       borders are set on cards so the tier colour's 4px border-left (above) is
-       left alone. */
-    body.w-wide ul#job-list {
-      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 8px; padding: 8px; align-items: stretch;
-    }
-    body.w-wide ul#job-list li {
-      min-width: 0; border-radius: 8px;
-      border-top: 1px solid #eef0f3; border-right: 1px solid #eef0f3;
-      border-bottom: 1px solid #eef0f3;
-    }
-    body.w-wide ul#job-list li.section-header, body.w-wide ul#job-list li.fold { grid-column: 1 / -1; border-radius: 0; }
-    /* Restore the header rules the card border above would otherwise outrank. */
-    body.w-wide ul#job-list li.section-header { border-right: none; border-bottom: none; border-top: none; }
-    body.w-wide ul#job-list li.section-header.ready { border-top: 2px solid #059669; }
-    body.w-wide ul#job-list li.section-header.waiting { border-top: 2px solid #d1d5db; }
-    body.w-wide ul#job-list li.section-header:first-child { border-top: none; }
-
-    /* Wider panel (dragged out): two-column meta layout on blue cards */
-    body.w-mid ul#job-list li[data-tier="blue"] .job-row,
-    body.w-mid ul#job-list li[data-tier="gold"] .job-row { flex-wrap: wrap; }
-    body.w-mid ul#job-list li[data-tier="blue"] .job-meta,
-    body.w-mid ul#job-list li[data-tier="gold"] .job-meta {
-      display: flex; gap: 10px; flex: 1 0 100%; margin-top: 4px;
-    }
+    #analysing-row { font-size: 12px; color: #6b7280; padding: 6px 2px 0; }
 
     /* ── Overview tab ─────────────────────────────────────── */
     #overview-section { padding: 12px 14px 24px; }
@@ -430,6 +440,11 @@
     .mini-card[data-tier="gold"] .score { background: linear-gradient(135deg, #f5b800, #c98a00); }
     .mini-card[data-tier="blue"] .score { background: linear-gradient(135deg, #22d3ee, #0ea5e9); }
     .mc-loc { font-size: 11px; color: #9ca3af; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+    .mc-top .mc-loc { flex: 1; text-align: right; }
+    .mc-del.confirm, .mc-del.confirm:hover {
+      line-height: 1.2; font-size: 11px; font-weight: 600; padding: 2px 7px;
+      color: #fff; background: #dc2626; border-radius: 999px;
+    }
     .mc-title {
       font-size: 13px; font-weight: 600; margin-top: 8px; line-height: 1.3; color: #1c2330;
       display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
@@ -437,6 +452,7 @@
     .mc-company { font-size: 12px; color: #6b7280; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .mc-actions { display: flex; gap: 6px; margin-top: auto; padding-top: 10px; }
     .mc-actions .btn { flex: 1; padding: 4px 6px; white-space: nowrap; }
+    .mc-writing { font-size: 11px; color: #6d28d9; font-weight: 600; align-self: center; white-space: nowrap; }
     .mc-applied {
       margin-top: 6px; width: 100%; padding: 5px 6px; font-size: 12px; font-weight: 600;
       border: 1px solid #10b981; border-radius: 6px; background: #fff; color: #059669; cursor: pointer;
@@ -445,16 +461,76 @@
     .mc-applied:hover:not(:disabled) { background: #ecfdf5; }
     .mc-applied.confirm, .mc-applied.confirm:hover:not(:disabled) { background: #059669; color: #fff; }
     .mc-applied:disabled { opacity: .6; cursor: default; }
+    .ov-scan-line { font-size: 12px; color: #6b7280; line-height: 1.45; margin-bottom: 6px; }
+    #ov-searches { display: flex; flex-direction: column; gap: 6px; }
     .ov-search {
-      display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
-      background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 9px 12px;
-      margin-bottom: 6px; cursor: pointer; font-size: 13px; color: #1c2330; font-family: inherit;
+      display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 10px; min-width: 0;
+      background: #fff; border: 1px solid #e5e7eb; border-radius: 10px;
     }
-    .ov-search:hover { border-color: #2557a7; background: #f0f4fb; }
     .ov-search .q { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .ov-search .where { font-size: 12px; color: #6b7280; white-space: nowrap; }
-    .ov-search .chev { color: #9ca3af; font-size: 16px; }
+    .ov-search .btn { flex: none; }
+    .ov-scan-status { font-size: 12px; color: #2557a7; font-weight: 600; margin-top: 4px; }
+    .ov-scan-status:empty { display: none; }
     .ov-hint { font-size: 11px; color: #9ca3af; margin: 2px 0 0; }
+    /* "No letter yet": one thin card per 5-point score band, in one row that scrolls sideways */
+    .band-grid {
+      display: flex; gap: 6px; overflow-x: auto; scroll-snap-type: x proximity;
+      padding: 2px 2px 6px; margin: 0 -2px; scrollbar-width: thin;
+    }
+    .band-card {
+      --tier-color: #f59e0b;
+      flex: 0 0 auto; scroll-snap-align: start;
+      display: flex; align-items: center; gap: 8px; min-height: 32px;
+      padding: 4px 8px; background: #fff; border: 1px solid #e5e7eb; border-left: 3px solid var(--tier-color);
+      border-radius: 8px; font-size: 13px; color: #1c2330;
+    }
+    .band-card[data-tier="gold"] { --tier-color: #d99a00; }
+    .band-card[data-tier="blue"] { --tier-color: #22d3ee; }
+    .band-card[data-tier="green"] { --tier-color: #10b981; }
+    .band-card[data-tier="amber"], .band-card[data-tier="hidden"] { --tier-color: #f59e0b; }
+    .bc-range { font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .bc-count { color: #6b7280; font-variant-numeric: tabular-nums; min-width: 0; }
+    .bc-btn {
+      margin-left: auto; flex: none; padding: 2px 8px; font-size: 11px; font-family: inherit;
+      border: 1px solid #cbd5e1; border-radius: 999px; background: #fff; color: #1c2330;
+      white-space: nowrap; cursor: pointer;
+    }
+    .bc-btn:hover:not(:disabled) { border-color: #2557a7; background: #f0f4fb; }
+    .bc-btn.confirm, .bc-btn.confirm:hover:not(:disabled) { background: #059669; border-color: #059669; color: #fff; }
+    .bc-btn:disabled { opacity: .6; cursor: default; }
+    #ov-band-note { margin-top: 6px; }
+    /* Centrelink evidence card: unreported Quick Apply screenshots -> one PDF */
+    .ov-evidence { margin-top: 10px; }
+    .ov-evidence h3 {
+      margin: 0 0 6px; font-size: 11px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .05em; color: #374151;
+    }
+    .ev-count { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; font-size: 13px; color: #374151; }
+    .ev-count .big { font-size: 22px; font-weight: 700; line-height: 1; color: #1c2330; font-variant-numeric: tabular-nums; }
+    .ev-count.done { color: #059669; font-weight: 600; }
+    .ev-collate {
+      margin-top: 10px; width: 100%; padding: 7px 10px; font-size: 13px; font-weight: 600;
+      border: none; border-radius: 6px; background: #2557a7; color: #fff; cursor: pointer; font-family: inherit;
+    }
+    .ev-collate:hover:not(:disabled) { background: #1d4687; }
+    .ev-collate:disabled { background: #cbd5e1; cursor: default; }
+    .ev-msg { margin-top: 8px; font-size: 12px; line-height: 1.45; color: #065f46; background: #ecfdf5;
+      border: 1px solid #a7f3d0; border-radius: 6px; padding: 6px 8px; }
+    .ev-msg.err { color: #991b1b; background: #fef2f2; border-color: #fecaca; }
+    .ev-warn { margin-top: 6px; font-size: 11px; color: #92400e; }
+    .ev-list { margin-top: 10px; border-top: 1px solid #eef0f3; padding-top: 6px; }
+    .ev-list-head { font-size: 11px; color: #6b7280; margin-bottom: 2px; }
+    .ev-row { display: flex; align-items: center; gap: 6px; padding: 4px 0; font-size: 12px; }
+    .ev-row .ev-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #1c2330; }
+    .ev-row .ev-meta { color: #6b7280; white-space: nowrap; font-size: 11px; }
+    .ev-row button {
+      flex: none; padding: 2px 7px; font-size: 11px; border: 1px solid #d1d5db; border-radius: 5px;
+      background: #fff; color: #374151; cursor: pointer; font-family: inherit;
+    }
+    .ev-row button:hover:not(:disabled) { border-color: #2557a7; color: #2557a7; }
+    .ev-row button.confirm, .ev-row button.confirm:hover { background: #b91c1c; border-color: #b91c1c; color: #fff; }
+    .ev-row button:disabled { opacity: .5; cursor: default; }
 
     /* ── Applied tab ──────────────────────────────────────── */
     #applied-bar {
@@ -495,10 +571,14 @@
     .p-cost { font-size: 12px; color: #6b7280; font-variant-numeric: tabular-nums; white-space: nowrap; }
     .p-jobs { list-style: none; margin: 0; padding: 0; border-top: 1px solid #eef0f3; }
     .p-jobs li {
-      display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+      display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 8px 12px;
       border-bottom: 1px solid #f3f4f6; cursor: pointer;
     }
     .p-jobs li:hover { background: #f0f4fb; }
+    .p-jobs li.open, .p-jobs li.open:hover { background: #f8fafc; }
+    /* the row's chevron: not rotated by its open period (details.period[open] .p-chev) */
+    details.period[open] .p-jobs li > .p-chev { transform: none; }
+    details.period[open] .p-jobs li.open > .p-chev { transform: rotate(90deg); }
     .pj-main { flex: 1; min-width: 0; }
     .pj-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .pj-meta { font-size: 12px; color: #6b7280; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -520,6 +600,35 @@
       padding: 8px 12px; font-size: 11px; color: #9ca3af;
     }
     .p-foot .btn { margin-left: auto; }
+
+    /* Applied record: one application opened in place (extension/applied_record.js) */
+    .ap-record {
+      flex: 1 0 100%; min-width: 0; cursor: default; margin-top: 6px; padding: 8px 10px;
+      background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;
+      font-size: 12px; line-height: 1.45; color: #1c2330;
+    }
+    .ar-top { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .ar-status { font-size: 11px; color: #6b7280; }
+    .ar-status.closed { color: #b45309; }
+    .ar-sec { margin-top: 8px; }
+    .ar-sec h5 {
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      margin: 0 0 3px; font-size: 10px; font-weight: 700; letter-spacing: .06em;
+      text-transform: uppercase; color: #6b7280;
+    }
+    .ar-facts { font-size: 11px; color: #6b7280; }
+    .ar-summary { margin: 2px 0 4px; overflow-wrap: anywhere; }
+    .ar-skills, .ar-gaps { font-size: 11px; color: #374151; margin-top: 4px; overflow-wrap: anywhere; }
+    .ar-reason { overflow-wrap: anywhere; }
+    .ar-note { font-size: 11px; font-style: italic; color: #6b7280; }
+    details.ar-full { margin-top: 4px; }
+    details.ar-full > summary { cursor: pointer; font-size: 11px; color: #2557a7; }
+    .ar-text, .ar-letter {
+      white-space: pre-wrap; overflow-wrap: anywhere; overflow: auto;
+      background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; padding: 6px 8px;
+    }
+    .ar-text { max-height: 240px; margin-top: 4px; font-size: 11px; color: #4b5563; }
+    .ar-letter { max-height: 16em; }
 
     /* ── Profile tab ──────────────────────────────────────── */
     #profile-section { padding: 12px 14px 24px; }
@@ -677,6 +786,7 @@
         <button class="btn" id="scan-btn">Scan Page</button>
         <button class="btn" id="refresh-btn">Refresh</button>
       </div>
+      <button id="settings-btn" title="Settings" aria-label="Settings" aria-expanded="false" aria-controls="settings-section">⚙</button>
       <div id="zoom-ctrls">
         <button id="zoom-out" title="Smaller">&#8722;</button>
         <button id="zoom-in" title="Larger">+</button>
@@ -686,15 +796,17 @@
 
   <nav id="tabs">
     <button class="tab active" data-tab="overview">Overview</button>
-    <button class="tab" data-tab="jobs">Jobs</button>
+    <button class="tab" data-tab="jobs">Pipeline</button>
     <button class="tab" data-tab="applied">Applied</button>
     <button class="tab" data-tab="profile">Profile</button>
   </nav>
+  <div id="budget-banner" role="status" hidden></div>
 
   <!-- ── Overview tab (dashboard.js) ─────────────────── -->
   <div id="overview-section">
     <div id="ov-status"></div>
     <section class="ov-card" id="ov-progress" aria-live="polite"></section>
+    <section class="ov-card ov-evidence" id="ov-evidence" aria-live="polite"></section>
     <section class="ov-block">
       <div class="ov-head">
         <div>
@@ -708,148 +820,95 @@
       </div>
       <div class="ov-scroller" id="ov-scroller"></div>
     </section>
+    <section class="ov-block" id="ov-bands" hidden>
+      <div class="ov-head">
+        <div>
+          <h2>No letter yet</h2>
+          <div class="ov-sub none" id="ov-bands-sub"></div>
+        </div>
+      </div>
+      <div class="band-grid" id="ov-band-grid"></div>
+      <p class="ov-hint" id="ov-band-note" hidden></p>
+    </section>
     <section class="ov-block">
-      <div class="ov-head"><div><h2>Scan more jobs</h2></div></div>
+      <div class="ov-head">
+        <div><h2>Scan more jobs</h2></div>
+      </div>
+      <div class="ov-scan-line" id="ov-scan-line"></div>
       <div id="ov-searches"></div>
-      <p class="ov-hint" id="ov-search-hint" hidden>Open one, then press <strong>Scan Page</strong>.</p>
+      <div class="ov-scan-status" id="ov-scan-status" aria-live="polite"></div>
+      <details id="ov-search-perf">
+        <summary>How past searches did</summary>
+        <div id="search-perf"></div>
+      </details>
     </section>
   </div>
 
-  <!-- ── Jobs tab ─────────────────────────────────────── -->
+  <!-- ── Pipeline tab (ids keep the old "jobs" name; plan D1) ── -->
   <div id="jobs-section" hidden>
-    <div id="budget-banner" hidden></div>
-    <div id="suggestion-banner" hidden>
-      <span>💡 Try searching:</span>
-      <span class="sugg-links" id="sugg-links"></span>
-      <button class="close-x" id="sugg-close" title="Dismiss">✕</button>
-    </div>
-    <div id="personalise">
-      <button id="personalise-toggle" aria-expanded="false" aria-controls="personalise-panel">
-        <span>⚙ Personalise metrics</span><span class="chev">▾</span>
-      </button>
-      <div id="personalise-panel" hidden>
-        <div class="pref-row">
-          <span>Hide job apps below score</span>
-          <input id="bulk-score" type="number" min="0" max="100" value="70">
-          <button class="btn" id="bulk-delete-btn">Hide</button>
-        </div>
-        <p class="pref-note">
-          Removes them from your lists and frees their stored text, but keeps the
-          score — search suggestions are ranked against the average of all scored
-          jobs, so discarding the weak ones would flatten the ranking.
-        </p>
-        <div class="pref-row">
-          <span>Auto-generate cover letters at or above score</span>
-          <input id="auto-letter-min" type="number" min="0" max="100" value="75">
-          <button class="btn" id="auto-letter-save">Save</button>
-        </div>
-        <div class="pref-row">
-          <label class="pref-check" for="letter-loop-enabled">
-            <input id="letter-loop-enabled" type="checkbox" checked>
-            <span>Check and revise letters for top matches</span>
-          </label>
-        </div>
-        <div class="pref-row">
-          <span>Full pipeline at or above score</span>
-          <input id="letter-loop-min" type="number" min="0" max="100" value="85">
-          <button class="btn" id="letter-loop-save">Save</button>
-        </div>
-        <div class="pref-row">
-          <span>Letter engine</span>
-          <select id="letter-engine">
-            <option value="agent">Agent (a model picks each step)</option>
-            <option value="workflow">Fixed workflow</option>
-          </select>
-        </div>
-        <p class="pref-note" id="letter-loop-note"></p>
-        <div class="pref-row">
-          <label class="pref-check" for="side-screening">
-            <input id="side-screening" type="checkbox" checked>
-            <span>Draft answers to screening questions in the ad</span>
-          </label>
-        </div>
-        <div class="pref-row">
-          <label class="pref-check" for="side-learning">
-            <input id="side-learning" type="checkbox" checked>
-            <span>Suggest ways to close gaps you said no to</span>
-          </label>
-        </div>
-        <div class="pref-row">
-          <label class="pref-check" for="side-resume">
-            <input id="side-resume" type="checkbox" checked>
-            <span>Résumé tailoring notes</span>
-          </label>
-        </div>
-        <p class="pref-note">
-          Extras beside a fact-checked letter (not the quick one-pass letters). Each adds
-          one model call to a full run when it has something to work on: résumé notes
-          about 1–2¢, screening answers about 2¢ (only when the ad asks questions), gap
-          suggestions under 1¢ (only for gaps you said no to).
-        </p>
-        <div class="pref-row">
-          <label class="pref-check" for="qa-question-help">
-            <input id="qa-question-help" type="checkbox" checked>
-            <span>Help with Quick Apply questions</span>
-          </label>
-        </div>
-        <p class="pref-note">
-          On Seek's "Answer employer questions" step, for jobs with a fact-checked letter:
-          what the job wants beside what your profile has, and a draft answer when you ask
-          for one (about 1–2¢ each). Off = every question is yours to answer, with no help.
-        </p>
-        <div class="pref-row">
-          <span>Max drafts per letter</span>
-          <input id="limit-drafts" type="number" min="1" max="5" step="1" value="3">
-          <button class="btn" id="limit-drafts-save">Save</button>
-        </div>
-        <div class="pref-row">
-          <span>Max tool calls per letter</span>
-          <input id="limit-tools" type="number" min="6" max="40" step="1" value="15">
-          <button class="btn" id="limit-tools-save">Save</button>
-        </div>
-        <div class="pref-row">
-          <span>Max spend per letter (US$)</span>
-          <input id="limit-usd" type="number" min="0.05" max="5" step="0.05" value="0.50">
-          <button class="btn" id="limit-usd-save">Save</button>
-        </div>
-        <p class="pref-note" id="limits-note">
-          Limits for one fact-checked letter. A letter that reaches one stops with its best
-          draft so far, and the sidebar lists what is still wrong with it. Each extra draft
-          needs 4 more tool calls (a full run with 3 drafts uses 14); the extras above don't
-          count towards the tool calls, but they do count towards the spend. Applies to
-          letters started after you save.
-        </p>
-        <div class="pref-row">
-          <span>Job pages opened per Scan Page</span>
-          <input id="scan-pages" type="number" min="1" max="25" value="10">
-          <button class="btn" id="scan-pages-save">Save</button>
-        </div>
-        <p class="pref-note">
-          Max 25. Each page is opened 5 seconds after the last, so a scan takes
-          roughly 5s × this number. Already-captured jobs are skipped and don't count.
-        </p>
-        <div class="pref-row">
-          <label class="pref-check" for="llm-suggest">
-            <input id="llm-suggest" type="checkbox">
-            <span>Use AI to refine search suggestions</span>
-          </label>
-          <button class="btn" id="llm-suggest-refresh">Refresh now</button>
-        </div>
-        <p class="pref-note">
-          Off by default. Suggestions are mined from your match history for free;
-          this spends one small LLM call, cached until ~10 new jobs are scored.
-        </p>
-        <div class="pref-row">
-          <span>Search performance</span>
-          <button class="btn" id="search-perf-btn">Show</button>
-        </div>
-        <div id="search-perf" hidden></div>
-      </div>
-    </div>
     <div id="scanlog"></div>
-    <div id="job-status">Loading…</div>
-    <ul id="job-list"></ul>
-    <div id="analysing-row" hidden></div>
+    <div id="pl-page">
+      <section class="pl-block" id="pl-needs" hidden aria-labelledby="pl-needs-h">
+        <div class="pl-head">
+          <h2 id="pl-needs-h">❓ Needs your answer</h2>
+          <span class="pl-count" id="pl-needs-count"></span>
+        </div>
+        <p class="pl-note">These cover letters are paused until you answer. A No leaves the skill out of the letter and adds it to To work on below.</p>
+        <div id="pl-needs-list"></div>
+      </section>
+      <section class="pl-block" id="pl-jobs">
+        <div class="pl-head">
+          <h2>Jobs not applied</h2>
+          <span class="pl-count" id="pl-count" aria-live="polite"></span>
+        </div>
+        <div class="pl-chips" id="pl-chips" role="group" aria-label="Filter jobs by letter status"></div>
+        <div class="pl-tools">
+          <input type="search" id="pl-search" placeholder="Search title or company…" aria-label="Search jobs by title or company" hidden>
+          <label class="pl-sort">Sort
+            <select id="pl-sort" aria-label="Sort jobs">
+              <option value="score">Score</option>
+              <option value="newest">Newest</option>
+            </select>
+          </label>
+        </div>
+        <div id="job-status"></div>
+        <div class="pl-box-wrap" id="pl-box-wrap">
+          <div class="pl-box" id="pl-box" tabindex="0" role="region" aria-label="Jobs not applied (scrolls)">
+            <ul id="job-list"></ul>
+          </div>
+        </div>
+        <div id="analysing-row" hidden></div>
+        <div class="pl-tidy">
+          <label for="bulk-score">Tidy up: hide jobs below</label>
+          <input id="bulk-score" type="number" min="0" max="100" value="60">
+          <button class="btn btn-sm" id="bulk-delete-btn" type="button">Hide</button>
+        </div>
+        <p class="pl-note">Hiding takes jobs off your lists and frees their stored ad text, but keeps the score: search suggestions are ranked against every score, so the weak ones still count. Applied jobs are never hidden.</p>
+      </section>
+      <section class="pl-block" id="pl-skills" aria-labelledby="pl-skills-h">
+        <div class="pl-head">
+          <h2 id="pl-skills-h">Skills ads ask for that you don't list</h2>
+          <span class="pl-count" id="pl-skills-count"></span>
+        </div>
+        <p class="pl-note" id="pl-skills-note"></p>
+        <ul class="sk-list" id="pl-skills-list"></ul>
+        <button class="pl-link" id="pl-skills-more" type="button" hidden></button>
+      </section>
+      <section class="pl-block" id="towork-section" aria-labelledby="pl-towork-h">
+        <div class="pl-head">
+          <h2 id="pl-towork-h">To work on</h2>
+          <button class="btn btn-sm" id="towork-refresh" type="button">Refresh</button>
+        </div>
+        <p class="pl-note">Skills you said "not yet" to, ranked by how many recent ads ask for them. Clear one once you've learned it.</p>
+        <div id="towork-list"></div>
+      </section>
+    </div>
+    <div id="job-detail-view" hidden>
+      <div class="pl-detail-bar">
+        <button class="btn" id="pl-back" title="Back to the list (Esc)">← All jobs</button>
+      </div>
+      <div id="pl-detail"></div>
+    </div>
   </div>
 
   <!-- ── Applied tab ──────────────────────────────────── -->
@@ -939,14 +998,9 @@
       </div>
     </div>
 
-    <!-- To work on: skills you said you don't have (plan §5.9) -->
-    <div class="p-section" id="towork-section">
-      <div class="p-section-hdr">
-        <h2>To work on</h2>
-        <button class="btn btn-sm" id="towork-refresh">Refresh</button>
-      </div>
-      <p class="writing-hint">Skills you told a cover letter you don't have, ranked by how many recent ads ask for them. Clear one once you've learned it.</p>
-      <div id="towork-list"></div>
+    <!-- To work on lives on the Pipeline tab now (docs/pipeline-tab-plan.md D11) -->
+    <div class="p-section" id="towork-pointer">
+      <button class="pl-link" id="towork-goto" type="button">To work on, and the skills ads ask for, are on the Pipeline tab ›</button>
     </div>
     </div><!-- /#profile-main -->
 
@@ -969,20 +1023,114 @@
     </div>
   </div>
 
+  <!-- ── Settings (⚙ in the header; not a tab) ───────────── -->
+  <div id="settings-section" hidden>
+    <div class="settings-bar">
+      <button class="btn" id="settings-back" title="Back (Esc)">← Back</button>
+      <h2>Settings</h2>
+    </div>
+    <div id="personalise-panel">
+      <h3 class="set-group">Cover letters</h3>
+      <div class="pref-row">
+        <label class="pref-label" for="auto-letter-min">Write letters for scores from</label>
+        <input id="auto-letter-min" type="number" min="0" max="100" value="75">
+        <span class="pref-saved" aria-live="polite"></span>
+        <button class="pref-info" aria-expanded="false" aria-controls="info-auto-letter" aria-label="About this setting" title="About this setting">i</button>
+      </div>
+      <p class="pref-more" id="info-auto-letter" hidden>
+        A match at or above this score gets a letter written for it automatically. Below it, you
+        can still write one yourself from the Overview or a Pipeline job (always a quick pass).
+      </p>
+      <div class="pref-row">
+        <label class="pref-label" for="letter-quality">Fact-check &amp; revise</label>
+        <select id="letter-quality"></select>
+        <span class="pref-saved" aria-live="polite"></span>
+        <button class="pref-info" aria-expanded="false" aria-controls="info-letter-quality" aria-label="About this setting" title="About this setting">i</button>
+      </div>
+      <p class="pref-hint" id="letter-quality-hint"></p>
+      <p class="pref-more" id="info-letter-quality" hidden>
+        A fact-checked letter is drafted, checked against your profile and the ad, and revised up
+        to twice: a few minutes each. The rest get one quick pass with no checks.
+      </p>
+      <div class="pref-row">
+        <span class="pref-label">Extras</span>
+        <span class="pref-extras">
+          <label><input id="side-resume" type="checkbox" checked>Résumé notes</label>
+          <label><input id="side-screening" type="checkbox" checked>Screening answers</label>
+          <label><input id="side-learning" type="checkbox" checked>Gap ideas</label>
+        </span>
+        <span class="pref-saved" aria-live="polite"></span>
+        <button class="pref-info" aria-expanded="false" aria-controls="info-extras" aria-label="About this setting" title="About this setting">i</button>
+      </div>
+      <p class="pref-more" id="info-extras" hidden>
+        Made beside each fact-checked letter (never the quick ones), one model call each and only
+        when there is something to work on: résumé tailoring notes (1–2¢), answers to screening
+        questions in the ad (about 2¢), ways to close gaps you said no to (under 1¢).
+      </p>
+      <div class="pref-row">
+        <label class="pref-check"><input id="qa-question-help" type="checkbox" checked>Help with Quick Apply questions</label>
+        <span class="pref-saved" aria-live="polite"></span>
+        <button class="pref-info" aria-expanded="false" aria-controls="info-qa-help" aria-label="About this setting" title="About this setting">i</button>
+      </div>
+      <p class="pref-more" id="info-qa-help" hidden>
+        On Seek's "Answer employer questions" step, for jobs with a fact-checked letter: what the
+        job wants beside what your profile has, and a draft answer when you ask for one (1–2¢
+        each). Off: every question is yours to answer, and no model is called.
+      </p>
+
+      <h3 class="set-group">Finding jobs</h3>
+      <div class="pref-row">
+        <label class="pref-label" for="scan-pages">Job pages per scan</label>
+        <input id="scan-pages" type="number" min="1" max="25" value="10">
+        <span class="pref-saved" aria-live="polite"></span>
+        <button class="pref-info" aria-expanded="false" aria-controls="info-scan-pages" aria-label="About this setting" title="About this setting">i</button>
+      </div>
+      <p class="pref-hint">max 25 · about 5 s each</p>
+      <p class="pref-more" id="info-scan-pages" hidden>
+        How many job ads one Scan opens, one every 5 seconds. Jobs already captured are skipped
+        and don't count.
+      </p>
+      <div class="pref-row">
+        <label class="pref-check"><input id="availability-checks" type="checkbox" checked>Hide closed ads automatically</label>
+        <span class="pref-saved" aria-live="polite"></span>
+        <button class="pref-info" aria-expanded="false" aria-controls="info-availability" aria-label="About this setting" title="About this setting">i</button>
+      </div>
+      <p class="pref-more" id="info-availability" hidden>
+        While the panel is open it quietly re-opens a few saved ads (one at a time, 15 seconds
+        apart, at most 8 per session and 24 a day, never during a scan) and hides the ones that
+        have closed. AI work only runs for an ad seen live in the last 24 hours, so an old backlog
+        waits for a check first. Applied jobs are never touched. Off: no checks and no wait.
+      </p>
+      <div class="pref-row">
+        <label class="pref-check"><input id="llm-suggest" type="checkbox">AI-refined search suggestions</label>
+        <button class="pref-icon" id="llm-suggest-refresh" title="Ask the AI for fresh picks now (one small call)" aria-label="Ask the AI for fresh picks now">↻</button>
+        <span class="pref-saved" aria-live="polite"></span>
+        <button class="pref-info" aria-expanded="false" aria-controls="info-llm-suggest" aria-label="About this setting" title="About this setting">i</button>
+      </div>
+      <p class="pref-hint" id="llm-suggest-result" hidden></p>
+      <p class="pref-more" id="info-llm-suggest" hidden>
+        Search suggestions on the Overview are mined from your scores for free. On, one small AI
+        call picks the best of them, cached until about 10 more jobs are scored. ↻ asks now.
+      </p>
+    </div>
+  </div>
+
   <script src="config.js"></script>
   <script src="selectors.js"></script>
   <script src="screening_assist.js"></script>
   <script src="sidebar_shared.js"></script>
   <script src="sidebar_jobs.js"></script>
+  <script src="sidebar_skills.js"></script>
   <script src="sidebar_letter_notes.js"></script>
   <script src="sidebar_letter_card.js"></script>
   <script src="sidebar_evidence.js"></script>
-  <script src="sidebar_suggest.js"></script>
   <script src="sidebar_scan.js"></script>
+  <script src="sidebar_availability.js"></script>
   <script src="sidebar_personalise.js"></script>
   <script src="sidebar_profile.js"></script>
   <script src="sidebar_seek_import.js"></script>
   <script src="sidebar_events.js"></script>
+  <script src="applied_record.js"></script>
   <script src="sidebar.js"></script>
   <script src="dashboard.js"></script>
 </body>

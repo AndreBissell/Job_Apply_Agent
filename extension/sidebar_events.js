@@ -36,7 +36,7 @@ let reloadTimer = null;
 function scheduleReload(delay = 400) {
   clearTimeout(reloadTimer);
   reloadTimer = setTimeout(function tryReload() {
-    if (typingIn(jobListEl) || typingIn(overviewSection) || typingIn(appliedSection)) {
+    if (plBusy() || typingIn(overviewSection) || typingIn(appliedSection)) {
       reloadTimer = setTimeout(tryReload, 5000);
       return;
     }
@@ -68,6 +68,14 @@ function connectEvents() {
   // A full reload is the simplest way to move the card between the "pending"
   // and "ready" badge states, and jobs lists are small enough that it's cheap.
   source.addEventListener('cover_letter_ready', () => scheduleReload());
+
+  // A Quick Apply was recorded from Seek's "application sent" page (apply_flow.js):
+  // the Overview count, the Applied tab and the job's card all change.
+  source.addEventListener('job_applied', () => scheduleReload());
+
+  // A screenshot was saved, or a Centrelink PDF made or undone: the Overview's evidence
+  // card and the Applied tab's notes change.
+  source.addEventListener('evidence_changed', () => refreshDashboard());
 
   // A cover-letter run started, is waiting on a question, finished or failed: move the
   // card between "Writing…", "Needs your answer" and "Ready".

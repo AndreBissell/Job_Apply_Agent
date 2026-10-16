@@ -42,11 +42,19 @@ links on the opened search-results page are fair game. This is
 1 hop: the page the user opened → the listings linked from it.
 Paced and capped so it stays a trickle, not a crawl: ≥5s between pages
 (SCAN_DELAY_MS = 5000), and a per-scan cap. The cap is now user-tunable in the
-sidebar's Personalise panel (`scan_max_pages`, default 10) but hard-bounded at 25
+sidebar's ⚙ Settings view (`scan_max_pages`, default 10) but hard-bounded at 25
 by both the API (PreferencesUpdate le=25) and the sidebar (SCAN_PAGES_CEILING) —
 that ceiling is the policy cap: raise it deliberately if needed, don't remove it.
 Both constants and the scan code (scanPage, pageCollectJobLinks, pageScrapeDetail)
 live in extension/sidebar_scan.js; tests/test_scan_policy.py checks them wherever they are.
+Scan more (2026-10-15, docs/overview-applied-rework-plan.md D7/D8, owner-updated the same day): the
+Overview lists the top 3 suggested searches, each with its own Scan more button. A click opens ONE
+Seek search page, that row's search (`seekSearchUrl`), in a FOREGROUND tab (`active: true`), then
+runs the same scanPage on THAT tab, read by its id (`chrome.tabs.get(tabId)`), so the user may move
+to another tab while it loads. The user's click opened it, so it is the page the user opened. The
+header's Scan Page still reads the active tab. The 1-hop rule, SCAN_DELAY_MS, the cap and the
+no-second-hop line are unchanged; a click never moves on to another suggestion or to Seek's page 2
+(pinned by tests/test_scan_policy.py).
 
 
 The hard line that still holds — no second hop:
@@ -61,6 +69,29 @@ a Seek page agent-side (e.g. au.seek.com/robots.txt), STOP and ask the user firs
 Keep it paced and capped. If the scan ever draws Cloudflare / anti-bot attention,
 pull it back to user-initiated opens only.
 
+
+Availability re-checks (2026-10-13, owner-accepted): the side panel may re-visit the
+`/job/{id}` page of a listing already stored in the database, to see whether it is still
+advertised. This is a second kind of traffic, so it has its own caps; the 1-hop rule is unchanged.
+Every stored URL came from a page the user opened (or the 1-hop scan from one); a re-check
+opens only that listing's own page, rebuilt from its id on Seek's own host (`checkUrlFor`), and reads only whether the description is
+there and the page title. It never reads or follows a link found on it: no second hop.
+Caps, all in code and pinned by tests/test_scan_policy.py: side panel only (never the backend, never
+background.js); one background tab at a time (`active: false`) and one Seek page at a time across
+scans and checks together (`seekPace`); ≥ `CHECK_DELAY_MS` (15s, never below `SCAN_DELAY_MS`) apart;
+≤ `CHECK_SESSION_CAP` (8) pages per session, one session per 30 min while the panel is open and
+≤ `DAILY_CAP` (24, app/availability.py) per rolling 24 hours; never while a scan runs (a scan
+cancels the check in flight); a toggle in ⚙ Settings (`availability_checks_enabled`). Hard stop:
+a challenge page, or `CHECK_MISS_STREAK_LIMIT` (5) empty pages in a row, pauses checks for 6 hours.
+A closed ad is never concluded from one empty page: it takes two separate visits (≥1 day apart)
+and a live page seen in the same session each time, so a blocked or logged-out browser cannot flag
+anything. Applied jobs are never re-checked or flagged. The same freshness (`FRESH_FOR`, 24h)
+gates all LLM work: no matching, ranking or letter for a job not seen live recently.
+
+Extension permissions (2026-10-14): the manifest has `<all_urls>` ONLY so `captureVisibleTab` can
+screenshot Seek's Quick Apply "application sent" page automatically. It changes no Seek traffic:
+content scripts still match Seek only and the extension makes no request it didn't make before.
+Don't use the grant for anything else; tests/test_extension_permissions.py pins this.
 
 Why this is defensible at this volume: it runs in the user's real browser/session
 for their own personal job search, opens a handful of listings the user could have
@@ -172,6 +203,8 @@ job-app-assistant/
       worker.py        # the ONE background worker thread + _process_listing
       idle_loop.py     # the idle loop, the letters phase and their helpers
       health.py ingest.py evidence.py search.py job_actions.py jobs.py profile.py   # routers
+      (app/evidence_pdf.py: the Centrelink upload PDFs; app/screenshots.py: evidence file layout)
+      (app/letter_bands.py: the Overview's bands + one-job letters; app/skill_gaps.py: the Pipeline's skills ads ask for)
       letters.py obligation.py profile_ui.py screening.py origin_guard.py          # (older routers)
       Patch the module that OWNS a name (worker._bg_executor, idle_loop._letters_phase, ...), never main;
       main re-exports only app and get_db. GET /jobs/{job_id} (jobs.py) must be matched after every other
@@ -186,10 +219,12 @@ job-app-assistant/
     scraper/           # RETAINED but not in the active pipeline (selector logic reused)
   extension/           # Manifest V3 Chrome extension
     content_script.js background.js popup.js config.js selectors.js screening_assist.js
+    apply_flow.js      # Quick Apply "application sent" page: auto-register + screenshot
     sidebar.html       # side panel; its <script> tags load the panel's CLASSIC scripts in order:
-    sidebar_shared.js sidebar_jobs.js sidebar_letter_notes.js sidebar_letter_card.js
-    sidebar_evidence.js sidebar_suggest.js sidebar_scan.js sidebar_personalise.js
+    sidebar_shared.js sidebar_jobs.js sidebar_skills.js sidebar_letter_notes.js sidebar_letter_card.js
+    sidebar_evidence.js sidebar_scan.js sidebar_personalise.js
     sidebar_profile.js sidebar_seek_import.js sidebar_events.js
+    applied_record.js  # Applied tab: one application's read-only record (ad, match, letter)
     sidebar.js         # env pill, zoom, startup
     dashboard.js       # Overview + Applied tabs; loaded last
       They share one global scope, so load order is the contract: no top-level name in two
@@ -420,8 +455,8 @@ Eval `agent-v2-side` ($3.41): $0.227/letter, 229 s, 15/15 clean, same path as th
 has no screening questions, confirmed gaps or CVs, so the other two never fired: untested on a model.
 Per-run limits WIRED (2026-10-04): `letter_max_drafts` (1-5, 3), `letter_max_tool_calls` (6-40, 15),
 `llm_run_budget_usd` (0.05-5, $0.50) -> `letter_settings()["limits"]` -> `open_run` copies them into
-`state.budget` (a resumed run keeps its own); workflow revisions = max_drafts - 1; sidebar inputs in
-Personalise. Live gap run ($0.20, scratch copy of real.db, Tabcorp ad + 3 appended screening
+`state.budget` (a resumed run keeps its own); workflow revisions = max_drafts - 1; code defaults with
+NO sidebar input since 2026-10-16 (docs/settings-simplify-plan.md D3; the API still takes them). Live gap run ($0.20, scratch copy of real.db, Tabcorp ad + 3 appended screening
 questions): screening found and answered honestly (all three "answer this yourself"), résumé notes
 fine, but match_profile rated React Native/Flutter *partial* (React.js), so ask_user and
 suggest_learning were still not exercised on a model. The real profile's summary is "s" and its
@@ -503,14 +538,125 @@ never hits (cached_tokens 0); the writer still copies one stock line from the wr
 sample (future_work/voice-toggle-and-comparison.md).
 
 Parked fast-follows. Both need a live Seek session rather than guesswork:
-1. §5.2's apply-flow detection (see the extension-revamp entry below). Now also
-   the prerequisite for Phase 9 (live screening questions, plan §10.1).
+1. §5.2's apply-flow detection (see the extension-revamp entry below). The Apply button,
+   review step and "application sent" page are now settled from real samples and used by
+   Quick Apply evidence (2026-10-14, above); auto-FILLING Seek's form stays out of scope.
 2. Verify the classification capture added 2026-09-21. readJsonLdJobPosting()
    is the primary source and should work, but SELECTORS.DETAIL_CLASSIFICATION /
    DETAIL_SUBCLASSIFICATION (the fallback) are UNVERIFIED guesses. Open a real
    job page, check job_listings.classification is populated, and fix the
    selectors if the JSON-LD path ever stops covering it.
 
+
+🔄 BUILT, AWAITING THE USER'S LIVE CHECK: Quick Apply evidence — 2026-10-14 (branch `centrelink-ease-apply`)
+
+docs/centrelink-ease-apply-plan.md (design, samples, Decision log, live-check steps). The detail
+page's Apply button text sets `job_listings.apply_type` ("Quick apply" = quick, "Apply" = external,
+else NULL; the href is the SAME `/job/{id}/apply` for both, so the bare `/apply` URL is never proof).
+`extension/apply_flow.js`: on `/job/{id}/apply/success` with `h1#applicationSent` (its text greets
+the user by name: never read), `POST /jobs/{id}/quick-apply-sent` records `applied_at` with
+`matches.applied_via='auto'` (creating an unscored match if the job was never scored), then the page
+is screenshotted BEFORE the panel is drawn and stored in the app (no Downloads copy; Retake on the
+panel). Mark Applied records `'manual'` and takes no screenshot; external ads stay manual. Migration
+`c4e8a2f6b913`; SSE `job_applied`; `APP_SCREENSHOTS_DIR` moves the TEST screenshots folder only.
+The manifest now has `<all_urls>` (owner decision 2026-10-14) because Chrome refuses
+`captureVisibleTab` without it or a toolbar click: it is for the screenshot only, pinned by
+tests/test_extension_permissions.py (content scripts Seek-only, relay localhost-only). The old
+screenshot code had never had that permission, so it most likely never saved anything. LIVE CHECK
+PASSED 2026-10-14 (a real Quick Apply on REAL was recorded and screenshotted).
+Part 2, Centrelink-ready PDFs (2026-10-14, same plan doc): Centrelink takes one file (<3 MB) per
+upload, so the Overview's "Centrelink evidence" card collates every UNREPORTED Quick Apply screenshot
+into one PDF (captioned pages, Pillow, NO LLM), saved in `<screenshots>/centrelink_ready/
+(time)_(date)_(n)_jobs.pdf` (kept forever) and downloaded; two-click Undo. Screenshots are stored ONCE
+in `evidence/<YYYY-MM>/(time)_(date)_(company).png`; "reported" is the `evidence_bundle_items` table
+(migration `d8f3b6a1c527`), not a second folder. `screenshot_ttl_days` 30 -> 150, and an unreported
+screenshot never expires. Endpoints `/evidence/status|bundles|bundles/{id}/download`, SSE
+`evidence_changed`. 1655 tests; e2e `apply_sent_e2e.py` 51/51 (+ dashboard 92, sidebar_load 58).
+Part 2 NOT yet checked in the user's own Chrome.
+
+🔄 BUILT, AWAITING THE USER'S MANUAL CHECKS: Settings simplified — 2026-10-16 (branch `centrelink-ease-apply`)
+
+docs/settings-simplify-plan.md (D1–D8 approved; manual checks at its end). Side-panel UI only: every
+preference key, default and API bound is unchanged. ⚙ Settings is two groups (Cover letters, Finding
+jobs), 9 controls, no Save buttons (each saves on change; a number out of range snaps back), and an (i)
+per row that opens its note. "Fact-check & revise" (`#letter-quality`) replaces the pipeline checkbox and
+score: Every letter = `letter_loop_enabled` true + `letter_loop_min_score` 0 (0, so it stays "every" if
+the auto score moves); Score N+ = true + N; Never = false. Options at or below the auto score are never
+offered (the backend's bar is `max(auto, pipeline)`), and a stored non-preset score keeps its own option.
+The hint's quick-pass figure comes from `GET /jobs/letter-bands`. Letter engine and the three per-letter
+limits have no UI any more (D3). Search performance moved to the Overview's Scan more jobs card ("How past
+searches did", `#ov-search-perf`). e2e new `tests/e2e/settings_e2e.py` 46/46; sidebar_load 66, dashboard
+199, pipeline 86, availability 48, quick_apply 124 (its S5 sort check failed once on timing, then passed
+twice); pytest 1794. E2E NOTE: a context that routes
+through a Python predicate pauses every request until the sync API is pumped, so poll the DB with
+`side.wait_for_timeout`, never `time.sleep` (settings_e2e `wait_db`).
+
+🔄 BUILT, AWAITING THE USER'S MANUAL CHECKS: Pipeline tab — 2026-10-16 (branch `centrelink-ease-apply`)
+
+docs/pipeline-tab-plan.md (D1–D14, approved; Decision log per step; the manual-check list is at the
+end of the plan). The Jobs tab is now **Pipeline** (its ids still say `jobs`):
+- Top: "Needs your answer", one question card per letter run waiting on the user (the Overview's ❓
+  link scrolls here). Then every scored job NOT applied for (`GET /jobs?applied=false&limit=500`;
+  `limit` is 1–500, default still 50) as one-click rows (score, title, company, one status label)
+  in a box that shows 7.5 rows and scrolls; filter chips with counts, search, sort (remembered in
+  chrome.storage.local). A row opens a drill-in detail view (← All jobs / Esc): why it scored, the
+  scorer's gaps, the letter, and actions: Open ad, Write a letter (one job, one-shot, the band
+  rules: `POST /jobs/{id}/write-letter`, `letter_bands.claim_job`), Mark applied, Delete (two
+  clicks each). The two-click tidy-up (bulk hide) moved here from settings.
+- Below: "Skills ads ask for that you don't list" (`app/skill_gaps.py`, `GET /gaps/market`, code
+  only): hard job_skills of jobs scored in the last 90 days, matched to the profile by WHOLE PHRASE
+  both ways, because the real profile's Seek-imported names ("Typescript Programming") made
+  prefilter's exact match call TypeScript/React/Docker gaps. I have it / Not yet / ignore
+  (`POST /gaps/market/{have,not-yet,ignore,unignore}`; ignored keys in `profiles.preferences.gap_ignored`).
+  To work on moved here from Profile (`extension/sidebar_skills.js`).
+- Settings: the old Personalise panel is a full-panel view behind ⚙ in the header (same ids).
+  The budget banner sits under the tab bar (every tab). The suggestion banner and
+  sidebar_suggest.js are gone (`seekSearchUrl` is in sidebar_shared.js).
+- Follow-up logged, NOT done: prefilter's exact-name matching feeds false "Gaps:" lines into the
+  match prompt for Seek-style names; fixing it changes scores, so measure it first.
+- 1794 tests; e2e `pipeline_e2e.py` 86/86, dashboard 199, sidebar_load 66, availability 48,
+  apply_sent 51, quick_apply 124. Not checked in the user's own Chrome yet.
+
+✅ COMPLETED: Overview/Applied rework — 2026-10-15 (branch `centrelink-ease-apply`)
+
+docs/overview-applied-rework-plan.md (D1–D8 plus the owner's same-day updates, all in its Decision
+log). Owner's manual checks passed 2026-10-15.
+- Applied tab: a row click opens a read-only record in place (`extension/applied_record.js`): the
+  ad as captured, the match, the letter as last saved; "Open ad on Seek ↗" is its first button.
+  `GET /jobs/{id}` returns the record fields (aware-UTC datetimes). Bulk hide (`DELETE /jobs?below_score=`)
+  now skips applied jobs: it used to null their ad text.
+- Overview "No letter yet": scored, letter-less jobs below the auto-letter score in 5-point bands
+  anchored on it (`app/letter_bands.py`, `GET /jobs/letter-bands`), one row that scrolls sideways.
+  "+ letters" sits on the highest band with jobs it can write now; two clicks queue at most 10
+  ONE-SHOT letters (`POST /jobs/letter-bands/write`, `worker._write_band_letters`; `Work.below_bar`
+  lets the one-shot skip only its score gate). The estimate comes from `llm_usage` (one-pass
+  letters, else the pipeline's draft call, ≈12¢ on REAL), not a constant. The freshness gate holds
+  back stale ads. Queued jobs leave the bands and show in Keep Applying as "✍ Writing…" cards
+  (`GET /jobs` `letter_queued`; `ready=true` also returns jobs being written).
+- Keep Applying cards have a two-click bin (the Jobs tab's DELETE /jobs/{id}; none while writing).
+- Scan more: the top 3 suggested searches, each with its own button; see the Seek Access Policy.
+  BUG FIXED on the way (Step 0, found by the owner): `GET /jobs/known-ids` counted card-only rows
+  (the content script stores every search card on page load), so Scan Page skipped every job on a
+  page without opening one. It now lists only jobs with ad text, a score, or a closed flag.
+- 1753 tests; `tests/e2e/dashboard_e2e.py` 197/197, `sidebar_load_e2e.py` 59/59.
+
+✅ COMPLETED: Availability checks + freshness gate — 2026-10-13 (branch `centrelink-ease-apply`)
+
+Closed Seek ads now drop out of the list without a button, and no AI money is spent on one.
+Backend: `app/availability.py` (candidate choice, verdicts, `llm_ready` gate), `app/api/availability.py`
+(`GET /availability/next`, `POST /availability/{id}`), migration `b7e2d9a4c601`
+(`job_listings.last_seen_live_at` / `availability_checked_at` / `availability_misses`). Side panel:
+`extension/sidebar_availability.js` (paced, capped, scan cancels it; policy in the Seek Access Policy
+above). Rules that matter: a job is flagged only after TWO misses on separate visits, each in a session
+that also saw a live page (canary), so a blocked browser flags nothing; a capture with a description
+(`/ingest`) un-expires; applied jobs are never visited or flagged (also `PATCH /jobs/{id}/expired`);
+quick screen, extraction, matching and `next_work` (letters, resumes) skip flagged jobs and, while
+`availability_checks_enabled` is on, jobs not seen live in 24h (Regenerate and the Scan's own quick
+screen are not gated). `background.js` now mirrors its scan-tab set into `chrome.storage.session`
+so a service-worker restart can't let the content script flag from a check tab. 1600 tests; e2e
+`tests/e2e/availability_e2e.py` 48/48 (tabs and scripting stubbed). NOT verified in the user's own
+Chrome: what a closed Seek ad really looks like (blank, redirect or banner) and the Cloudflare-title
+test; the console logs the evidence for every check.
 
 ✅ COMPLETED: Rolling retention + post-profile-update weighting — 2026-09-21
 

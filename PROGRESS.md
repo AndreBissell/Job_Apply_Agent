@@ -5,6 +5,34 @@ one block per milestone.
 
 ---
 
+## 2026-10-16 — ⚙ Settings simplified — BUILT, manual checks pending
+
+- Branch `centrelink-ease-apply`. Plan `docs/settings-simplify-plan.md` (D1–D8 approved; manual checks at its end). UI only: no preference key, default or API bound changed.
+- Two groups, 9 controls, no Save buttons (save on change), an (i) note per row. One "Fact-check & revise" dropdown replaces the pipeline checkbox + score (REAL's auto 80 / pipeline 75 meant the 75 did nothing; it now reads "Every letter"). Engine and per-letter limits left the UI (code defaults). Three Extras checkboxes on one row. Search performance moved to the Overview ("How past searches did"). The quick-pass cost in the hint is live (`/jobs/letter-bands`), replacing the stale "10–15¢".
+- Tests: new `tests/e2e/settings_e2e.py` 46/46; sidebar_load 66, dashboard 199, pipeline 86, availability 48, quick_apply 124; pytest 1794. No paid call.
+
+---
+
+## 2026-10-16 — Pipeline tab (was Jobs) + ⚙ Settings view — BUILT, manual checks pending
+
+- Branch `centrelink-ease-apply`. Plan `docs/pipeline-tab-plan.md` (D1–D14 approved by the owner; built in one go, manual checks batched at the end of the plan).
+- `5e9c3d1` backend: `GET /jobs` `applied=` / `limit` 1–500 / `fresh` / `date_scraped`; `POST /jobs/{id}/write-letter` (one-shot, band rules); `app/skill_gaps.py` + `GET /gaps/market` and have / not-yet / ignore / unignore. Finding: Seek-style profile skill names make prefilter's exact match report false gaps (real.db 565 → 395 asks with whole-phrase matching); the skills view uses whole-phrase matching, the scorer is a logged follow-up.
+- `ac8625f` Settings behind ⚙ (same ids, grouped), budget banner on every tab, suggestion banner and sidebar_suggest.js removed. `39c08e8` compact rows in a 7.5-row scroll box, chips/search/sort, drill-in detail. `6a3e164` Needs your answer, two-click tidy-up, skills ads ask for, To work on moved from Profile (`extension/sidebar_skills.js`).
+- Tests: pytest 1753 → 1794 (`tests/test_pipeline_api.py`); new `tests/e2e/pipeline_e2e.py` 86/86; dashboard 199, sidebar_load 66, availability 48, apply_sent 51, quick_apply 124. No paid call (stub LLM; Seek-touching Chrome calls stubbed).
+
+---
+
+## 2026-10-15 — Overview/Applied rework: Applied records, "no letter yet" bands, Scan more — DONE ✅
+
+- Branch `centrelink-ease-apply`. Plan `docs/overview-applied-rework-plan.md` (D1–D8, the owner's same-day updates and Step 0 in its Decision log). One commit per step, owner's go-ahead between.
+- `b8213fb` bulk hide skips applied jobs (it nulled their ad text; 2 TEST rows already lost theirs) + record fields on `GET /jobs/{id}`. `d7b3549` Applied row opens a read-only record in place (`extension/applied_record.js`). `a8b200f` `app/letter_bands.py` + `GET /jobs/letter-bands` / `POST .../write` + `worker._write_band_letters` (one-shot, ≤10 a click, freshness gate, budget stop; `Work.below_bar` because the one-shot refused every score below the bar). `e42f214` the band cards on the Overview.
+- Step 0 (owner in the browser): Scan Page said "All jobs on this page already captured". The owner doubted it; cause: `GET /jobs/known-ids` counted card-only rows the content script stores on page load. `a9cd877` fixes it (real.db: 17 jobs the scan could never open). `b4b3e0b` one-click Scan more (status on the Overview, link polling, CLAUDE.md policy line + policy test).
+- Owner's updates: `78de669` Scan more per suggested search (top 3), the scan reads its own tab by id; band cards in one sideways-scrolling row. `36637f8` estimate from `llm_usage` (one-pass letters, else the pipeline's draft call; ≈12¢ on REAL, the old 3¢ was 4× low; a pipeline letter is 22.5¢) and queued jobs move to Keep Applying as "✍ Writing…" cards. `05f169f` "+ letters" on the highest band it can write. `993a35b` two-click bin on Keep Applying cards.
+- Tests: pytest 1663 -> 1753 (new `tests/test_job_detail.py`, `test_letter_bands.py`, `test_known_ids.py`; scan policy test updated). `dashboard_e2e.py` 92 -> 197 checks, `sidebar_load_e2e.py` 59/59. No paid call in any test (stub LLM; every Seek-touching Chrome call stubbed in the e2e).
+- Owner's manual checks (2026-10-15, own Chrome, TEST and REAL): all passed. The two 64–60 jobs on REAL hold the button back because their ads look closed (one empty availability check each).
+
+---
+
 ## 2026-10-13 — `extension/sidebar.js` split into classic scripts (ARCHITECTURE 5.4 #10) — DONE ✅
 
 - Same branch `fix/applied-evidence-safety`. Plan `docs/refactor-9-10-plan.md`, steps 10.0-10.12; pure moves, one commit each. Classic `<script>` files, not ES modules (D4): one shared global scope, so the order in `sidebar.html` is the contract.

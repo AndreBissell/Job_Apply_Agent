@@ -197,6 +197,7 @@ function parseDetailPage() {
     classification,
     subclassification,
     raw_description,
+    apply_type: detectApplyType(),
   }];
 }
 
@@ -258,10 +259,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 // cover letter already exists for it. Reads the backend (own localhost API,
 // not Seek) for job/cover-letter/match state; makes no extra Seek requests.
 // Shadow DOM keeps its styles isolated from Seek's page CSS in both directions.
-// See docs/extension-revamp-plan.md §5.2 — apply-flow-specific detection
-// (auto-filling Seek's own Apply button) is a deliberate fast-follow, not
-// implemented here, since it requires inspecting the real apply DOM live
-// rather than guessing it.
+// Recording a Quick Apply and its screenshot happen on Seek's "application sent"
+// page instead (apply_flow.js); auto-filling Seek's own form stays out of scope.
 // ---------------------------------------------------------------------------
 const QUICK_APPLY_HOST_ID = 'seek-assistant-quick-apply-host';
 
@@ -295,44 +294,8 @@ async function markExpired(jobId) {
   } catch { /* best-effort — a missed flag just means the job stays visible */ }
 }
 
-// Screenshot evidence for Centrelink reporting: captures whatever's visible in
-// THIS tab right now (the actual Seek job/application page) and saves it as a
-// PNG. Relayed through background.js — captureVisibleTab isn't callable from
-// a content script directly. Best-effort: a failure here should never block
-// Mark Applied itself.
-//
-// Two copies are kept, deliberately: the local download is the user's own
-// immediate copy; the backend upload (POST /jobs/{id}/screenshot) makes it
-// durable, queryable, and exportable via the Applied-tab CSV — a file sitting
-// only in Downloads has no link back to the Match row. The upload is
-// best-effort and never undoes or blocks the local download on failure.
-async function captureAndDownloadScreenshot(jobId) {
-  let dataUrl = null;
-  try {
-    const resp = await chrome.runtime.sendMessage({ type: 'CAPTURE_SCREENSHOT' });
-    dataUrl = resp?.dataUrl || null;
-  } catch { /* relay failed */ }
-  if (!dataUrl) return false;
-
-  const a = document.createElement('a');
-  a.href = dataUrl;
-  a.download = `applied-${jobId}-${new Date().toISOString().slice(0, 10)}.png`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-
-  try {
-    const res = await backendFetch(`${BACKEND}/jobs/${jobId}/screenshot?profile_id=1`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ data_url: dataUrl }),
-    });
-    if (!res.ok) console.warn('[SeekAssistant] Screenshot upload failed', res.status);
-  } catch (e) {
-    console.warn('[SeekAssistant] Screenshot upload failed (backend unreachable):', e.message);
-  }
-  return true;
-}
+// Screenshot evidence is taken on Quick Apply's "application sent" page instead
+// (apply_flow.js): that page proves the application went in, the ad page doesn't.
 
 function buildQuickApplyPanel(jobId, data) {
   if (document.getElementById(QUICK_APPLY_HOST_ID)) return; // already injected
@@ -425,18 +388,6 @@ function buildQuickApplyPanel(jobId, data) {
   });
   actions.appendChild(saveBtn);
 
-  const shotBtn = document.createElement('button');
-  shotBtn.className = 'act';
-  shotBtn.textContent = '📸 Screenshot';
-  shotBtn.addEventListener('click', async () => {
-    shotBtn.disabled = true;
-    shotBtn.textContent = 'Capturing…';
-    const ok = await captureAndDownloadScreenshot(jobId);
-    shotBtn.textContent = ok ? 'Saved ✓' : 'Failed';
-    setTimeout(() => { shotBtn.textContent = '📸 Screenshot'; shotBtn.disabled = false; }, 1500);
-  });
-  actions.appendChild(shotBtn);
-
   const applyBtn = document.createElement('button');
   const isApplied = !!data.match?.applied_at; // applied_at is the one definition of "applied"
   applyBtn.className = 'act' + (isApplied ? ' applied' : '');
@@ -453,9 +404,6 @@ function buildQuickApplyPanel(jobId, data) {
       if (res.ok) {
         applyBtn.classList.add('applied');
         applyBtn.textContent = '✓ Applied';
-        // Best-effort evidence capture for Centrelink reporting — timed to the
-        // actual "applied" action. Never blocks the button on failure.
-        captureAndDownloadScreenshot(jobId);
       }
     } catch { /* transient network error — user can retry */ }
     finally {
@@ -583,7 +531,9 @@ function applyPageTitle() {
   return title || (document.title || '').replace(/\s*[|-]\s*SEEK.*$/i, '').trim() || 'Untitled';
 }
 
-async function resolveOrCreateJob(sourceJobId) {
+// `stub` overrides what a new stub row is created with: apply_flow.js passes its own
+// title, because the "application sent" page's only <h1> greets the user by name.
+async function resolveOrCreateJob(sourceJobId, stub = null) {
   const known = await resolveInternalJobId(sourceJobId);
   if (known) return known;
   // A stub row (no description): the detail page fills it in on a later visit.
@@ -592,6 +542,7 @@ async function resolveOrCreateJob(sourceJobId) {
     url: `${location.origin}/job/${sourceJobId}`,
     title: applyPageTitle(),
     raw_description: null,
+    ...(stub || {}),
   }]);
   return result?.job_ids?.[0] ?? null;
 }
@@ -900,12 +851,16 @@ function startApplyWatcher() {
   let timer = null;
   const schedule = () => {
     clearTimeout(timer);
-    timer = setTimeout(checkApplyStep, 700);
+    timer = setTimeout(() => {
+      checkApplyStep();
+      checkApplySent(); // apply_flow.js: the "application sent" page
+    }, 700);
   };
-  // Our own overlay being added or removed is not a page change.
+  // Our own overlays being added or removed is not a page change.
+  const ownIds = [QUESTIONS_HOST_ID, APPLY_SENT_HOST_ID];
   const ownOverlay = (m) => {
     const nodes = [...m.addedNodes, ...m.removedNodes];
-    return m.type === 'childList' && nodes.length > 0 && nodes.every((n) => n.id === QUESTIONS_HOST_ID);
+    return m.type === 'childList' && nodes.length > 0 && nodes.every((n) => ownIds.includes(n.id));
   };
   new MutationObserver((mutations) => {
     if (mutations.every(ownOverlay)) return;

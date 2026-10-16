@@ -426,7 +426,7 @@ Descriptions come from reading each file's header docstring and, for the central
 | `idle_loop.py` | `_processing_idle_loop` (retention, letters, quick screen, extract + match), `_letters_phase` and their helpers (`_match_attempt`, `_retention_tick`, `_recover_orphaned_runs`, `_raw_relevance_score`). |
 | `health.py` | `GET /health` and `GET /llm/usage`. |
 | `ingest.py` | `POST /ingest`. |
-| `evidence.py` | `GET /jobs/evidence-export` and `POST /jobs/{id}/screenshot`. |
+| `evidence.py` | `GET /jobs/evidence-export`, `POST /jobs/{id}/screenshot`, and the Centrelink PDF bundles (`/evidence/status`, `/evidence/bundles`, download, undo). |
 | `search.py` | `GET /jobs/search-performance` and `GET /jobs/suggested-searches`. |
 | `job_actions.py` | The job write endpoints: quick screen, status, expired, cover letter, regenerate, bulk hide, delete. |
 | `jobs.py` | The job read endpoints: known-ids, pending-count, by-source-id, `GET /jobs`, `GET /jobs/{job_id}` (which must stay last). |
@@ -497,7 +497,8 @@ Descriptions come from reading each file's header docstring and, for the central
 |---|---|
 | `preferences.py` | Settings stored as JSON in `profiles.preferences`: defaults, bounds, and typed getters (`letter_settings`, `obligation_settings`). |
 | `retention.py` | Deletes old unapplied matches (age-based, never score-based) and shapes the data the search miner uses. Applied matches are never purged. |
-| `screenshots.py` | Downscales and expires screenshot evidence files. |
+| `screenshots.py` | Where screenshot evidence files go (`evidence/<YYYY-MM>/`), downscaling, and expiry (never before they are reported). |
+| `evidence_pdf.py` | Builds the Centrelink upload PDFs from screenshots: a caption per page, kept under 3 MB. Pure Pillow, no DB, no LLM. |
 | `search_suggest.py` | Mines "what to search next" from your score history, no AI. |
 | `gaps.py` | Remembered "no" answers and the to-work-on list. |
 | `obligation.py` | Centrelink period date maths. Pure functions, no DB. |
@@ -506,21 +507,22 @@ Descriptions come from reading each file's header docstring and, for the central
 
 | File | Responsibility |
 |---|---|
-| `manifest.json` | Declares permissions, which sites the content scripts run on (`au.seek.com`, `www.seek.com.au`), and which localhost ports are reachable. |
+| `manifest.json` | Declares permissions, which sites the content scripts run on (`au.seek.com`, `www.seek.com.au`), and which localhost ports are reachable. `<all_urls>` (2026-10-14) is there only so `captureVisibleTab` can take the Quick Apply screenshot (tests/test_extension_permissions.py). |
+| `apply_flow.js` | Content script, loaded before `content_script.js`. On Quick Apply's "application sent" page it records the application (`POST /jobs/{id}/quick-apply-sent`) and saves a screenshot of the page in the app. |
 | `config.js` | Picks backend URL (real:8000 or test:8001) from `chrome.storage.local`; loaded first everywhere. |
 | `selectors.js` | The CSS selectors for Seek's page elements (must be kept in sync with `app/scraper/selectors.py`). |
 | `content_script.js` | Runs on Seek pages. `parseSearchPage` / `parseDetailPage` read the DOM, `ingest` sends data, `maybeInjectQuickApply` shows the letter panel, `parseQuestionnaire` captures Quick Apply questions, `main` is the page-type router. |
 | `background.js` | Service worker. Relays localhost calls for content scripts (`BACKEND_FETCH`, allow-listed to localhost ports 8000/8001 only), takes screenshots, counts captures for the icon badge. |
 | `sidebar.html` | The side panel's markup and CSS. Its `<script>` tags load the panel's classic scripts in a fixed order; they share one global scope, so **that order is the contract** (`scripts/js_globals.py --check` and `tests/e2e/sidebar_load_e2e.py` guard it). |
-| `sidebar_shared.js` | `PROFILE_ID`, score tiers, label tables, the `mk` DOM helper, tab switching, `markApplied`. Runs `announceSidebarOpen()` first. |
-| `sidebar_jobs.js` | Jobs tab: `loadJobs`, `renderJob`, letter badges, `fillDetail` (a card's expanded detail). |
+| `sidebar_shared.js` | `PROFILE_ID`, score tiers, label tables, the `mk` DOM helper, tab switching, the ⚙ Settings view (`openSettings` / `closeSettings`), `markApplied`, `seekSearchUrl`. Runs `announceSidebarOpen()` first. |
+| `sidebar_jobs.js` | Pipeline tab (ids still say "jobs"): `loadJobs`, the compact rows in a capped scroll box (`renderPipeline`, `rowStatus`, filter chips, search, sort), `coverLetterState`, the drill-in detail view (`openJobDetail`, `fillDetail`) and its actions. |
 | `sidebar_letter_notes.js` | Under an expanded card: Quick Apply question help, letter notes, side outputs. |
 | `sidebar_letter_card.js` | The ask_user question card with its profile-row editors, and the letter editor. |
 | `sidebar_evidence.js` | `evidenceNote`, `csvEscape` (shared with `dashboard.js`), the Export evidence button. |
-| `sidebar_suggest.js` | Suggested-searches banner, `seekSearchUrl`. |
 | `sidebar_scan.js` | Scan Page: `SCAN_DELAY_MS`, `SCAN_PAGES_CEILING`, `scanPage`, and the two functions injected into Seek tabs (`pageCollectJobLinks`, `pageScrapeDetail`). |
-| `sidebar_personalise.js` | The Personalise panel: thresholds, letter limits, toggles, `loadPreferences`, bulk hide. |
-| `sidebar_profile.js` | Profile tab: the profile editor and the To work on list. |
+| `sidebar_personalise.js` | The ⚙ Settings view's controls (ids still say "personalise"): thresholds, letter limits, toggles, `loadPreferences`. |
+| `sidebar_skills.js` | Pipeline tab, under the list: skills ads ask for that the profile lacks (`GET /gaps/market`; I have it / Not yet / ignore) and the To work on list. |
+| `sidebar_profile.js` | Profile tab: the profile editor (and a pointer to To work on, now on the Pipeline tab). |
 | `sidebar_seek_import.js` | Import from your own Seek profile (`seekProfileExtract`, injected) and profile export. |
 | `sidebar_events.js` | Live updates: `connectEvents` (SSE), `scheduleReload`, `typingIn`, the budget banner. |
 | `sidebar.js` | The env pill, zoom, and the `backendReady.then(...)` startup. |
@@ -591,7 +593,7 @@ Also: `PROGRESS.md`, `CLAUDE.md`, `README.md` change in nearly every commit (exc
 
 **B1: You open a Seek search results page.**
 
-6. **`extension/manifest.json`** injects `config.js`, `selectors.js`, `screening_assist.js`, `content_script.js` into the page. `config.js` resolves `BACKEND` (real = `http://localhost:8000`) from `chrome.storage.local`. Then `backendReady.then(main)`.
+6. **`extension/manifest.json`** injects `config.js`, `selectors.js`, `screening_assist.js`, `apply_flow.js`, `content_script.js` into the page. `config.js` resolves `BACKEND` (real = `http://localhost:8000`) from `chrome.storage.local`. Then `backendReady.then(main)`.
 7. **`content_script.js::main`**: the path contains `-jobs`, so it treats the page as a search page and calls `waitFor(parseSearchPage, SELECTORS.JOB_CARD, 8000)`. This polls every 400 ms for up to 8 s, because Seek renders with React and the cards may not exist yet.
 8. **`content_script.js::parseSearchPage`** `[no AI]`: for every `[data-testid="job-card"]` it reads title, link, company, location, work type, salary, plus `discovered_query` from the URL (`currentSearchQuery`). No description yet (`raw_description: null`).
 9. **`content_script.js::ingest`** -> **`backendFetch`** -> `chrome.runtime.sendMessage({type: 'BACKEND_FETCH'})` -> **`extension/background.js`** (the `onMessage` listener). That listener only allows `http://localhost|127.0.0.1` on ports 8000/8001, then performs the `fetch`. This detour exists because Chrome blocks a public page from calling localhost directly.

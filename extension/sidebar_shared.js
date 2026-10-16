@@ -126,6 +126,8 @@ const jobsSection = document.getElementById('jobs-section');
 const appliedSection = document.getElementById('applied-section');
 const profileSection = document.getElementById('profile-section');
 const hdrJobsBtns = document.getElementById('hdr-jobs-btns');
+const settingsSection = document.getElementById('settings-section');
+const settingsBtn = document.getElementById('settings-btn');
 let profileLoaded = false;
 
 tabBtns.forEach(btn => {
@@ -133,13 +135,15 @@ tabBtns.forEach(btn => {
     tabBtns.forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     const tab = btn.dataset.tab;
+    settingsSection.hidden = true; // any tab closes Settings
+    settingsBtn.setAttribute('aria-expanded', 'false');
     overviewSection.hidden = tab !== 'overview';
     jobsSection.hidden = tab !== 'jobs';
     appliedSection.hidden = tab !== 'applied';
     profileSection.hidden = tab !== 'profile';
     hdrJobsBtns.style.display = (tab === 'jobs' || tab === 'overview') ? '' : 'none';
     if (tab === 'profile' && !profileLoaded) loadProfile();
-    if (tab === 'profile') loadToWorkOn(); // counts move as new ads are scanned — always refresh
+    if (tab === 'jobs') { loadJobs(); loadSkillGaps(); loadToWorkOn(); } // counts move as ads are scanned
     if (tab === 'overview') loadOverview(); // always refresh: counts move as you apply
     if (tab === 'applied') loadAppliedPeriods(); // always refresh — cheap query, keeps it current
   });
@@ -148,6 +152,35 @@ tabBtns.forEach(btn => {
 function showTab(tab) {
   document.querySelector(`nav#tabs .tab[data-tab="${tab}"]`)?.click();
 }
+
+// Settings: a full-panel view behind the header's ⚙ (docs/pipeline-tab-plan.md D12), not a
+// tab. It hides every tab section; Back, Esc or ⚙ again return to the tab it was opened from,
+// and clicking any tab closes it too.
+let settingsReturnTab = 'overview';
+
+function openSettings() {
+  if (!settingsSection.hidden) return;
+  settingsReturnTab = document.querySelector('nav#tabs .tab.active')?.dataset.tab || 'overview';
+  for (const section of [overviewSection, jobsSection, appliedSection, profileSection]) section.hidden = true;
+  tabBtns.forEach(b => b.classList.remove('active'));
+  hdrJobsBtns.style.display = 'none';
+  settingsSection.hidden = false;
+  settingsBtn.setAttribute('aria-expanded', 'true');
+  window.scrollTo(0, 0);
+  document.getElementById('settings-back').focus();
+}
+
+function closeSettings() {
+  if (settingsSection.hidden) return;
+  showTab(settingsReturnTab);
+  settingsBtn.focus();
+}
+
+settingsBtn.addEventListener('click', () => (settingsSection.hidden ? openSettings() : closeSettings()));
+document.getElementById('settings-back').addEventListener('click', closeSettings);
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !settingsSection.hidden) closeSettings();
+});
 
 // Mark a job applied (stamps applied_at once, server-side). Shared by the Jobs cards and
 // the Overview's Keep Applying cards. Throws on failure; the caller says so.
@@ -159,4 +192,16 @@ async function markApplied(jobId) {
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
+}
+
+// The Seek search a suggested phrase opens (the Overview's Scan more). Keeps the SEO-slug
+// path form ("/data-analyst-jobs") and adds the location as ?where=, because that is the
+// combination content_script.js's currentSearchQuery() already normalises back to the bare
+// phrase, so a job found this way is attributed to "data analyst", not "data analyst
+// brisbane", and search-performance stats stay comparable across locations.
+function seekSearchUrl(phrase, searchLocation) {
+  const slug = phrase.toLowerCase().trim().replace(/\s+/g, '-') + '-jobs';
+  const where = (searchLocation || '').trim();
+  return `https://au.seek.com/${slug}`
+    + (where ? `?where=${encodeURIComponent(where)}` : '');
 }

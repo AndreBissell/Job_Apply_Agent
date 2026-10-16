@@ -1,5 +1,5 @@
 """Load check for the side panel's scripts: does every script load, in order, and does
-the panel survive its tabs, Personalise, zoom and every live-update event?
+the panel survive its tabs, Settings, zoom and every live-update event?
 
     python tests/e2e/sidebar_load_e2e.py            # headless Chromium
     python tests/e2e/sidebar_load_e2e.py --headed
@@ -21,7 +21,7 @@ It needs NO backend and can't reach Seek:
 
 Checks: no page error on load; every top-level name of every script in sidebar.html can
 be read (a script that never ran, or died part-way, leaves names missing or in the
-temporal dead zone); each tab draws; Personalise opens; zoom in and out; each SSE event
+temporal dead zone); each tab draws; Settings opens; zoom in and out; each SSE event
 the panel listens for fires without a page error; nothing opened a tab or left the
 machine. Exit code 0 = all checks passed.
 """
@@ -41,7 +41,8 @@ sys.path.insert(0, str(ROOT / "scripts"))
 EXTENSION = ROOT / "extension"
 PORT = 8001
 SSE_EVENTS = ["job_processed", "cover_letter_ready", "letter_run_started", "letter_run_waiting",
-              "letter_run_done", "letter_run_failed", "llm_budget_blocked"]
+              "letter_run_done", "letter_run_failed", "llm_budget_blocked", "job_applied",
+              "evidence_changed"]
 
 # Runs in every page before its own scripts. Only the panel's names are touched.
 INIT_SCRIPT = """
@@ -172,15 +173,41 @@ def run(headed: bool) -> int:
             c.check(shown == [tab], f"{tab} tab: only its section shows ({shown})")
             settle(f"opening the {tab} tab")
 
-        # --- Personalise --------------------------------------------------------
-        print("Personalise")
-        side.click("nav#tabs .tab[data-tab=jobs]")
-        side.click("#personalise-toggle")
-        c.check(side.get_attribute("#personalise-toggle", "aria-expanded") == "true"
-                and side.is_visible("#personalise-panel"), "Personalise opens")
-        settle("opening Personalise")
-        side.click("#personalise-toggle")
-        c.check(side.is_hidden("#personalise-panel"), "Personalise closes")
+        # --- Settings (the header's ⚙; docs/pipeline-tab-plan.md D12) ------------
+        print("Settings")
+        c.check(side.locator("nav#tabs .tab[data-tab=jobs]").inner_text() == "Pipeline",
+                "the Jobs tab is labelled Pipeline")
+        c.check(side.is_visible("#budget-banner") is False and side.locator("#jobs-section #budget-banner").count() == 0,
+                "the budget banner sits outside the tabs (hidden while nothing is blocked)")
+        c.check(side.locator("#suggestion-banner").count() == 0, "the old suggestion banner is gone")
+        side.click("nav#tabs .tab[data-tab=applied]")
+        side.click("#settings-btn")
+        shown = [t for t, sel in sections.items() if side.is_visible(sel)]
+        c.check(side.is_visible("#settings-section") and shown == []
+                and side.get_attribute("#settings-btn", "aria-expanded") == "true"
+                and side.locator("nav#tabs .tab.active").count() == 0,
+                f"⚙ opens Settings over every tab ({shown})")
+        c.check(side.is_visible("#auto-letter-min") and side.is_visible("#availability-checks")
+                and side.locator("#settings-section .set-group").count() == 2
+                and side.locator("#settings-section button.btn:not(#settings-back)").count() == 0,
+                "Settings holds two groups of controls and no Save buttons")
+        settle("opening Settings")
+        side.click("#settings-back")
+        c.check(side.is_hidden("#settings-section") and side.is_visible("#applied-section")
+                and side.locator("nav#tabs .tab.active").inner_text() == "Applied",
+                "Back returns to the tab Settings was opened from")
+        side.click("#settings-btn")
+        side.keyboard.press("Escape")
+        c.check(side.is_hidden("#settings-section") and side.is_visible("#applied-section"), "Esc closes Settings")
+        side.click("#settings-btn")
+        side.click("#settings-btn")
+        c.check(side.is_hidden("#settings-section") and side.is_visible("#applied-section"), "⚙ again closes Settings")
+        side.click("#settings-btn")
+        side.click("nav#tabs .tab[data-tab=profile]")
+        c.check(side.is_hidden("#settings-section") and side.is_visible("#profile-section")
+                and side.get_attribute("#settings-btn", "aria-expanded") == "false",
+                "clicking a tab closes Settings")
+        side.click("nav#tabs .tab[data-tab=overview]")
 
         # --- zoom ---------------------------------------------------------------
         print("Zoom")

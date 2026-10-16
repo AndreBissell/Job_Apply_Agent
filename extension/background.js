@@ -17,12 +17,23 @@ function tellSeekTabs(type) {
   });
 }
 
-// Tabs the side panel's scan opened (sidebar.js produce()). The scan reads and
-// ingests those pages itself, so content_script.js asks IS_SCAN_TAB and skips its
-// own capture there. Lost if the worker restarts, which only brings back the
-// harmless double capture (an upsert), never a missed one.
+// Tabs the side panel opened in the background: the scan's job pages (sidebar_scan.js
+// produce()) and the availability re-checks (sidebar_availability.js). The panel reads those
+// pages itself, so content_script.js asks IS_SCAN_TAB and skips its own capture and its own
+// "looks closed" flagging there. MV3 kills an idle service worker, so the set is mirrored
+// into chrome.storage.session (kept until the browser closes) and reloaded on wake-up;
+// every handler waits for that reload first. Without it a restart mid-check would let the
+// content script run in a check tab and flag a job on a single, uncorroborated miss.
 const scanTabs = new Set();
-chrome.tabs.onRemoved.addListener((id) => scanTabs.delete(id));
+const scanTabsReady = chrome.storage.session.get('scanTabs')
+  .then(({ scanTabs: saved }) => { for (const id of saved || []) scanTabs.add(id); })
+  .catch(() => {});
+function saveScanTabs() {
+  return chrome.storage.session.set({ scanTabs: [...scanTabs] }).catch(() => {});
+}
+chrome.tabs.onRemoved.addListener((id) => {
+  scanTabsReady.then(() => { if (scanTabs.delete(id)) return saveScanTabs(); });
+});
 
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== 'sidebar') return;
@@ -41,13 +52,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     chrome.action.setBadgeBackgroundColor({ color: '#2557a7' });
     console.log('[SeekAssistant BG] Ingest done:', msg);
   } else if (msg && msg.type === 'SCAN_TAB_ADD') {
-    scanTabs.add(msg.tabId);
-    sendResponse({ ok: true });
+    // Stored before the reply: the panel waits for it before the page finishes loading.
+    scanTabsReady.then(() => { scanTabs.add(msg.tabId); return saveScanTabs(); })
+      .then(() => sendResponse({ ok: true }));
   } else if (msg && msg.type === 'SCAN_TAB_REMOVE') {
-    scanTabs.delete(msg.tabId);
-    sendResponse({ ok: true });
+    scanTabsReady.then(() => { scanTabs.delete(msg.tabId); return saveScanTabs(); })
+      .then(() => sendResponse({ ok: true }));
   } else if (msg && msg.type === 'IS_SCAN_TAB') {
-    sendResponse({ scan: scanTabs.has(sender.tab?.id) });
+    scanTabsReady.then(() => sendResponse({ scan: scanTabs.has(sender.tab?.id) }));
   } else if (msg && msg.type === 'GET_SESSION_COUNT') {
     sendResponse({ count: capturedThisSession });
   } else if (msg && msg.type === 'BACKEND_FETCH') {
@@ -71,16 +83,35 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // captureVisibleTab only works from an extension page (not a content script
     // directly), and only captures whichever tab is currently active in the
     // given window — that's why this is relayed through the background worker
-    // rather than called straight from content_script.js. Covered by the
-    // existing au.seek.com/www.seek.com.au host_permissions, no extra grant needed.
-    const windowId = sender.tab ? sender.tab.windowId : chrome.windows.WINDOW_ID_CURRENT;
-    chrome.tabs.captureVisibleTab(windowId, { format: 'png' }, (dataUrl) => {
-      if (chrome.runtime.lastError) {
-        sendResponse({ error: chrome.runtime.lastError.message });
-      } else {
-        sendResponse({ dataUrl });
-      }
-    });
+    // rather than called straight from content_script.js. Chrome allows it only with
+    // "<all_urls>" or activeTab (a Seek host permission is NOT enough; activeTab needs a
+    // toolbar click), so the manifest has "<all_urls>" FOR THIS CALL ONLY (owner decision
+    // 2026-10-14, docs/centrelink-ease-apply-plan.md). Content scripts still run on Seek
+    // only; tests/test_extension_permissions.py pins both.
+    // Only for the tab that asked, and only while it is the active tab in its window:
+    // otherwise the capture would be of some other page (apply_flow.js waits for its tab
+    // to be visible, but the user can switch tabs in between).
+    const capture = () => {
+      const windowId = sender.tab ? sender.tab.windowId : chrome.windows.WINDOW_ID_CURRENT;
+      chrome.tabs.captureVisibleTab(windowId, { format: 'png' }, (dataUrl) => {
+        if (chrome.runtime.lastError) {
+          sendResponse({ error: chrome.runtime.lastError.message });
+        } else {
+          sendResponse({ dataUrl });
+        }
+      });
+    };
+    if (!sender.tab) {
+      sendResponse({ error: 'no sender tab' });
+    } else {
+      chrome.tabs.get(sender.tab.id, (tab) => {
+        if (chrome.runtime.lastError || !tab || !tab.active) {
+          sendResponse({ error: 'that tab is not the one on screen' });
+        } else {
+          capture();
+        }
+      });
+    }
   }
   return true; // keep the message channel open for async sendResponse
 });

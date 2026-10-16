@@ -74,6 +74,11 @@ DEFAULTS: dict = {
     # analysed and no model is called (decided 2026-10-05, user: off covers ALL assisted
     # questions, choice questions included). Capture into the bank still happens.
     "screening_question_help_enabled": True,
+    # Background availability checks (app/availability.py): the side panel re-visits stored
+    # listings to see whether they are still advertised, and the LLM pipeline only spends on
+    # a job seen live recently. Off = no re-visits and no freshness gate (an already-flagged
+    # job is still skipped).
+    "availability_checks_enabled": True,
     # Layer 4 of the search-suggestion pipeline. OFF by default and opt-in from
     # the sidebar: every other layer is pure Python and free, and this is the
     # one that spends an LLM call, so it should never switch itself on. See
@@ -92,7 +97,7 @@ DEFAULTS: dict = {
     # to its default rather than breaking the sweep).
     "retention_window_days": 122,
     "retention_floor_matches": 150,
-    "screenshot_ttl_days": 30,
+    "screenshot_ttl_days": 150,
     "stale_profile_weight": 0.35,
     # ISO timestamp of the last completed sweep; written by the sweep itself.
     "retention_last_run": None,
@@ -150,6 +155,11 @@ def get_auto_letter_min_score(db: Session, profile_id: int) -> int:
 def question_help_enabled(db: Session, profile_id: int) -> bool:
     """The Quick Apply question-help toggle; a non-bool stored value reads as on."""
     return get_preferences(db, profile_id).get("screening_question_help_enabled") is not False
+
+
+def availability_checks_enabled(db: Session, profile_id: int) -> bool:
+    """The availability-checks toggle; a non-bool stored value reads as on."""
+    return get_preferences(db, profile_id).get("availability_checks_enabled") is not False
 
 
 def obligation_settings(db: Session, profile_id: int) -> dict:
