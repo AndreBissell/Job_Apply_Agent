@@ -309,8 +309,8 @@ def run(headed: bool, keep: bool = False) -> int:
             c.check(job_row(J_QUICK)[3] == "quick", f"quick ad: apply_type 'quick' ({job_row(J_QUICK)[3]})")
             c.check(wait_until(lambda: shadow_buttons(pg, QA_HOST)) != [],
                     "quick ad: the cover-letter overlay is shown")
-            c.check(shadow_buttons(pg, QA_HOST) == ["Copy", "Save edits", "⟳ Rewrite", "Mark Applied"],
-                    f"overlay buttons are Copy / Save edits / Rewrite / Mark Applied, no Screenshot ({shadow_buttons(pg, QA_HOST)})")
+            c.check(shadow_buttons(pg, QA_HOST) == ["Copy", "Save edits", "Mark Applied"],
+                    f"overlay buttons are Copy / Save edits / Mark Applied, no Screenshot ({shadow_buttons(pg, QA_HOST)})")
 
             pg.goto(f"{SEEK}/job/{J_EXTERNAL}")
             c.check(wait_until(lambda: job_row(J_EXTERNAL)) is not None, "external ad: the detail page was captured")

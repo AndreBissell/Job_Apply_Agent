@@ -9,14 +9,16 @@ Not collected by pytest (needs Chromium and a server). What it does:
 1. Builds a scratch SQLite DB (alembic head): profile 1 with a skill changed on 10 Oct, the
    letter loop OFF (so a rewrite is the one-shot) and availability checks off; three jobs with
    a letter written on 1 Oct (so "before profile update"): A (your edits, in Keep Applying),
-   C (no edits, its ad page is opened) and D (applied).
+   C (no edits, its ad page is opened) and D (applied); and E, written on 15 Oct (up to date).
 2. Starts ``scripts/run_api.py test --db <scratch>`` on port 8001 with LLM_PROVIDER=stub and a
    canned ``cover_letter`` text: a rewrite really runs on the single worker, writes nothing
    to any provider and costs nothing (extract / match have no canned answer and just fail).
 3. Serves the ads as fixture pages through request interception; any other Seek request is
    a 404 from the harness and anything else off-machine is aborted. The side panel's
    ``chrome.tabs.create`` is recorded, never done.
-4. Checks: the card's "Written 1 Oct, before profile update" and two-click Rewrite (the first
+4. Checks: only an outdated letter offers Rewrite (E's card shows its date and no button, and
+   the button goes once a rewrite lands, on the card and on the panel); the card's "Written 1
+   Oct, before profile update" and two-click Rewrite (the first
    click names the cost and that it replaces your edits, sends nothing, then disarms; the
    second queues one POST with discard_edits); the new letter lands, your edits are replaced
    (D1), ``generated_at`` moves and the card comes back "Written <today>" with no "Writing…";
@@ -52,9 +54,10 @@ SEEK = "https://www.seek.com.au"
 SEEK_HOSTS = {"www.seek.com.au", "au.seek.com", "seek.com.au"}
 QA_HOST = "seek-assistant-quick-apply-host"
 
-J_A, J_C, J_D = "90000011", "90000013", "90000014"
+J_A, J_C, J_D, J_E = "90000011", "90000013", "90000014", "90000015"
 OLD = "2026-10-01 00:00:00"          # when the seeded letters were written
 PROFILE_CHANGED = "2026-10-10 00:00:00"
+FRESH = "2026-10-15 00:00:00"        # job E's letter: after the profile change, so no Rewrite
 EDITED = "Dear Hiring Manager, MY EDITS to letter A. Sincerely, E2E Test"
 REWRITTEN = "Dear Hiring Manager, this is the REWRITTEN letter. Sincerely, E2E Test"
 
@@ -97,9 +100,10 @@ def make_scratch_db(folder: Path) -> Path:
                 "'e2e@example.invalid', 'x', ?)", (json.dumps(prefs),))
     con.execute("INSERT INTO skills (user_id, name, created_at, updated_at) VALUES (1, 'SQL', ?, ?)",
                 (PROFILE_CHANGED, PROFILE_CHANGED))
-    for sid, title, edited, applied in ((J_A, "Graduate Engineer", EDITED, None),
-                                        (J_C, "Support Analyst", None, None),
-                                        (J_D, "Data Analyst", None, "2026-10-12 00:00:00")):
+    for sid, title, edited, applied, written in ((J_A, "Graduate Engineer", EDITED, None, OLD),
+                                                 (J_C, "Support Analyst", None, None, OLD),
+                                                 (J_D, "Data Analyst", None, "2026-10-12 00:00:00", OLD),
+                                                 (J_E, "Platform Engineer", None, None, FRESH)):
         cur = con.execute("INSERT INTO job_listings (source, source_job_id, url, title, company, raw_description) "
                           "VALUES ('seek', ?, ?, ?, 'Example Co', ?)",
                           (sid, f"{SEEK}/job/{sid}", title, f"About the role: {title}."))
@@ -108,7 +112,7 @@ def make_scratch_db(folder: Path) -> Path:
         con.execute("INSERT INTO cover_letters (match_id, generated_content, edited_content, status, created_at, "
                     "updated_at, generated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (match, f"Dear Hiring Manager, the OLD letter for {title}. Sincerely, E2E Test", edited,
-                     "edited" if edited else "draft", OLD, OLD, OLD))
+                     "edited" if edited else "draft", written, written, written))
     con.commit()
     con.close()
     return db
@@ -268,6 +272,10 @@ def run(headed: bool, keep: bool = False) -> int:
             c.check("outdated" in (written.get_attribute("class") or "").split(), "card: marked outdated (amber)")
             btn = card.locator(".mc-rewrite")
             c.check(btn.inner_text() == "⟳ Rewrite", f"card: a Rewrite button ({btn.inner_text()!r})")
+            fresh = side.locator("#ov-scroller .mini-card", has_text="Platform Engineer")
+            c.check(fresh.locator(".mc-written").inner_text() == "Written 15 Oct",
+                    f"fresh card: 'Written 15 Oct', not outdated ({fresh.locator('.mc-written').inner_text()!r})")
+            c.check(fresh.locator(".mc-rewrite").count() == 0, "fresh card: no Rewrite (written after the profile change)")
 
             posts: list[str] = []
             side.on("request", lambda r: "/regenerate" in r.url and r.method == "POST" and posts.append(r.url))
@@ -295,6 +303,7 @@ def run(headed: bool, keep: bool = False) -> int:
                                new_card.locator(".mc-written-when").inner_text() == today_label, timeout_s=25),
                     f"card: back as '{today_label}', not outdated")
             c.check(new_card.locator(".mc-writing").count() == 0, "card: no 'Writing…' left behind")
+            c.check(new_card.locator(".mc-rewrite").count() == 0, "card: no Rewrite once the letter is up to date")
 
             req = urllib.request.Request(f"{BACKEND}/jobs/{job_id(J_D)}/regenerate?profile_id=1", method="POST")
             try:
@@ -328,6 +337,8 @@ def run(headed: bool, keep: bool = False) -> int:
             c.check(shadow_eval(pg, "r => r.querySelector('.written').textContent") == today_label,
                     f"panel: the date updates to '{today_label}'")
             c.check(letter(J_C)[0] == REWRITTEN, "panel: the DB has the new letter")
+            visible = shadow_eval(pg, "r => [...r.querySelectorAll('button')].filter(b => !b.hidden).map(b => b.textContent.trim())")
+            c.check(visible == ["Copy", "Save edits", "Mark Applied"], f"panel: Rewrite goes once it is up to date ({visible})")
             c.check(pg.evaluate("window.__events") == [], "panel: no click/input/submit on Seek's page")
 
             pg.goto(f"{SEEK}/job/{J_D}")

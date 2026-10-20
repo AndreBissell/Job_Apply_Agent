@@ -588,9 +588,10 @@ it claims the job in `letter_bands.queued` (cards show "✍ Writing…"; a secon
 exception to "generation never clears edited_content") clears the edits only once a new letter has
 landed; it always releases and sends SSE `letter_rewrite_done`. UI: Keep Applying card ("Written 14
 Oct", amber "before profile update", two-click "⟳ Rewrite") and the Quick Apply panel on the ad (same,
-polls the local API every 15 s and puts the new letter in its box; none on applied jobs). The stub
+polls the local API every 15 s and puts the new letter in its box; none on applied jobs). D4 (owner):
+ONLY an outdated letter offers Rewrite; /regenerate itself still takes any job (Try again now). The stub
 LLM now answers `complete_text` too (a string in LLM_STUB_RESPONSES). pytest 1813; e2e new
-`letter_rewrite_e2e.py` 31/31, apply_sent 51, dashboard 199, sidebar_load 67, pipeline 86, quick_apply
+`letter_rewrite_e2e.py` 35/35, apply_sent 51, dashboard 199, sidebar_load 67, pipeline 86, quick_apply
 124. Not checked in the user's own Chrome yet; real.db migrates on the next `run_api.py real`.
 
 🔄 BUILT, AWAITING THE USER'S MANUAL CHECKS: Settings simplified — 2026-10-16 (branch `centrelink-ease-apply`)

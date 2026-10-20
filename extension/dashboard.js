@@ -498,15 +498,17 @@ function renderMiniCard(job) {
   return card;
 }
 
-// "Written 14 Oct" (amber, "before profile update", when the profile changed since) and the
-// two-click Rewrite (docs/letter-rewrite-plan.md).
+// "Written 14 Oct", and when the profile changed since (amber, "before profile update") the
+// two-click Rewrite: only an outdated letter offers one (docs/letter-rewrite-plan.md).
 function renderMiniWritten(job) {
   const row = mk('div', 'mc-written' + (job.letter_outdated ? ' outdated' : ''));
   const when = new Date(job.letter_written_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
   const label = mk('span', 'mc-written-when', job.letter_outdated ? `Written ${when}, before profile update` : `Written ${when}`);
-  if (job.letter_outdated) label.title = 'Written before you last changed your profile, so it may miss what you added.';
   row.appendChild(label);
-  row.appendChild(renderMiniRewrite(job));
+  if (job.letter_outdated) {
+    label.title = 'Written before you last changed your profile, so it may miss what you added.';
+    row.appendChild(renderMiniRewrite(job));
+  }
   return row;
 }
 

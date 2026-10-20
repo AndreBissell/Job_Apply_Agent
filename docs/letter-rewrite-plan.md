@@ -45,6 +45,12 @@ Approved by the owner 2026-10-20 with every recommendation below (D1–D3).
 - **D2 Writer:** the same as `/regenerate` (the full pipeline while the loop is on, ≈25¢, 3–4 min).
 - **D3 Re-score:** kept (`force=True` re-extracts and re-scores against the current profile, <1¢).
 
+- **D4 Only outdated letters offer Rewrite** (owner, 2026-10-20, after the first build showed it on
+  every card): the button appears only when the letter was written before the profile last
+  changed, on the card and on the panel, and goes once a rewrite brings it up to date.
+  `/regenerate` itself is unchanged (a failed run's "Try again now" and Quick Apply's "create a
+  cover letter" use it), so redoing a weak but current letter has no button for now.
+
 Not in scope: a "rewrite all outdated" bulk button.
 
 ## Decision log
@@ -61,7 +67,7 @@ Not in scope: a "rewrite all outdated" bulk button.
   - The stub LLM (test-only) now answers `complete_text` from the same canned file, so the e2e
     lands a real rewrite on the worker without a provider.
   - Tests: pytest 1813 (new `tests/test_letter_rewrite.py`); e2e new
-    `tests/e2e/letter_rewrite_e2e.py` 31/31; apply_sent 51, dashboard 199, sidebar_load 67,
+    `tests/e2e/letter_rewrite_e2e.py` 31/31 (35/35 after D4); apply_sent 51, dashboard 199, sidebar_load 67,
     pipeline 86, quick_apply 124.
 
 ## Manual checks (in your own Chrome, REAL backend)
@@ -70,10 +76,11 @@ Start `python scripts/run_api.py real` first: it runs the migration on real.db (
 before this work: the scratchpad's `real.db.bak-2026-10-20`).
 
 - [ ] Overview → Keep Applying: each card says "Written <date>"; letters from before 20 Oct say
-      "before profile update" in amber.
+      "before profile update" in amber and have ⟳ Rewrite; newer ones have no Rewrite.
 - [ ] Rewrite on a card: the first click shows "Rewrite? ≈ 23¢" (or "Replaces your edits · ..."
       on one you edited); left alone it goes back; the second click turns the card "✍ Writing…".
-- [ ] A few minutes later the card is back as "Written <today>", and ⧉ Letter copies the new text.
-- [ ] Open ad on a card: the panel on the ad shows the date and ⟳ Rewrite; a rewrite there puts
-      the new letter in the box when it lands.
+- [ ] A few minutes later the card is back as "Written <today>" with no Rewrite, and ⧉ Letter
+      copies the new text.
+- [ ] Open ad on an outdated card: the panel on the ad shows the date and ⟳ Rewrite; a rewrite
+      there puts the new letter in the box when it lands, and the button goes.
 - [ ] An applied job's ad: the panel has no Rewrite.

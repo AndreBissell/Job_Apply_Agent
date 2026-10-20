@@ -354,7 +354,9 @@ function buildQuickApplyPanel(jobId, data) {
 
   const writtenEl = document.createElement('div');
   body.appendChild(writtenEl);
+  let rewriteBtn = null; // only an outdated letter offers a Rewrite
   const showWritten = (cl) => {
+    if (rewriteBtn) rewriteBtn.hidden = !cl.outdated;
     writtenEl.className = 'written' + (cl.outdated ? ' outdated' : '');
     const when = cl.generated_at
       ? new Date(cl.generated_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' }) : null;
@@ -429,18 +431,20 @@ function buildQuickApplyPanel(jobId, data) {
   body.appendChild(actions);
   const note = document.createElement('div');
   note.className = 'rewrite-note';
-  if (!isApplied) {
-    actions.insertBefore(buildRewriteButton(jobId, data.cover_letter, textarea, note, showWritten), applyBtn);
-    if (data.cover_letter.queued) watchRewrite(jobId, data.cover_letter.generated_at, textarea, note, showWritten);
+  if (!isApplied && data.cover_letter.outdated) {
+    rewriteBtn = buildRewriteButton(jobId, data.cover_letter, textarea, note, showWritten);
+    actions.insertBefore(rewriteBtn, applyBtn);
   }
+  if (!isApplied && data.cover_letter.queued) watchRewrite(jobId, data.cover_letter.generated_at, textarea, note, showWritten);
   body.appendChild(note);
   panel.appendChild(body);
   shadow.appendChild(panel);
 }
 
-// Rewrite (docs/letter-rewrite-plan.md): two clicks, the first says what it costs and that
-// it replaces your edits (D1); the second queues POST /jobs/{id}/regenerate. Not offered on an
-// applied job (the backend refuses one too: its letter is the application record).
+// Rewrite (docs/letter-rewrite-plan.md): offered only when the letter was written before the
+// profile last changed, and never on an applied job (the backend refuses one too: its letter is
+// the application record). Two clicks, the first says what it costs and that it replaces your
+// edits (D1); the second queues POST /jobs/{id}/regenerate. Hidden again once the new one lands.
 function buildRewriteButton(jobId, cl, textarea, note, showWritten) {
   const btn = document.createElement('button');
   btn.className = 'act';
