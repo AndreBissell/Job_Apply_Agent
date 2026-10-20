@@ -2,7 +2,7 @@
 regenerate, delete.
 
 ``regenerate`` queues its work on the single worker as ``worker._bg_executor.submit(
-worker._process_listing, ...)`` (looked up at call time, plan rule M1). ``delete_job`` reads the
+worker._rewrite_letter, ...)`` (looked up at call time, plan rule M1). ``delete_job`` reads the
 screenshots folder as ``paths._screenshots_dir``. Applied jobs are Centrelink evidence:
 ``delete_job`` refuses them with a 409 unless told otherwise, and bulk hide is a soft delete.
 """
@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from app import availability
+from app import availability, letter_bands
 from app.api import events, paths, worker
 from app.api.deps import get_db
 from app.llm.client import DailyQuotaError
@@ -228,28 +228,37 @@ def update_cover_letter(
 def regenerate(
     job_id: int,
     profile_id: int = 1,
+    discard_edits: bool = False,
     db: Session = Depends(get_db),
 ) -> dict:
-    """Re-run extraction + matching + cover letter for one job.
+    """Re-run extraction + matching + cover letter for one job: the Rewrite button and a
+    failed run's "Try again now" (docs/letter-rewrite-plan.md).
 
     Always bypasses the score threshold — the user is making a deliberate
-    choice to generate for this specific listing.
+    choice to generate for this specific listing. The job is marked queued, so the cards
+    show "Writing…" at once; while it is, another call does nothing (``"writing"``).
+    ``discard_edits=true`` (the Rewrite's D1) replaces the user's edits once the new letter
+    has landed; without it, edits are kept as always. 409 for an applied job: its letter is
+    part of the application record (Centrelink evidence).
     """
     job = db.get(JobListing, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
+    match = db.scalar(select(Match).where(Match.user_id == profile_id, Match.job_id == job_id))
+    if match is not None and match.applied_at is not None:
+        raise HTTPException(status_code=409, detail="Already applied: the letter is part of the application record")
+    if not letter_bands.claim_rewrite(job_id):
+        return {"status": "writing"}
 
     # On the single worker, behind whatever the idle loop is running: a full letter run
     # takes minutes, and two LLM jobs must not write the DB or hit the rate limit together.
-    worker._bg_executor.submit(
-        worker._process_listing,
-        job_id,
-        profile_id,
-        job.raw_description is not None,
-        with_cover_letter=True,
-        bypass_threshold=True,
-        force=True,
-    )
+    try:
+        worker._bg_executor.submit(
+            worker._rewrite_letter, job_id, profile_id, job.raw_description is not None, discard_edits,
+        )
+    except Exception:
+        letter_bands.release(job_id)
+        raise
     return {"status": "queued"}
 
 

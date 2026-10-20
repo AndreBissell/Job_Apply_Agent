@@ -99,6 +99,7 @@ async function loadOverview() {
   ovData = obligation;
   if (!ovEditing) renderProgress();
   renderEvidence(evidence);
+  ovRewriteEst = bands?.rewrite_est_usd ?? null;
   // Letters ready to send, and letters being written (shown with a notice); one paused on
   // a question is on the progress card instead.
   renderReady(ready.filter(job => ['ready', 'writing'].includes(coverLetterState(job))));
@@ -391,6 +392,7 @@ function renderStartDateEditor(el, { setup }) {
 // best match first. While any is being written, reload every 15 s: a band letter the worker
 // skips sends no event, so its "Writing" card would otherwise stay.
 let ovWritingPoll = null;
+let ovRewriteEst = null; // USD for one Rewrite (GET /jobs/letter-bands rewrite_est_usd)
 function renderReady(jobs) {
   const keepLeft = ovScroller.scrollLeft;
   ovScroller.innerHTML = '';
@@ -438,6 +440,7 @@ function renderMiniCard(job) {
   title.title = job.title || '';
   card.appendChild(title);
   if (job.company) card.appendChild(mk('div', 'mc-company', job.company));
+  if (coverLetterState(job) !== 'writing' && job.letter_written_at) card.appendChild(renderMiniWritten(job));
 
   const actions = mk('div', 'mc-actions');
   const open = mk('button', 'btn btn-sm', 'Open ad');
@@ -493,6 +496,51 @@ function renderMiniCard(job) {
   });
   card.appendChild(applied);
   return card;
+}
+
+// "Written 14 Oct" (amber, "before profile update", when the profile changed since) and the
+// two-click Rewrite (docs/letter-rewrite-plan.md).
+function renderMiniWritten(job) {
+  const row = mk('div', 'mc-written' + (job.letter_outdated ? ' outdated' : ''));
+  const when = new Date(job.letter_written_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
+  const label = mk('span', 'mc-written-when', job.letter_outdated ? `Written ${when}, before profile update` : `Written ${when}`);
+  if (job.letter_outdated) label.title = 'Written before you last changed your profile, so it may miss what you added.';
+  row.appendChild(label);
+  row.appendChild(renderMiniRewrite(job));
+  return row;
+}
+
+// Two clicks, like Mark applied: the first says what it costs (and that it replaces your
+// edits, D1), the second queues POST /jobs/{id}/regenerate; the card then shows Writing….
+function renderMiniRewrite(job) {
+  const btn = mk('button', 'mc-rewrite', '⟳ Rewrite');
+  btn.title = 'Write a fresh letter for this job from your current profile';
+  let disarm = null;
+  const reset = () => { btn.classList.remove('confirm'); btn.textContent = '⟳ Rewrite'; };
+  btn.addEventListener('click', async () => {
+    if (!btn.classList.contains('confirm')) {
+      const cost = ovRewriteEst != null ? ` ${fmtEstimate(ovRewriteEst)}` : '';
+      btn.classList.add('confirm');
+      btn.textContent = job.letter_edited ? `Replaces your edits ·${cost}` : `Rewrite?${cost}`;
+      disarm = setTimeout(reset, 4000);
+      return;
+    }
+    clearTimeout(disarm);
+    btn.disabled = true;
+    btn.textContent = 'Queuing…';
+    try {
+      const res = await fetch(
+        `${BACKEND}/jobs/${job.job_id}/regenerate?profile_id=${PROFILE_ID}&discard_edits=true`, { method: 'POST' });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
+    } catch (e) {
+      btn.disabled = false;
+      reset();
+      alert(`Could not rewrite the letter: ${e.message}`);
+      return;
+    }
+    refreshDashboard(); // the card comes back as "✍ Writing…"
+  });
+  return btn;
 }
 
 // Bump the counter at once rather than waiting for a reload.

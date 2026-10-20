@@ -23,6 +23,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import app.api.main as main
+from app import letter_bands
 from app.api import events, idle_loop, worker
 import app.api.profile_ui as profile_ui
 from app.db import Base
@@ -282,9 +283,11 @@ class TestRegenerate:
 
         assert res.status_code == 200 and res.json() == {"status": "queued"}
         ((fn, args, kwargs),) = fake.calls
-        assert fn is worker._process_listing
-        assert args[0] == 5 and args[1] == 1
-        assert kwargs == {"with_cover_letter": True, "bypass_threshold": True, "force": True}
+        # _rewrite_letter runs _process_listing(with_cover_letter, bypass_threshold, force) and
+        # releases the queued claim (tests/test_letter_rewrite.py)
+        assert fn is worker._rewrite_letter
+        assert args == (5, 1, True, False) and kwargs == {}
+        letter_bands.release(5)
 
 
 # ---------------------------------------------------------------------------

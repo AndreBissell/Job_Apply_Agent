@@ -18,10 +18,11 @@ Supported providers (set LLM_PROVIDER in .env):
     OPENAI_MODEL_LETTER.
   * "groq"   — dormant fallback (JSON + text only, no tool calling).
   * "stub"   — tests and the Playwright e2e only: no network, nothing spent.
-    ``complete_json`` answers from the JSON file at LLM_STUB_RESPONSES
-    (``{task: response}``) and appends each call to the JSONL file at
-    LLM_STUB_LOG, so a harness can check what reached "the model". A task with
-    no canned response, and every other call, raises LLMError.
+    ``complete_json`` and ``complete_text`` answer from the JSON file at
+    LLM_STUB_RESPONSES (``{task: response}``; a text task's response is a string)
+    and append each call to the JSONL file at LLM_STUB_LOG, so a harness can check
+    what reached "the model". A task with no canned response, and every other call,
+    raises LLMError.
 
 Cross-cutting behaviour that lives here so callers don't reimplement it:
   * an in-process throttle keeps us under ``LLM_RPM`` requests/minute;
@@ -749,8 +750,9 @@ def complete_json(
 _stub_lock = threading.Lock()
 
 
-def _stub_json(task: str, tier: str, user_content: str, job_id: int | None) -> dict[str, Any]:
-    """LLM_PROVIDER=stub: log the call, answer from the canned file. Test-only."""
+def _stub_json(task: str, tier: str, user_content: str, job_id: int | None) -> Any:
+    """LLM_PROVIDER=stub: log the call, answer from the canned file (a dict for JSON tasks,
+    a string for text ones). Test-only."""
     log_path = os.environ.get("LLM_STUB_LOG")
     if log_path:
         entry = {"task": task, "tier": tier, "job_id": job_id, "user_content": user_content}
@@ -777,6 +779,11 @@ def complete_text(
     run_id: int | None = None,
 ) -> str:
     """Prose generation (e.g. cover letters). Returns the model's text output."""
+    if LLM_PROVIDER == "stub":
+        text = _stub_json(task, tier, user_content, job_id)
+        if not isinstance(text, str):
+            raise LLMError(f"LLM_PROVIDER=stub: the canned response for text task {task!r} is not a string")
+        return text
     model = model_for(tier)
     ids = dict(tier=tier, task=task, job_id=job_id, match_id=match_id, run_id=run_id)
 

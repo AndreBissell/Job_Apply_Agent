@@ -17,7 +17,7 @@ import math
 import threading
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app import availability
@@ -33,6 +33,10 @@ WRITE_CAP = 10  # letters queued per click
 ESTIMATE_SAMPLE = 20
 ESTIMATE_MIN = 3
 ESTIMATE_DEFAULT_USD = 0.10
+# A Rewrite's estimate while the full pipeline writes it: the mean of the latest
+# ESTIMATE_SAMPLE pipeline runs (their llm_usage rows summed by run_id); before
+# ESTIMATE_MIN of them, this.
+REWRITE_DEFAULT_USD = 0.25
 
 # Runs that already hold a match (production.LIVE_STATUSES): a one-shot must not land
 # underneath one. Repeated here so this module stays free of the letter engines.
@@ -90,9 +94,27 @@ def letter_cost_estimate(db: Session) -> tuple[float, str]:
     return ESTIMATE_DEFAULT_USD, "default"
 
 
+def rewrite_cost_estimate(db: Session, profile_id: int) -> float:
+    """USD for one Rewrite (docs/letter-rewrite-plan.md, D2): what the latest full-pipeline runs
+    cost here while the letter loop is on (/regenerate then runs the pipeline), else the
+    one-pass estimate."""
+    if not letter_settings(db, profile_id)["enabled"]:
+        return letter_cost_estimate(db)[0]
+    costs = db.scalars(
+        select(func.sum(LlmUsage.cost_usd))
+        .where(LlmUsage.run_id.is_not(None), LlmUsage.cost_usd.is_not(None))
+        .group_by(LlmUsage.run_id)
+        .order_by(func.max(LlmUsage.id).desc())
+        .limit(ESTIMATE_SAMPLE)
+    ).all()
+    if len(costs) >= ESTIMATE_MIN:
+        return round(sum(float(c) for c in costs) / len(costs), 4)
+    return REWRITE_DEFAULT_USD
+
+
 def summary(db: Session, profile_id: int, now: datetime | None = None) -> dict:
     """GET /jobs/letter-bands: ``{bar, width, total, writing, est_usd_per_letter, est_basis,
-    bands: [{lo, hi, count, ready, waiting_check}]}``. ``ready`` passes the freshness gate
+    bands: [{lo, hi, count, ready, waiting_check}], rewrite_est_usd}``. ``ready`` passes the freshness gate
     (D6); the rest wait for an availability check. Jobs queued for a letter are left out of
     the bands (they show in Keep Applying as being written) and counted in ``writing``."""
     bar = letter_settings(db, profile_id)["auto_min_score"]
@@ -112,6 +134,8 @@ def summary(db: Session, profile_id: int, now: datetime | None = None) -> dict:
     return {
         "bar": bar, "width": WIDTH, "total": len(rows), "writing": len(writing),
         "est_usd_per_letter": est, "est_basis": basis, "bands": top,
+        # The Keep Applying cards' Rewrite (docs/letter-rewrite-plan.md).
+        "rewrite_est_usd": rewrite_cost_estimate(db, profile_id),
     }
 
 
@@ -170,6 +194,16 @@ def claim_job(db: Session, profile_id: int, job_id: int, now: datetime | None = 
             return {"job_ids": [], "reason": "writing"}
         queued.add(job_id)
     return {"job_ids": [job_id], "reason": "queued"}
+
+
+def claim_rewrite(job_id: int) -> bool:
+    """A Rewrite (docs/letter-rewrite-plan.md): mark the job queued so every card shows
+    "Writing…" at once. False when it is already queued (a second click does nothing)."""
+    with _lock:
+        if job_id in queued:
+            return False
+        queued.add(job_id)
+    return True
 
 
 def release(*job_ids: int) -> None:

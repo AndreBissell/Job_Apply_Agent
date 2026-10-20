@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -254,6 +255,7 @@ def generate_cover_letter(
                 status="draft",
             )
             db.add(cl)
+        cl.generated_at = datetime.now(timezone.utc)  # saving edits never moves this
 
         db.commit()
         logger.info(

@@ -586,6 +586,9 @@ class CoverLetter(Base):
         server_default=func.now(),
         onupdate=func.now(),
     )
+    # When generated_content was last written (first draft or a regenerate). Saving edits
+    # never moves it, unlike updated_at. NULL only on a row the migration couldn't date.
+    generated_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))
 
     match: Mapped["Match"] = relationship(back_populates="cover_letter")
 

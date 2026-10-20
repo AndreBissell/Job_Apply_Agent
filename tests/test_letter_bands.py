@@ -189,6 +189,7 @@ class TestGetBands:
         assert bands_of(client) == {
             "bar": 75, "width": 5, "total": 0, "writing": 0,
             "est_usd_per_letter": letter_bands.ESTIMATE_DEFAULT_USD, "est_basis": "default", "bands": [],
+            "rewrite_est_usd": letter_bands.REWRITE_DEFAULT_USD,
         }
 
     def test_the_d3_real_db_example(self, client, db):

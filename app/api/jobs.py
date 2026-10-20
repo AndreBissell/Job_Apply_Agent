@@ -227,6 +227,7 @@ def list_jobs(
     rows = db.execute(query.limit(limit).offset(offset)).all()
     ttl = timedelta(days=retention.screenshot_ttl_days(get_preferences(db, profile_id)))
     runs = letter_view.latest_runs(db, [match.id for match, _ in rows])
+    revised = retention.profile_revised_at(db, profile_id)
     reported = retention.reported_match_ids(db, [match.id for match, _ in rows])
     job_ids = [job.id for _, job in rows]
     fresh = set(db.scalars(
@@ -248,7 +249,14 @@ def list_jobs(
             "applied_via": match.applied_via,
             "apply_type": job.apply_type,
             "has_cover_letter": match.cover_letter is not None,
-            # Queued for a one-pass letter by the Overview's "+ letters" (app/letter_bands.py).
+            # When the letter was last written, and whether that was before the profile last
+            # changed (docs/letter-rewrite-plan.md): the cards offer a rewrite.
+            "letter_written_at": _iso(match.cover_letter.generated_at) if match.cover_letter else None,
+            "letter_outdated": _letter_outdated(match.cover_letter, revised),
+            # A Rewrite replaces these (D1), so its confirm click says so.
+            "letter_edited": _letter_edited(match.cover_letter),
+            # Queued for a letter by the Overview's "+ letters", the Pipeline's "Write a letter"
+            # or a Rewrite (app/letter_bands.py).
             "letter_queued": job.id in band_queue,
             **retention.screenshot_fields(match, ttl, match.id in reported),
             "extracted_at": job.extracted_at.isoformat() if job.extracted_at else None,
@@ -265,6 +273,18 @@ def list_jobs(
         }
         for match, job in rows
     ]
+
+
+def _letter_outdated(cover, revised) -> bool:
+    """Was this letter written before the profile's content last changed?"""
+    if cover is None or cover.generated_at is None or revised is None:
+        return False
+    return retention.utc(cover.generated_at) < revised
+
+
+def _letter_edited(cover) -> bool:
+    """Has the user saved edits that differ from the generated text?"""
+    return bool(cover and cover.edited_content and cover.edited_content != cover.generated_content)
 
 
 class BandWrite(BaseModel):
@@ -382,6 +402,11 @@ def get_job(job_id: int, profile_id: int = 1, db: Session = Depends(get_db)) -> 
                 "status": cover.status,
                 "created_at": _iso(cover.created_at),
                 "updated_at": _iso(cover.updated_at),
+                "generated_at": _iso(cover.generated_at),
+                "outdated": _letter_outdated(cover, retention.profile_revised_at(db, profile_id)),
+                "queued": job.id in letter_bands.queued_ids(),
+                "edited": _letter_edited(cover),
+                "rewrite_est_usd": letter_bands.rewrite_cost_estimate(db, profile_id),
             }
             if cover is not None
             else None

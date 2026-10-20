@@ -3018,7 +3018,7 @@
   },
   "/jobs/{job_id}/regenerate": {
    "post": {
-    "description": "Re-run extraction + matching + cover letter for one job.\n\nAlways bypasses the score threshold \u2014 the user is making a deliberate\nchoice to generate for this specific listing.",
+    "description": "Re-run extraction + matching + cover letter for one job: the Rewrite button and a\nfailed run's \"Try again now\" (docs/letter-rewrite-plan.md).\n\nAlways bypasses the score threshold \u2014 the user is making a deliberate\nchoice to generate for this specific listing. The job is marked queued, so the cards\nshow \"Writing\u2026\" at once; while it is, another call does nothing (``\"writing\"``).\n``discard_edits=true`` (the Rewrite's D1) replaces the user's edits once the new letter\nhas landed; without it, edits are kept as always. 409 for an applied job: its letter is\npart of the application record (Centrelink evidence).",
     "operationId": "regenerate_jobs__job_id__regenerate_post",
     "parameters": [
      {
@@ -3038,6 +3038,16 @@
        "default": 1,
        "title": "Profile Id",
        "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "discard_edits",
+      "required": false,
+      "schema": {
+       "default": false,
+       "title": "Discard Edits",
+       "type": "boolean"
       }
      }
     ],

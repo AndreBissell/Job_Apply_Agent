@@ -12,6 +12,8 @@ from __future__ import annotations
 import logging
 from concurrent.futures import ThreadPoolExecutor
 
+from sqlalchemy import select
+
 from app import letter_bands
 from app.api import events
 from app.db import SessionLocal
@@ -19,6 +21,7 @@ from app.llm.client import BudgetExceededError, DailyQuotaError
 from app.llm.extract import extract_job
 from app.llm.letter import production as letter_production
 from app.llm.match import match_job
+from app.models import CoverLetter, Match
 from app.preferences import letter_settings
 
 logger = logging.getLogger(__name__)
@@ -86,6 +89,41 @@ def _process_listing(
             "matching until a detail page is ingested.",
             job_id,
         )
+
+
+def _rewrite_letter(job_id: int, profile_id: int, has_description: bool, discard_edits: bool = False) -> None:
+    """Background task: an explicit Rewrite (docs/letter-rewrite-plan.md). /regenerate's work
+    (re-extract, re-score, a fresh letter), then, with ``discard_edits`` (D1), the user's edits
+    cleared, but only once a NEW letter has landed, so a failed rewrite loses nothing. Always
+    releases the ``letter_bands`` claim and tells the sidebar, so no card stays "Writing…"."""
+    try:
+        before = _generated_at(job_id, profile_id)
+        _process_listing(
+            job_id, profile_id, has_description, with_cover_letter=True, bypass_threshold=True, force=True,
+        )
+        if discard_edits:
+            with SessionLocal() as db:
+                cl = _cover_letter(db, job_id, profile_id)
+                if cl is not None and cl.edited_content and cl.generated_at is not None and cl.generated_at != before:
+                    cl.edited_content = None
+                    cl.status = "draft"
+                    db.commit()
+    finally:
+        letter_bands.release(job_id)
+        events.broadcast_from_thread("letter_rewrite_done", {"job_id": job_id})
+
+
+def _cover_letter(db, job_id: int, profile_id: int) -> CoverLetter | None:
+    return db.scalar(
+        select(CoverLetter).join(Match, Match.id == CoverLetter.match_id)
+        .where(Match.user_id == profile_id, Match.job_id == job_id)
+    )
+
+
+def _generated_at(job_id: int, profile_id: int):
+    with SessionLocal() as db:
+        cl = _cover_letter(db, job_id, profile_id)
+        return cl.generated_at if cl is not None else None
 
 
 def _write_band_letters(job_ids: list[int], profile_id: int) -> None:

@@ -184,7 +184,8 @@ def next_work(db: Session, profile_id: int, *, now: datetime.datetime | None = N
 # Landing a letter
 # ---------------------------------------------------------------------------
 def land_letter(db: Session, match_id: int, text: str) -> CoverLetter:
-    """Write ``text`` to the match's ``generated_content`` (one row per match).
+    """Write ``text`` to the match's ``generated_content`` (one row per match) and stamp
+    ``generated_at``.
 
     ``edited_content`` is never touched: the user's edits survive a regenerate. With
     edits the status stays ``edited`` (they are still what the sidebar shows); without,
@@ -198,6 +199,7 @@ def land_letter(db: Session, match_id: int, text: str) -> CoverLetter:
         cl.generated_content = text
         if not cl.edited_content:
             cl.status = "draft"
+    cl.generated_at = _now()
     db.commit()
     return cl
 

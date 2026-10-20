@@ -328,6 +328,10 @@ function buildQuickApplyPanel(jobId, data) {
       border-radius: 6px; background: #fff; cursor: pointer; color: #374151; }
     button.act:hover { background: #f3f4f6; }
     button.act.applied { border-color: #10b981; color: #059669; }
+    button.act.confirm, button.act.confirm:hover { background: #6d28d9; border-color: #6d28d9; color: #fff; }
+    .written { font-size: 11px; color: #6b7280; margin-bottom: 6px; }
+    .written.outdated { color: #b45309; font-weight: 600; }
+    .rewrite-note { font-size: 11px; color: #6d28d9; font-weight: 600; margin-top: 6px; }
   `;
   shadow.appendChild(style);
 
@@ -347,6 +351,16 @@ function buildQuickApplyPanel(jobId, data) {
   titleEl.className = 'job-title';
   titleEl.textContent = data.title || '';
   body.appendChild(titleEl);
+
+  const writtenEl = document.createElement('div');
+  body.appendChild(writtenEl);
+  const showWritten = (cl) => {
+    writtenEl.className = 'written' + (cl.outdated ? ' outdated' : '');
+    const when = cl.generated_at
+      ? new Date(cl.generated_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' }) : null;
+    writtenEl.textContent = when ? `Written ${when}${cl.outdated ? ', before your profile update' : ''}` : '';
+  };
+  showWritten(data.cover_letter);
 
   const textarea = document.createElement('textarea');
   textarea.value = data.cover_letter.edited_content || data.cover_letter.generated_content || '';
@@ -413,8 +427,79 @@ function buildQuickApplyPanel(jobId, data) {
   actions.appendChild(applyBtn);
 
   body.appendChild(actions);
+  const note = document.createElement('div');
+  note.className = 'rewrite-note';
+  if (!isApplied) {
+    actions.insertBefore(buildRewriteButton(jobId, data.cover_letter, textarea, note, showWritten), applyBtn);
+    if (data.cover_letter.queued) watchRewrite(jobId, data.cover_letter.generated_at, textarea, note, showWritten);
+  }
+  body.appendChild(note);
   panel.appendChild(body);
   shadow.appendChild(panel);
+}
+
+// Rewrite (docs/letter-rewrite-plan.md): two clicks, the first says what it costs and that
+// it replaces your edits (D1); the second queues POST /jobs/{id}/regenerate. Not offered on an
+// applied job (the backend refuses one too: its letter is the application record).
+function buildRewriteButton(jobId, cl, textarea, note, showWritten) {
+  const btn = document.createElement('button');
+  btn.className = 'act';
+  btn.textContent = '⟳ Rewrite';
+  btn.title = 'Write a fresh letter for this job from your current profile';
+  let disarm = null;
+  const reset = () => { btn.classList.remove('confirm'); btn.textContent = '⟳ Rewrite'; };
+  btn.addEventListener('click', async () => {
+    if (!btn.classList.contains('confirm')) {
+      const usd = cl.rewrite_est_usd;
+      const cost = usd != null ? ` ≈ ${usd < 1 ? `${Math.max(1, Math.round(usd * 100))}¢` : `US$${usd.toFixed(2)}`}` : '';
+      btn.classList.add('confirm');
+      btn.textContent = cl.edited ? `Replaces your edits ·${cost}` : `Rewrite?${cost}`;
+      disarm = setTimeout(reset, 4000);
+      return;
+    }
+    clearTimeout(disarm);
+    btn.disabled = true;
+    try {
+      const res = await backendFetch(`${BACKEND}/jobs/${jobId}/regenerate?profile_id=1&discard_edits=true`, { method: 'POST' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    } catch {
+      btn.disabled = false;
+      reset();
+      note.textContent = 'Could not start the rewrite. Is the backend running?';
+      return;
+    }
+    reset();
+    btn.disabled = false;
+    watchRewrite(jobId, cl.generated_at, textarea, note, showWritten);
+  });
+  return btn;
+}
+
+// While a rewrite is queued, check every 15 s (the local API, never Seek); when it ends, put
+// the new letter in the box if one landed. Gives up after 20 minutes.
+const REWRITE_POLL_MS = 15000;
+const REWRITE_POLL_MAX = 80;
+function watchRewrite(jobId, before, textarea, note, showWritten) {
+  note.textContent = '✍ Writing a new letter (a few minutes)…';
+  let tries = 0;
+  const tick = async () => {
+    tries += 1;
+    const data = await fetchJobDetail(jobId);
+    const cl = data?.cover_letter;
+    if (cl && !cl.queued) {
+      if (cl.generated_at !== before) {
+        textarea.value = cl.edited_content || cl.generated_content || '';
+        showWritten(cl);
+        note.textContent = 'New letter ✓';
+      } else {
+        note.textContent = "The rewrite didn't produce a new letter. The side panel says why.";
+      }
+      return;
+    }
+    if (tries < REWRITE_POLL_MAX) setTimeout(tick, REWRITE_POLL_MS);
+    else note.textContent = 'Still writing. Reload the page later to see it.';
+  };
+  setTimeout(tick, REWRITE_POLL_MS);
 }
 
 async function maybeInjectQuickApply(jobId) {
