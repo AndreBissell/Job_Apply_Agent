@@ -574,6 +574,25 @@ screenshot never expires. Endpoints `/evidence/status|bundles|bundles/{id}/downl
 `evidence_changed`. 1655 tests; e2e `apply_sent_e2e.py` 51/51 (+ dashboard 92, sidebar_load 58).
 Part 2 NOT yet checked in the user's own Chrome.
 
+🔄 BUILT, AWAITING THE USER'S MANUAL CHECKS: Rewrite letter + letter date — 2026-10-20 (branch `eval-set-creation`)
+
+docs/letter-rewrite-plan.md (D1–D3 approved; manual checks at its end). `cover_letters.generated_at`
+(migration `e3a7c1d9f264`, backfilled from `llm_usage`) is stamped by both write paths, never by
+saving edits. `GET /jobs` rows: `letter_written_at`, `letter_outdated` (older than
+`retention.profile_revised_at`), `letter_edited`; `GET /jobs/{id}`'s `cover_letter`: `generated_at`,
+`outdated`, `queued`, `edited`, `rewrite_est_usd`; `GET /jobs/letter-bands`: `rewrite_est_usd`
+(`letter_bands.rewrite_cost_estimate`: mean cost per pipeline run from `llm_usage.run_id`, else the
+one-pass estimate while the loop is off). The Rewrite is `/regenerate` (now `worker._rewrite_letter`):
+it claims the job in `letter_bands.queued` (cards show "✍ Writing…"; a second call returns
+`"writing"`), refuses applied jobs (409), and with `discard_edits=true` (the Rewrite's D1, the ONE
+exception to "generation never clears edited_content") clears the edits only once a new letter has
+landed; it always releases and sends SSE `letter_rewrite_done`. UI: Keep Applying card ("Written 14
+Oct", amber "before profile update", two-click "⟳ Rewrite") and the Quick Apply panel on the ad (same,
+polls the local API every 15 s and puts the new letter in its box; none on applied jobs). The stub
+LLM now answers `complete_text` too (a string in LLM_STUB_RESPONSES). pytest 1813; e2e new
+`letter_rewrite_e2e.py` 31/31, apply_sent 51, dashboard 199, sidebar_load 67, pipeline 86, quick_apply
+124. Not checked in the user's own Chrome yet; real.db migrates on the next `run_api.py real`.
+
 🔄 BUILT, AWAITING THE USER'S MANUAL CHECKS: Settings simplified — 2026-10-16 (branch `centrelink-ease-apply`)
 
 docs/settings-simplify-plan.md (D1–D8 approved; manual checks at its end). Side-panel UI only: every

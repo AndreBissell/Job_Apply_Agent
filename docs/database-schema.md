@@ -678,13 +678,24 @@ CREATE TABLE cover_letters (
     status             TEXT        NOT NULL DEFAULT 'draft',   -- 'draft','edited','final'
     created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    generated_at       TIMESTAMPTZ,          -- when generated_content was last written
     UNIQUE (match_id)
 );
 ```
 
+**`generated_at`** (migration `e3a7c1d9f264`, docs/letter-rewrite-plan.md) is stamped by
+both write paths (`production.land_letter`, `cover_letter.py`) on every first draft and
+regenerate; saving edits never moves it (unlike `updated_at`). The API calls a letter
+*outdated* when it is older than the profile's last content change
+(`retention.profile_revised_at`), and the cards then offer a Rewrite. Rows from before the
+column were backfilled from the job's latest letter-writing `llm_usage` call, else
+`created_at`.
+
 **Where a cover-letter run's result lands (Phase 8).** Both the one-shot writer and a
 pipeline run (`letter_runs`) write `generated_content`, and only that. The user's
-`edited_content` is never written or cleared by generation: when a regenerate lands on
+`edited_content` is never written or cleared by generation, with ONE exception: the
+Rewrite button (`/regenerate?discard_edits=true`, the user's explicit choice) clears it once
+the new letter has landed, never before. Otherwise, when a regenerate lands on
 a letter that has edits, the new text replaces `generated_content`, `status` stays
 `edited`, and the edits stay what the sidebar shows (it offers a button to load the
 generated draft into the editor, unsaved until the user saves). Without edits the row
