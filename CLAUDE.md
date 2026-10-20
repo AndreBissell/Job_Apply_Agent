@@ -243,6 +243,8 @@ job-app-assistant/
     letter_lab.py      # cover-letter eval harness (evals/rubric.md); analyze = Phase 3 hand-check pack; loop-report = revisions
     grading_panel.py   # blind Opus grading panel: pack / disagreements / merge (evals/grading-panel.md)
     screening_eval.py  # Quick Apply question-help eval: build-set / sort / labels / drafts / report (Phase 9c)
+    eval_pool.py       # eval set: sorts real.db's ads into the scenarios (docs/eval-set-plan.md), read-only
+    eval_draw.py       # eval set: seeded draw of the candidates -> evals/candidates/candidates.csv
     check_matching.py  # scoring diagnostic report vs expected bands
     check_llm.py       # validate the LLM key before a batch
     smoke_test.py
@@ -573,6 +575,16 @@ in `evidence/<YYYY-MM>/(time)_(date)_(company).png`; "reported" is the `evidence
 screenshot never expires. Endpoints `/evidence/status|bundles|bundles/{id}/download`, SSE
 `evidence_changed`. 1655 tests; e2e `apply_sent_e2e.py` 51/51 (+ dashboard 92, sidebar_load 58).
 Part 2 NOT yet checked in the user's own Chrome.
+
+🔄 IN PROGRESS: Eval set, dev 20 / test 15 from real Seek ads — 2026-10-20 (branch `eval-set-creation`)
+
+docs/eval-set-plan.md (stages, the scenarios with their rules, Decision log; screening-questions
+scenario dropped: no real Seek ad asks questions in its own text). Stage 1 is DONE (145 usable ads;
+`scripts/eval_pool.py` tags them, `scripts/eval_draw.py` drew 49 candidates, seed 20261020). NEXT: the
+owner labels evals/candidates/candidates.csv (Would apply, scenario OK), then freeze, tag and split.
+The real profile is frozen as of 2026-10-20. Strong fit = score 85+ and
+no must-have GAP (`Requirement.needs_user`); partials are allowed (owner, 2026-10-20). Main metric:
+the relevant score (Would apply = Yes ads).
 
 🔄 BUILT, AWAITING THE USER'S MANUAL CHECKS: Rewrite letter + letter date — 2026-10-20 (branch `eval-set-creation`)
 
