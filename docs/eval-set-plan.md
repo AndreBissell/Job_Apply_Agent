@@ -10,7 +10,9 @@ and after changes, at known cost. The dev set is tuned on; the test set is held 
 2. Freeze: snapshot the chosen ads (`letter_lab.py snapshot`) into the eval copy.
 3. Tag each ad: scenario (from analyze_job + match_profile in the eval copy, confirmed by the
    user) and **Would I apply? Yes/No**.
-4. Split: stratified by scenario, random within each scenario, into dev 20 / test 15.
+4. Split: stratified by scenario, random within each scenario, into dev 20 / test 15, with
+   near-duplicate ads kept to one side and used only when needed (rules in the Decision log,
+   2026-10-21; `scripts/eval_split.py`).
 5. Define the metrics before any grading.
 6. Generate letters with the current system (unedited letters are what gets graded).
 7. The user hand-grades the dev letters (no judge grades shown first, so nothing anchors them).
@@ -105,6 +107,29 @@ stage 3.
   78%); keep each family on one side of the dev/test split, or keep one of each.
   Still to do: point letter_lab.py at the frozen set (build eval.db from its profile.db) with the
   dev/test change, then stage 3's paid analysis.
+- 2026-10-21: **near-duplicate rules for the split** (owner), fixed before any letter or grade
+  exists. Why: a family split across dev and test leaks (tuning on one twin partly tunes on the
+  other, so the test score flatters the agent), and two twins on one side double-count one
+  employer's template in a 35-ad set. `scripts/eval_split.py` applies them:
+  1. **Family** = frozen ads whose texts are at least 60% alike (difflib ratio, word by word),
+     joined transitively. At freezing: Hampshire #122/#124/#160 (87%+) and CIMIC #152/#153 (79%);
+     the next pair was 48%, so 60% sits in a clear gap. (Word by word finds the same families as
+     a character comparison in about 2 s, not about 5 minutes.) Reserve ads added later are
+     checked against the whole set the same way.
+  2. **Choose** ads scenario by scenario, scarcest first (fewest spares), seeded random within
+     each; an ad whose family already has a chosen member is skipped, and used only if its
+     scenario would otherwise fall short. Scarcest first means a family member goes to the
+     scenario that needs it most (Hampshire #122 to scenario 1; #124 and #160 have spares).
+  3. **Split:** a family with more than one chosen ad goes to dev, whole. The test set is the
+     honest measure and has only 5 strong-fit slots, so it is kept as varied as possible.
+     Everything else is a seeded random split within each scenario; a scenario that falls short
+     splits in proportion to its dev:test target.
+  4. Scenario 1 is short (10 candidates for 12 slots): a short targeted scan for strong fits
+     comes first, so only one CIMIC ad is needed; the pair goes to dev only if it is still short.
+  Inputs: the frozen ads, and the tags in evals/candidates/candidates.csv (`final_scenario`,
+  filled at stage 3, overrides the draw's `scenario`; `scenario_ok` = N drops an ad). Seed
+  **20261021**. The script prints the split for the owner's review and writes
+  `evals/sets/v2/split.json` only with `--write`.
 
 ## Follow-ups (not for this eval)
 
