@@ -580,8 +580,11 @@ Part 2 NOT yet checked in the user's own Chrome.
 
 docs/eval-set-plan.md (stages, the scenarios with their rules, Decision log; screening-questions
 scenario dropped: no real Seek ad asks questions in its own text). Stage 1 is DONE (145 usable ads;
-`scripts/eval_pool.py` tags them, `scripts/eval_draw.py` drew 49 candidates, seed 20261020). NEXT: the
-owner labels evals/candidates/candidates.csv (Would apply, scenario OK), then freeze, tag and split.
+`scripts/eval_pool.py` tags them, `scripts/eval_draw.py` drew 49 candidates, seed 20261020). The 49 are
+FROZEN (2026-10-21, no LLM) in `evals/sets/v2/` (ads + profile.db + committed MANIFEST.json;
+`python scripts/eval_freeze.py --verify`; `--add` for reserves; never rewrite a frozen file). NEXT: point
+letter_lab.py at the frozen set + dev/test split (diff to the owner first), the paid analysis for the
+real tags, and the owner's labels in evals/candidates/candidates.csv (Would apply, scenario OK).
 The real profile is frozen as of 2026-10-20. Strong fit = score 85+ and
 no must-have GAP (`Requirement.needs_user`); partials are allowed (owner, 2026-10-20). Main metric:
 the relevant score (Would apply = Yes ads).

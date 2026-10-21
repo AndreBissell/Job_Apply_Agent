@@ -91,6 +91,20 @@ stage 3.
   `evals/candidates/candidates.csv` (gitignored: real ads) for the owner's
   Would-apply and scenario labels. Scenario 1 has 10 for 12 slots, but 1 + 2 together have 19 for
   17, and the final 1-vs-2 tags come from stage 3.
+- 2026-10-21: **the 49 candidates frozen** (owner; no LLM calls) into `evals/sets/v2/` by
+  `scripts/eval_freeze.py`: `ads/` (one JSON per ad, letter_lab's snapshot shape), `profile.db`
+  (real.db with every job-side row removed and vacuumed: the frozen profile, since letters depend
+  on it as much as on the ads, and `prepare` otherwise rebuilds it from the live real.db) and
+  `MANIFEST.json` (source, alembic revision, git commit, seed, SHA-256 of every file). Files are
+  read-only; `--verify` checks every hash and that the folder holds exactly the manifest's ads;
+  `--add <id>` appends reserve ads and never rewrites one. A dropped ad stays in the pool: set
+  membership (dev/test) decides what is used. The old 15-ad set (evals/jobs, eval.db, set.json)
+  is untouched. Ads and profile.db are gitignored; only the manifest is committed. Checked: the
+  ids match the sheet, no other ad's text is in the set, real.db unchanged. Found: two families
+  of near-duplicates in the 49 (Hampshire #122/#124/#160 at 90%+ shared text, CIMIC #152/#153 at
+  78%); keep each family on one side of the dev/test split, or keep one of each.
+  Still to do: point letter_lab.py at the frozen set (build eval.db from its profile.db) with the
+  dev/test change, then stage 3's paid analysis.
 
 ## Follow-ups (not for this eval)
 
