@@ -25,6 +25,16 @@ mechanical items, you grade the judgement items in a CSV.
     python scripts/letter_lab.py run --engine agent      # Phase 7a: the agent over the same tools; loop-report adds path + overhead
     python scripts/letter_lab.py run --engine agent --side-outputs all   # Phase 7c: + screening/learning/résumé side outputs
 
+Eval sets (`--set`, on every command; default v1):
+    v1  the original 15-ad set: evals/jobs/ -> evals/eval.db, evals/set.json, evals/runs/
+    v2  the frozen set in evals/sets/v2/ (scripts/eval_freeze.py; ads AND profile frozen).
+        Working files in evals/work/v2/ (eval.db, set.json, runs/), summaries in
+        evals/results/v2/. No `snapshot`: the ads are already frozen.
+
+    python scripts/letter_lab.py prepare --set v2                       # verify, build once, score unscored ads
+    python scripts/letter_lab.py prepare --set v2 --only seek-95084241  # score just these
+    python scripts/letter_lab.py analyze --set v2 --only seek-95084241 --label trial
+
 Privacy: evals/jobs/, evals/eval.db, evals/set.json and evals/runs/ hold ad text,
 your profile and letters written as you — all gitignored. Only the summary in
 evals/results/ (titles, pass/fail, cost) is meant to be committed.
@@ -80,6 +90,35 @@ _SNAPSHOT_COLUMNS = (
     "salary", "classification", "subclassification", "raw_description",
 )
 
+# Each eval set's paths. v1 is what the module-level constants above already hold, so
+# importing this file (as the tests do) behaves exactly as before. `frozen` = the set's
+# read-only inputs (ads + profile.db), None for v1, whose ads come from `snapshot`.
+SETS = {
+    "v1": {"eval_db": EVAL_DB, "set_file": SET_FILE, "runs": RUNS_DIR, "results": RESULTS_DIR,
+           "frozen": None},
+    "v2": {"eval_db": EVALS / "work" / "v2" / "eval.db", "set_file": EVALS / "work" / "v2" / "set.json",
+           "runs": EVALS / "work" / "v2" / "runs", "results": RESULTS_DIR / "v2",
+           "frozen": EVALS / "sets" / "v2"},
+}
+FROZEN_DIR: Path | None = None  # the active set's frozen inputs (set by _use_set)
+
+
+def _use_set(name: str) -> None:
+    """Point every path, and DATABASE_URL, at one eval set. Called from main() after the
+    arguments are parsed and BEFORE any command runs, i.e. before anything imports app.db,
+    which reads DATABASE_URL once. If app.db is already imported with another URL, eval
+    spend would be logged to the wrong DB, so this refuses instead of carrying on."""
+    global EVAL_DB, SET_FILE, RUNS_DIR, RESULTS_DIR, FROZEN_DIR
+    paths = SETS[name]
+    url = f"sqlite:///{paths['eval_db'].as_posix()}"
+    db_module = sys.modules.get("app.db")
+    if db_module is not None and db_module.DATABASE_URL != url:
+        raise SystemExit(f"app.db is already connected to {db_module.DATABASE_URL}, not set {name}'s "
+                         f"{url}; refusing so no spend lands in the wrong DB")
+    EVAL_DB, SET_FILE = paths["eval_db"], paths["set_file"]
+    RUNS_DIR, RESULTS_DIR, FROZEN_DIR = paths["runs"], paths["results"], paths["frozen"]
+    os.environ["DATABASE_URL"] = url
+
 
 def _key(source: str, source_job_id: str) -> str:
     return f"{source}-{source_job_id}"
@@ -95,6 +134,9 @@ def cmd_snapshot(args) -> int:
     source DB on an older migration still works). Synthetic `source='test'`
     jobs are skipped: the eval set should be real ads.
     """
+    if FROZEN_DIR is not None:
+        print(f"This set's ads are frozen in {FROZEN_DIR.relative_to(ROOT)}; there is nothing to snapshot.")
+        return 1
     JOBS_DIR.mkdir(parents=True, exist_ok=True)
     written = skipped = 0
     for src in args.sources:
@@ -241,10 +283,16 @@ def _choose_set(scored: list[tuple[str, int]]) -> list[str]:
 
 
 def cmd_prepare(args) -> int:
+    if FROZEN_DIR is not None:
+        return _prepare_frozen(args)
+    if args.only or args.rebuild:
+        print("--only and --rebuild are for a frozen set (--set v2); v1's prepare always rebuilds.")
+        return 1
     ads = sorted(JOBS_DIR.glob("*.json"))
     if not ads:
         print("No ads in evals/jobs/ — run `letter_lab.py snapshot` first.")
         return 1
+    args.profile_db = args.profile_db or "real.db"
     profile_db = ROOT / args.profile_db
     if not profile_db.exists():
         print(f"Profile DB {args.profile_db} not found.")
@@ -303,6 +351,114 @@ def cmd_prepare(args) -> int:
         chosen = _choose_set(scored)
         SET_FILE.write_text(json.dumps({"jobs": chosen}, indent=2), encoding="utf-8")
         print(f"\nEval set: {len(chosen)} ads -> {SET_FILE.relative_to(ROOT)} (edit it to swap ads in/out).")
+    return 0
+
+
+def _rel(path: Path) -> str:
+    """A path relative to the repo when it is inside it (the tests use tmp folders)."""
+    try:
+        return str(path.relative_to(ROOT))
+    except ValueError:
+        return str(path)
+
+
+def _prepare_frozen(args) -> int:
+    """prepare for a frozen set: every input comes from FROZEN_DIR, never from real.db.
+
+    Picks up where it left off: eval.db is built from the frozen profile.db only when it
+    is missing (or --rebuild), frozen ads it lacks are added, and only ads without a
+    score are extracted and scored. The inputs never change, so rebuilding would only
+    re-roll the scores (Gemini 3 runs at temperature 1.0) and pay for them again.
+    No _choose_set: set.json lists every frozen ad, written once; the dev/test split is
+    scripts/eval_split.py's job and is reviewed before set.json changes.
+    """
+    if args.profile_db or args.reselect:
+        print("--profile-db and --reselect don't apply to a frozen set: its profile is "
+              f"{_rel(FROZEN_DIR / 'profile.db')} and its set is every frozen ad.")
+        return 1
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import eval_freeze  # no side effects on import (no app/ imports)
+
+    problems = eval_freeze.verify(FROZEN_DIR)
+    if problems:
+        print(f"{_rel(FROZEN_DIR)} FAILED verification, so nothing was built:\n  " + "\n  ".join(problems))
+        return 1
+    manifest = json.loads((FROZEN_DIR / "MANIFEST.json").read_text(encoding="utf-8"))
+    keys = [a["key"] for a in manifest["ads"]]
+    unknown = sorted(set(args.only or ()) - set(keys))
+    if unknown:
+        print(f"Not in the frozen set: {', '.join(unknown)}")
+        return 1
+
+    if args.rebuild or not EVAL_DB.exists():
+        analyses = _saved_analyses()  # a --rebuild keeps the analyze_job cache, as v1 does
+        EVAL_DB.parent.mkdir(parents=True, exist_ok=True)
+        print(f"Building {_rel(EVAL_DB)} from {_rel(FROZEN_DIR / 'profile.db')} (frozen profile) ...")
+        _build_eval_db(FROZEN_DIR / "profile.db")
+    else:
+        analyses = {}
+        print(f"Using the existing {_rel(EVAL_DB)} (pass --rebuild to start over)")
+        _migrate_eval_db()
+
+    from sqlalchemy import select
+
+    from app.db import SessionLocal
+    from app.llm.client import DailyQuotaError
+    from app.llm.extract import extract_job
+    from app.llm.match import match_job
+    from app.models import JobListing, Match, Profile
+
+    with SessionLocal() as db:
+        profile = db.get(Profile, PROFILE_ID)
+        if profile is None:
+            print(f"No profile {PROFILE_ID} in the frozen profile.db.")
+            return 1
+        print(f"Profile: {profile.name}")
+        have = {_key(s, sid) for s, sid in db.execute(select(JobListing.source, JobListing.source_job_id))}
+        added = 0
+        for entry in manifest["ads"]:
+            if entry["key"] in have:
+                continue
+            data = json.loads((FROZEN_DIR / entry["file"]).read_text(encoding="utf-8"))
+            job = JobListing(**{c: data.get(c) for c in _SNAPSHOT_COLUMNS})
+            checklist, at = analyses.get(entry["key"], (None, None))
+            if checklist:
+                job.requirements_checklist = checklist
+                job.requirements_checklist_at = datetime.datetime.fromisoformat(at) if at else None
+            db.add(job)
+            added += 1
+        db.commit()
+        print(f"Loaded {added} frozen ads ({len(have)} already there)")
+        todo = []
+        for job in db.scalars(select(JobListing).order_by(JobListing.id)):
+            key = _key(job.source, job.source_job_id)
+            if args.only and key not in args.only:
+                continue
+            m = db.scalar(select(Match).where(Match.job_id == job.id, Match.user_id == PROFILE_ID))
+            if m is None or m.score is None:
+                todo.append((job.id, key, job.title))
+
+    print(f"Extracting + scoring {len(todo)} ads (small tier, ~{len(todo) * 2} calls) ...")
+    for job_id, key, title in todo:
+        try:
+            extract_job(job_id)  # skips an ad already extracted
+            match_job(job_id, PROFILE_ID)
+        except DailyQuotaError as exc:
+            print(f"Stopped: {exc}  (run prepare again to carry on)")
+            return 1
+        with SessionLocal() as db:
+            m = db.scalar(select(Match).where(Match.job_id == job_id, Match.user_id == PROFILE_ID))
+            score = int(m.score) if m and m.score is not None else -1
+        print(f"  {score:>4}  {key}  {title[:50]}")
+
+    if not SET_FILE.exists():
+        SET_FILE.write_text(json.dumps({"jobs": keys}, indent=2), encoding="utf-8")
+        print(f"\nEval set: all {len(keys)} frozen ads -> {_rel(SET_FILE)}")
+    else:
+        listed = json.loads(SET_FILE.read_text(encoding="utf-8"))["jobs"]
+        missing = [k for k in keys if k not in listed]
+        print(f"\nKept {_rel(SET_FILE)} ({len(listed)} ads)"
+              + (f"; {len(missing)} frozen ads are not in it: {', '.join(missing)}" if missing else ""))
     return 0
 
 
@@ -1302,6 +1458,12 @@ def cmd_analyze(args) -> int:
         print("Run `letter_lab.py prepare` first.")
         return 1
     keys = json.loads(SET_FILE.read_text(encoding="utf-8"))["jobs"]
+    if args.only:
+        unknown = sorted(set(args.only) - set(keys))
+        if unknown:
+            print(f"Not in {_rel(SET_FILE)}: {', '.join(unknown)}")
+            return 1
+        keys = [k for k in keys if k in args.only]
     _migrate_eval_db()
 
     from sqlalchemy import select
@@ -1691,21 +1853,31 @@ def func_sum(col):
     return func.coalesce(func.sum(col), 0)
 
 
-def main() -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = parser.add_subparsers(dest="cmd", required=True)
+    # --set on every command, so it reads naturally after the command name.
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--set", choices=sorted(SETS), default="v1",
+                        help="eval set: v1 = the original 15 ads (default), v2 = the frozen evals/sets/v2")
 
-    p = sub.add_parser("snapshot", help="copy real Seek ads into evals/jobs/")
+    def add(name, **kw):
+        return sub.add_parser(name, parents=[common], **kw)
+
+    p = add("snapshot", help="copy real Seek ads into evals/jobs/")
     p.add_argument("--sources", nargs="+", default=["real.db", "app.db"])
     p.add_argument("--force", action="store_true", help="overwrite existing snapshots")
     p.set_defaults(fn=cmd_snapshot)
 
-    p = sub.add_parser("prepare", help="build evals/eval.db, extract + score, choose the set")
-    p.add_argument("--profile-db", default="real.db", help="DB whose profile 1 the letters are written for")
-    p.add_argument("--reselect", action="store_true", help="rebuild evals/set.json even if it exists")
+    p = add("prepare", help="build evals/eval.db, extract + score, choose the set")
+    p.add_argument("--profile-db", help="v1: DB whose profile 1 the letters are written for (default real.db)")
+    p.add_argument("--reselect", action="store_true", help="v1: rebuild evals/set.json even if it exists")
+    p.add_argument("--only", nargs="+", metavar="KEY", help="v2: extract + score just these frozen ads")
+    p.add_argument("--rebuild", action="store_true",
+                   help="v2: build eval.db again from the frozen profile (re-scores every ad)")
     p.set_defaults(fn=cmd_prepare)
 
-    p = sub.add_parser("run", help="write one letter per set job")
+    p = add("run", help="write one letter per set job")
     p.add_argument("--engine", choices=sorted(ENGINES), default="oneshot")
     p.add_argument("--side-outputs", choices=["none", "all"], default="none",
                    help="workflow/agent: also offer the Phase 7c side-output tools (default none)")
@@ -1715,36 +1887,37 @@ def main() -> int:
                    help="continue an interrupted run (same --label): keep finished jobs, redo the rest")
     p.set_defaults(fn=cmd_run)
 
-    p = sub.add_parser("read", help="write evals/runs/<run>/letters.md, every letter in one readable file")
+    p = add("read", help="write evals/runs/<run>/letters.md, every letter in one readable file")
     p.add_argument("run_id")
     p.add_argument("--against", help="another run to show each job's letter from, folded underneath")
     p.set_defaults(fn=cmd_read)
 
-    p = sub.add_parser("report", help="merge code checks + grades into evals/results/<run>.md")
+    p = add("report", help="merge code checks + grades into evals/results/<run>.md")
     p.add_argument("run_id")
     p.add_argument("--grades", default="grades.csv",
                    help="grades file in the run folder (grades-opus-v1.csv -> evals/results/<run>-opus-v1.md)")
     p.set_defaults(fn=cmd_report)
 
-    p = sub.add_parser("loop-report", help="per-draft checks and what each revision changed -> evals/results/<run>-loop.md")
+    p = add("loop-report", help="per-draft checks and what each revision changed -> evals/results/<run>-loop.md")
     p.add_argument("run_id", help="a `run --engine tools|workflow|agent` run")
     p.add_argument("--against", help="another tools/workflow run to compare on the jobs both ran (e.g. tools-v1)")
     p.set_defaults(fn=cmd_loop_report)
 
-    p = sub.add_parser("cost-report", help="per-task cost, tokens and time -> evals/results/cost-<runs>.md")
+    p = add("cost-report", help="per-task cost, tokens and time -> evals/results/cost-<runs>.md")
     p.add_argument("run_ids", nargs="+", help="tools/workflow/agent runs (they need letter_run_id rows in eval.db)")
     p.set_defaults(fn=cmd_cost_report)
 
-    p = sub.add_parser("analyze", help="run analyze_job + match_profile on the set; write a hand-check pack")
+    p = add("analyze", help="run analyze_job + match_profile on the set; write a hand-check pack")
     p.add_argument("--label", help="run id (default: analysis-<timestamp>)")
     p.add_argument("--force", action="store_true", help="ignore the cached analysis and redo it")
+    p.add_argument("--only", nargs="+", metavar="KEY", help="just these set keys (e.g. seek-94419843)")
     p.set_defaults(fn=cmd_analyze)
 
-    p = sub.add_parser("analysis-report", help="summarise your checks.csv grades")
+    p = add("analysis-report", help="summarise your checks.csv grades")
     p.add_argument("run_id")
     p.set_defaults(fn=cmd_analysis_report)
 
-    p = sub.add_parser("plant", help="planted-claim test: does check_claims catch false claims? (Phase 5)")
+    p = add("plant", help="planted-claim test: does check_claims catch false claims? (Phase 5)")
     p.add_argument("run_id", help="a `run --engine tools` run whose letters passed check_claims")
     p.add_argument("--tiers", nargs="+", default=["small", "mid"], choices=["small", "mid", "strong"])
     p.add_argument("--per-letter", type=int, default=2, help="plants per letter (types rotate)")
@@ -1753,7 +1926,12 @@ def main() -> int:
     p.add_argument("--report-only", action="store_true", help="re-score plants.json and rewrite the report; no LLM calls")
     p.set_defaults(fn=cmd_plant)
 
-    args = parser.parse_args()
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    _use_set(args.set)  # before the command imports anything from app/
     return args.fn(args)
 
 
