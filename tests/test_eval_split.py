@@ -126,6 +126,9 @@ def test_read_tags(tmp_path):
                      encoding="utf-8-sig")
     got = es.read_tags(sheet, frozen)
     assert [(a.job_id, a.scenario) for a in got] == [(12, 2), (13, 1)]  # final wins; N dropped
+    sheet.write_text("job_id,scenario,final_scenario\n12,1,none\n13,1,4\n14,3,\n", encoding="utf-8-sig")
+    got = es.read_tags(sheet, frozen)  # "none" = fits no scenario: dropped, never the draw's tag
+    assert [(a.job_id, a.scenario) for a in got] == [(13, 4), (14, 3)]
     sheet.write_text("job_id,scenario\n12,1\n13,1\n", encoding="utf-8-sig")
     with pytest.raises(SystemExit, match=r"frozen but not tagged.*\[14\]"):
         es.read_tags(sheet, frozen)

@@ -131,6 +131,35 @@ stage 3.
   **20261021**. The script prints the split for the owner's review and writes
   `evals/sets/v2/split.json` only with `--write`.
 
+- 2026-10-22: **letter_lab runs on the frozen set** (commit 5812588). `--set v2` on every command
+  (default v1, unchanged). v2 reads only `evals/sets/v2` (verified first); working files in
+  `evals/work/v2/` (eval.db, set.json, runs/; gitignored), summaries in `evals/results/v2/`.
+  DATABASE_URL is re-pointed in `main()` after argparse and before any app/ import, and refuses if
+  app.db is already on another DB. v2's `prepare` builds once and scores only unscored ads
+  (`--only`, `--rebuild`): re-scoring frozen inputs only re-rolls noise. set.json = all 49 keys.
+- 2026-10-22: **stage 3 analysis run** (owner approved; one-ad trial first, #12 at $0.0216).
+  `prepare --set v2` + `analyze --set v2 --label stage3` on all 49: **$1.235** (extract + score
+  $0.12, analyze_job $0.49, match_profile $0.62); 0 failures. The rule now lives once in
+  `scripts/eval_tags.py` (using `Requirement.needs_user` and `guardrails.listing_only`);
+  `eval_pool.py` uses it (output byte-identical before/after), `scripts/eval_tag.py` writes
+  `final_scenario`, `eval_score`, `why` into candidates.csv (backup in evals/candidates/backups/;
+  every other column checked unchanged). An ad that fits no scenario gets `none`, which
+  `eval_split.py` leaves out (a blank would fall back to the draw's tag).
+  - Remembered "no"s: **affect 0 ads** (written with `--decided-gaps count`, the owner's leaning).
+  - Tags vs the draw: 17 of 49 changed. 2 -> 1: #47, #73, #77, #78. 1 -> 2: #27. -> 3: #149
+    (2), #189 (1). 3 -> 4: #50, #51, #66, #141, #163; 6 -> 4: #168. -> 6: #65 (4), #197 (3).
+    3 -> 7: #129, #193. No scenario: #121 (90 -> 60, the only ad to cross 85), #160 (78 -> 60),
+    #165 (40). Score noise up to 30 points (#121); #168 75 -> 55, #197 60 -> 75, #51 55 -> 40.
+  - Counts: 1: 12, 2: 4, 3: 4, 4: 13, 6: 6, 7: 7, none: 3.
+  - **Open (owner):** the plan's table has no score floor on scenario 4, but `eval_pool.py`
+    used 60. Written without it (the table). With `--listing-floor 60`, #50, #163, #168 become
+    3 and #51, #52, #66, #142, #143 fit none: 3 = 7 (target 7), 4 = 5 (target 4).
+  - Split dry run (no floor): dev 17 / test 14; short: 2 by 1, 3 by 3. Scenario 1 is full only
+    by using both CIMIC twins and Hampshire #122; one per family leaves it at 10.
+    With the floor: dev 19 / test 15, only 2 short by 1.
+  - Strong-fit scan needed: **2** (score 85+, no must-have gap) so neither twin is needed, plus
+    1 more 85+ ad with a nice-to-have gap for scenario 2.
+
 ## Follow-ups (not for this eval)
 
 - The scorer bunches on a few values (of 112 usable ads, 27 at exactly 35 and 15 at exactly 60),

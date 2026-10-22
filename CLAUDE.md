@@ -584,9 +584,16 @@ scenario dropped: no real Seek ad asks questions in its own text). Stage 1 is DO
 FROZEN (2026-10-21, no LLM) in `evals/sets/v2/` (ads + profile.db + committed MANIFEST.json;
 `python scripts/eval_freeze.py --verify`; `--add` for reserves; never rewrite a frozen file).
 `scripts/eval_split.py` applies the near-duplicate rules (plan Decision log 2026-10-21); dry run by
-default, `--write` only once the real tags and the owner's labels exist. NEXT: point
-letter_lab.py at the frozen set + dev/test split (diff to the owner first), the paid analysis for the
-real tags, and the owner's labels in evals/candidates/candidates.csv (Would apply, scenario OK).
+default, `--write` only once the real tags and the owner's labels exist. DONE 2026-10-22:
+`letter_lab.py --set v2` (default v1 unchanged; working files in gitignored `evals/work/v2/`, results
+in `evals/results/v2/`; v2 `prepare` verifies, builds once, scores only unscored ads) and the paid
+stage-3 analysis ($1.235, run `stage3`). The scenario rule lives once in `scripts/eval_tags.py`
+(eval_pool.py + `scripts/eval_tag.py` use it); final tags are in candidates.csv (`final_scenario`,
+`eval_score`, `why`; `none` = fits no scenario). Counts 1:12 2:4 3:4 4:13 6:6 7:7 none:3.
+NEXT: the owner's labels in candidates.csv (Would apply, scenario OK), the open listing-floor
+question (`eval_tag.py --listing-floor 60`; plan Decision log 2026-10-22), a targeted scan for
+2-3 more 85+ ads (`eval_freeze.py --add`), then `eval_split.py --write`. set.json -> dev/test
+needs the owner's review of the diff first.
 The real profile is frozen as of 2026-10-20. Strong fit = score 85+ and
 no must-have GAP (`Requirement.needs_user`); partials are allowed (owner, 2026-10-20). Main metric:
 the relevant score (Would apply = Yes ads).

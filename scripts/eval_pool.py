@@ -15,7 +15,9 @@ import sys
 
 os.environ["DATABASE_URL"] = "sqlite:///real.db"
 sys.path.insert(0, ".")
+from app.llm.letter.state import Requirement  # noqa: E402
 from app.skill_gaps import covered  # noqa: E402  (whole-phrase match, both ways)
+from eval_tags import facts, scenario  # noqa: E402  (the rule, shared with eval_tag.py)
 
 if hasattr(sys.stdout, "reconfigure"):  # Windows consoles are cp1252; Seek titles aren't
     sys.stdout.reconfigure(encoding="utf-8")
@@ -56,17 +58,15 @@ def run_verdict(job_id):
              where m.job_id = ? and m.user_id = 1 and lr.state is not null order by lr.id desc limit 1""", job_id)
     if not r:
         return None
-    reqs = json.loads(r[0][0]).get("requirements") or []
+    reqs = [Requirement.model_validate(x) for x in json.loads(r[0][0]).get("requirements") or []]
     if not reqs:
         return None
-    must = [x for x in reqs if x["importance"] == "essential" and x["letter_role"] in ("headline", "mention")
-            and x["status"] == "gap"]
-    nice = [x for x in reqs if x["importance"] == "nice_to_have" and x["letter_role"] != "not_for_letter"
-            and x["status"] in ("partial", "gap")]
-    partials = [x for x in reqs if x["importance"] == "essential" and x["letter_role"] != "not_for_letter"
-                and x["status"] == "partial"]
-    label = lambda x: x.get("skill") or x["text"][:30]
-    return [label(x) for x in must], [label(x) for x in nice], len(partials), bool(
+    f = facts(reqs)
+    # These provisional tags have always counted a must-have gap with a decision on it too.
+    must_ids = {id(x) for x in f.must_gaps + f.decided_gaps}
+    must = [x for x in reqs if id(x) in must_ids]
+    label = lambda x: x.skill or x.text[:30]
+    return [label(x) for x in must], [label(x) for x in f.nice_unsupported], f.essential_partials, bool(
         profile_changed and str(r[0][1]) < str(profile_changed))
 
 
@@ -84,27 +84,23 @@ for jid, title, company, score, scored_at, desc in jobs:
     via_listing = [s for s in hard if covered(s, listed_only) and not covered(s, backed)
                    and not re.search(r"(?<!\w)" + re.escape(s) + r"(?!\w)", experience_text, re.I)]
     how = None
-    if score < 40:
-        sc = 7
-    elif score >= 85:  # strong fits first; a listing-only must-have is settled at final tagging
+    # Below 85 these tags are guesses from job_skills: `missing` stands in for a must-have gap.
+    must_gap, nice_unsupported = bool(missing), False
+    if score >= 85:  # strong fits: read the job's latest letter run when there is one
         verdict = run_verdict(jid)
         if verdict:
             must, nice, partials, stale_run = verdict
-            sc = 3 if must else 2 if nice else 1
+            must_gap, nice_unsupported = bool(must), bool(nice)
             how = (f"partials {partials}" + (f"; must-have gap: {', '.join(must)}" if must else "")
                    + (f"; nice-to-have: {', '.join(nice[:3])}" if nice else "")
                    + (" (run before profile change)" if stale_run else ""))
         else:
-            sc = 2 if missing and DESIRABLE.search(desc) else 1
+            must_gap, nice_unsupported = False, bool(missing and DESIRABLE.search(desc))
             how = "? no letter run yet: text guess"
-    elif score >= 70:  # borderline is a score band: checked before listing-only, which nearly
-        sc = 6         # every 70-84 developer ad also has (owner, 2026-10-20)
-    elif via_listing and score >= 60:
-        sc = 4
-    elif missing:
-        sc = 3
-    else:
-        sc = None
+    # Borderline (70-84) is a score band, checked before listing-only, which nearly every 70-84
+    # developer ad also has (owner, 2026-10-20). Listing-only counts from 60 up here.
+    sc = scenario(score, must_gap=must_gap, nice_unsupported=nice_unsupported,
+                  listing_only=bool(via_listing), listing_min_score=60)
     stale = scored_at is None or (profile_changed and str(scored_at) < str(profile_changed))
     rows.append((sc, score, jid, title, company or "", stale, missing, via_listing, how))
 

@@ -2,7 +2,7 @@
 
 Reads the frozen ads (evals/sets/v2, scripts/eval_freeze.py) and their tags in
 evals/candidates/candidates.csv: `final_scenario` (filled at stage 3) when present, else the
-draw's `scenario`; `scenario_ok` = N drops an ad. Every frozen ad needs a row there, and only
+draw's `scenario`; `scenario_ok` = N or `final_scenario` = none drops an ad. Every frozen ad needs a row there, and only
 frozen ads can be chosen.
 
 Near-duplicate rules (owner, 2026-10-21; the plan's Decision log):
@@ -165,6 +165,8 @@ def read_tags(path: Path, frozen: dict[int, dict]) -> list[Ad]:
         if ok_col and (r.get(ok_col) or "").strip().upper().startswith("N"):
             continue
         scenario = (r.get("final_scenario") or "").strip() or r["scenario"]
+        if scenario.lower() == "none":  # stage 3 found it fits no scenario (scripts/eval_tag.py)
+            continue
         e = frozen[jid]
         ads.append(Ad(e["key"], jid, int(scenario), e["title"], e["company"]))
     return ads
@@ -198,7 +200,7 @@ def plan(set_dir: Path = SET_DIR, tags: Path = TAGS, seed: int = SEED) -> dict:
         "made_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
         "manifest_sha256": eval_freeze.sha256(set_dir / "MANIFEST.json"),
         "families": [[{"key": k, "job_id": job_id[k], "note": notes.get(k, "not usable")
-                       if k in by_key else "dropped (scenario_ok = N)"} for k in g] for g in fams],
+                       if k in by_key else "left out (scenario_ok = N, or fits no scenario)"} for k in g] for g in fams],
         "short": short, "warnings": warnings,
         "dev": [row(a) for a in dev], "test": [row(a) for a in test],
     }
