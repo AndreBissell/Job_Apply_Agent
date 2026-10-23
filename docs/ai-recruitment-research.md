@@ -141,8 +141,8 @@ guided with examples. Strong.**
   of them hidden keywords or skills (Duke / hireEZ, USENIX Security 2026, press summary). Vendors
   now look for it.
 - **What it means:** the effect depends on the model and is getting patched. Stuffing also reads
-  badly to humans (A1 criterion 2, A4). Keywords come only with real evidence, once, in the ad's
-  words.
+  badly to humans (A1 criterion 2, A4). Keywords come only with real evidence, in the ad's words,
+  and no skill is named more than twice.
 
 **B4. LLM judges favour longer text; human recruiters don't. Strong (for LLM judges).**
 - Saito et al. 2023 (arXiv 2310.10076; LLM judges prefer longer answers even where humans prefer
@@ -196,7 +196,7 @@ exists; not something a letter should try to steer.**
 | Verifiable specifics from the candidate's history | what still differentiates (A3) | neutral to positive | Keep it |
 | AI house style | penalised when obvious (TopResume 2025) | favoured, especially its own (B1) | **Human wins**: we can't know the screener's model |
 | Length | short, skimmed (B4) | longer favoured (B4) | **Human wins**: 250–340 |
-| Keyword density | stuffing reads as spam (A4) | sometimes rewarded (B3) | **Human wins**: each keyword once, with evidence |
+| Keyword density | stuffing reads as spam (A4) | sometimes rewarded (B3) | **Human wins**: each keyword with evidence, at most twice |
 
 Where the two readers disagree, the human wins: a human makes the decision, the AI preferences
 change by model, and they are being patched.
@@ -208,10 +208,10 @@ change by model, and they are being patched.
 | A1 (custom vs generic, validated) | **D7 "Understands the job"**: does the letter show it grasped the goal and the hard part of the role, beyond restating duties? A **custom vs generic split** of the recruiter checklist, reported separately, with custom weighted 2x in the checklist score as in Galdin & Silbert | Layer 2, scorecard |
 | A1 (copy-paste correction) | **C7 nearest-letter similarity**: normalised edit distance from each letter's body to the closest other letter in the run; flagged under 10% (near-template). Complements C4 | Layer 3 |
 | A3 | D5 also asks whether at least one specific is **checkable** (a named project, tool, organisation, or a number from the profile) | Layer 2 |
-| A4 | **C8 intensity**: superlatives and intensifiers per 100 words ("exceptional", "highly", "passionate"), diagnostic | Layer 3 |
+| A4 | **C8 intensity**: superlatives and intensifiers per 100 words ("exceptional", "highly", "passionate"), diagnostic. D6 also asks whether self-promotion is kept moderate, with no stacked superlatives | Layers 2–3 |
 | B1 | Judge from a different family to the writer (already). Layer 4 screener = **2+ model families**, reporting both scores and their agreement (Xu et al.'s ensemble mitigation) | §6, Layer 4 |
 | B2 | M1/M2 "addressed" requires an **explicit** mention a literal reader would find; a requirement covered only by implication counts as not addressed. Judge quotes its evidence (already) and is calibrated with your examples (already, now backed by evidence) | Layer 1, §6 |
-| B3 | **G1 no-stuffing guard**: no comma-run of 5+ skill terms and no skill named twice; C3 ad-echo stays diagnostic | Layer 0/3 |
+| B3 | **G1 no-stuffing guard**: no comma-run of 5+ skill terms and no skill named more than twice; C3 ad-echo stays diagnostic | Layer 0/3 |
 | B4 | **Judge length probe**: during calibration, the judge also grades padded copies of 3 letters (+60 words of filler); it passes only if it doesn't score them higher | §6 |
 | B5 | Pairwise in both orders (already) | §5–6 |
 | B6 | No identity-based metric. D6's "standard Australian English" stays | — |

@@ -74,7 +74,7 @@ analysis, but they are measured against this one.
 | Id | Metric | Definition |
 |---|---|---|
 | M1 | **Must-cover recall** | addressed `must_cover` items / `must_cover` items, with `guardrails.must_cover` applied to the reference. Target 100%. |
-| M2 | **Weighted backed coverage** | Σ weight of addressed supported/partial items / Σ weight of all supported/partial items. Weights: essential 3, important 2, nice-to-have 1. `not_for_letter` and `implied` items are left out. The "hit as many as possible" number; on one page it will never be 100%. |
+| M2 | **Weighted backed coverage** | Σ weight of addressed supported/partial items / Σ weight of all supported/partial items. Weights: essential 4, important 2, nice-to-have 1 (owner, 2026-10-23: one essential is worth at least two important items). `not_for_letter` and `implied` items are left out. The "hit as many as possible" number; on one page it will never be 100%. |
 | M3 | **Best-evidence rate** | of the addressed headline items, the share that use the strongest evidence the reference holds for them. Strength order: work experience > project or thesis > qualification > listed skill. |
 | M4 | **Claim honesty** | the judge lists every factual claim and labels it `supported`, `stretch`, `fabricated` or `employer_fact_not_in_ad`, using the v1 standard's rulings (scope, audience, seniority, rounded numbers, bare-listing experience). Reported: fabrications per letter (gate: 0), stretches per letter, and claim precision = supported / all claims. |
 | M5 | **Gap handling** | a not-backed item claimed as had counts as a fabrication; a partial item claimed as full counts as a stretch. Honest "related experience" framing is fine. |
@@ -246,3 +246,8 @@ every ad, in both orders; if its pick changes with the order, it counts as a tie
   self-promotion; G1 no-stuffing guard; C7 nearest-letter similarity; C8 intensity; a judge length
   probe; Layer 4 to use 2+ model families. Rejected as a reason: "concrete wording seems truer"
   (failed replication).
+- 2026-10-23: **M2 weights 4/2/1** (owner), replacing 3/2/1, under which two important items
+  outweighed one essential. No study gives these weights; it is a judgement call. Once real
+  letters exist, compute M2 both ways to see whether the ranking of letters changes. Watch for
+  M2 rising while send-readiness falls: that would mean letters are cramming more requirements
+  in with less evidence each.
