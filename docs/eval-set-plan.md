@@ -216,7 +216,11 @@ stage 3.
     and one missing-a-must-have ad, the cases where a tuned writer most likely overclaims
     unseen, and each test letter would weigh ~9% instead of ~7%.
   - Next: point set.json at the split (dev / test) after the owner reviews the diff, then stage 5
-    (define the metrics before any grading).
+    (define the metrics before any grading). Done the same day, without touching set.json (it
+    stays all 49): `letter_lab.py run|analyze --set v2 --split dev|test` reads split.json
+    (refused if made from another MANIFEST.json); `--only` narrows within the split; a v2 `run`
+    with neither is refused, so letters are never paid for on all 49; run.json records the
+    split and `--resume` keeps it.
 - 2026-10-23: **stage 5 metrics drafted** in docs/letter-metrics-plan.md (no code, no LLM calls),
   awaiting the owner's review. Why: v1's `would_send` sat at 0/15 on every panel, so it couldn't
   separate versions. Stage 7's owner grade is now a 4-level send-readiness (by edit effort) +

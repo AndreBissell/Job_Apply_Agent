@@ -242,3 +242,69 @@ def test_analyze_only_refuses_a_key_not_in_the_set(frozen, run):
     code, out = run(frozen, "analyze", "--set", "v2", "--only", "seek-1234")
     assert code == 1 and "Not in" in out and "seek-1234" in out
     assert len(run.calls()) == 4  # only prepare's calls
+
+
+# ---------------------------------------------------------------------------
+# --split dev|test: one side of the frozen set's split.json
+# ---------------------------------------------------------------------------
+def _write_split(set_dir: Path, dev: list[str], test: list[str], manifest_sha: str | None = None) -> None:
+    sha = manifest_sha or ef.sha256(set_dir / "MANIFEST.json")
+    (set_dir / "split.json").write_text(json.dumps({
+        "manifest_sha256": sha, "dev": [{"key": k} for k in dev], "test": [{"key": k} for k in test],
+    }), encoding="utf-8")
+
+
+@pytest.fixture()
+def v2_paths(frozen, tmp_path, monkeypatch):
+    """The module's v2 paths, pointed at the tmp frozen set, with a set.json of both ads."""
+    set_file = tmp_path / "set.json"
+    set_file.write_text(json.dumps({"jobs": ["seek-9001", "seek-9002"]}), encoding="utf-8")
+    monkeypatch.setattr(lab, "FROZEN_DIR", frozen)
+    monkeypatch.setattr(lab, "SET_FILE", set_file)
+    return frozen
+
+
+def _args(split=None, only=None):
+    return lab.argparse.Namespace(split=split, only=only)
+
+
+def test_split_picks_one_side_and_only_narrows_within_it(v2_paths):
+    _write_split(v2_paths, dev=["seek-9002"], test=["seek-9001"])
+    assert lab._set_keys(_args()) == ["seek-9001", "seek-9002"]
+    assert lab._set_keys(_args("dev")) == ["seek-9002"]
+    assert lab._set_keys(_args("test", ["seek-9001"])) == ["seek-9001"]
+    with pytest.raises(SystemExit, match="Not in the dev split: seek-9001"):
+        lab._set_keys(_args("dev", ["seek-9001"]))
+
+
+@pytest.mark.parametrize("setup, says", [
+    (lambda d: None, "No .*split.json yet"),
+    (lambda d: _write_split(d, ["seek-9001"], [], manifest_sha="0" * 64), "another MANIFEST.json"),
+    (lambda d: _write_split(d, ["seek-9001", "seek-7777"], []), "not in .*seek-7777"),
+])
+def test_split_refusals(v2_paths, setup, says):
+    setup(v2_paths)
+    with pytest.raises(SystemExit, match=says):
+        lab._set_keys(_args("dev"))
+
+
+def test_split_needs_a_frozen_set(monkeypatch, tmp_path):
+    set_file = tmp_path / "set.json"
+    set_file.write_text(json.dumps({"jobs": ["seek-1"]}), encoding="utf-8")
+    monkeypatch.setattr(lab, "FROZEN_DIR", None)
+    monkeypatch.setattr(lab, "SET_FILE", set_file)
+    with pytest.raises(SystemExit, match="needs a frozen set"):
+        lab._set_keys(_args("dev"))
+
+
+def test_v2_run_needs_split_or_only_and_resume_keeps_its_split(frozen, run):
+    _write_split(frozen, dev=["seek-9002"], test=["seek-9001"])
+    assert run(frozen, "prepare", "--set", "v2")[0] == 0
+    code, out = run(frozen, "run", "--set", "v2")
+    assert code == 1 and "needs --split" in out
+    old = run.work / "runs" / "r1"
+    old.mkdir(parents=True)
+    (old / "run.json").write_text(json.dumps({"split": "test", "results": []}), encoding="utf-8")
+    code, out = run(frozen, "run", "--set", "v2", "--split", "dev", "--label", "r1", "--resume")
+    assert code == 1 and "same --split" in out
+    assert len(run.calls()) == 4  # only prepare's calls: no letter was written

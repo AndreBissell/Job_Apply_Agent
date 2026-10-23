@@ -34,6 +34,9 @@ Eval sets (`--set`, on every command; default v1):
     python scripts/letter_lab.py prepare --set v2                       # verify, build once, score unscored ads
     python scripts/letter_lab.py prepare --set v2 --only seek-95084241  # score just these
     python scripts/letter_lab.py analyze --set v2 --only seek-95084241 --label trial
+    python scripts/letter_lab.py run --set v2 --split dev --engine agent --label dev-agent-v1
+        # --split dev|test = one side of evals/sets/v2/split.json (scripts/eval_split.py);
+        # a v2 run needs it (or --only), since v2's set.json is all 49 frozen ads
 
 Privacy: evals/jobs/, evals/eval.db, evals/set.json and evals/runs/ hold ad text,
 your profile and letters written as you — all gitignored. Only the summary in
@@ -362,6 +365,37 @@ def _rel(path: Path) -> str:
         return str(path)
 
 
+def _set_keys(args) -> list[str]:
+    """The set's keys for `run` / `analyze`: every key in set.json, or with --split only that
+    side of the frozen set's split.json (scripts/eval_split.py), then narrowed by --only. A
+    --only key outside them is refused, as is a split made from another MANIFEST.json."""
+    keys = json.loads(SET_FILE.read_text(encoding="utf-8"))["jobs"]
+    where = _rel(SET_FILE)
+    if args.split:
+        if FROZEN_DIR is None:
+            raise SystemExit("--split needs a frozen set (--set v2)")
+        split_file = FROZEN_DIR / "split.json"
+        if not split_file.exists():
+            raise SystemExit(f"No {_rel(split_file)} yet: run scripts/eval_split.py --write")
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import eval_freeze  # no side effects on import (no app/ imports)
+
+        split = json.loads(split_file.read_text(encoding="utf-8"))
+        if split["manifest_sha256"] != eval_freeze.sha256(FROZEN_DIR / "MANIFEST.json"):
+            raise SystemExit(f"{_rel(split_file)} was made from another MANIFEST.json; redo the split")
+        chosen = [r["key"] for r in split[args.split]]
+        missing = sorted(set(chosen) - set(keys))
+        if missing:
+            raise SystemExit(f"In the {args.split} split but not in {where}: {', '.join(missing)}")
+        keys, where = [k for k in keys if k in chosen], f"the {args.split} split"
+    if args.only:
+        unknown = sorted(set(args.only) - set(keys))
+        if unknown:
+            raise SystemExit(f"Not in {where}: {', '.join(unknown)}")
+        keys = [k for k in keys if k in args.only]
+    return keys
+
+
 def _prepare_frozen(args) -> int:
     """prepare for a frozen set: every input comes from FROZEN_DIR, never from real.db.
 
@@ -667,9 +701,11 @@ def cmd_run(args) -> int:
     if not EVAL_DB.exists() or not SET_FILE.exists():
         print("Run `letter_lab.py prepare` first.")
         return 1
-    keys = json.loads(SET_FILE.read_text(encoding="utf-8"))["jobs"]
-    if args.only:
-        keys = [k for k in keys if k in args.only]
+    if FROZEN_DIR is not None and not (args.split or args.only):
+        print("A frozen set's run needs --split dev|test (or --only): its set.json is every "
+              "frozen ad, not the eval set.")
+        return 1
+    keys = _set_keys(args)
     _migrate_eval_db()
 
     from sqlalchemy import select
@@ -695,12 +731,15 @@ def cmd_run(args) -> int:
 
     meta = {
         "run_id": run_id, "engine": args.engine, "strong_model": client.model_for("strong"),
-        "side_outputs": list(SIDE_OUTPUTS),
+        "side_outputs": list(SIDE_OUTPUTS), "split": args.split,
         "created_at": datetime.datetime.now().isoformat(timespec="seconds"), "results": [],
     }
     meta_path = run_dir / "run.json"
     if args.resume and meta_path.exists():  # keep finished jobs, redo failed/missing ones
         old = json.loads(meta_path.read_text(encoding="utf-8"))
+        if old.get("split") != args.split:
+            print(f"Run {run_id} was a --split {old.get('split')} run; resume it with the same --split")
+            return 1
         meta["created_at"] = old.get("created_at", meta["created_at"])
         meta["results"] = [r for r in old["results"] if "error" not in r]
     results = meta["results"]
@@ -822,7 +861,8 @@ def _write_letters_md(run_dir: Path, meta: dict, against: str | None = None) -> 
     lines = [
         f"# Letters: {meta['run_id']}", "",
         f"Engine `{meta['engine']}`, model `{meta['strong_model']}`, run {meta['created_at']}. "
-        f"Grade in `grades.csv` (see evals/rubric.md)."
+        + (f"Split `{meta['split']}`. " if meta.get("split") else "")
+        + "Grade in `grades.csv` (see evals/rubric.md)."
         + (f" Each letter is followed by the `{against}` letter for the same job (click to open)."
            if other_dir else ""),
         "",
@@ -959,7 +999,8 @@ def cmd_report(args) -> int:
         f"# Letter eval: {meta['run_id']}",
         "",
         f"Engine `{meta['engine']}`, strong model `{meta['strong_model']}`, run {meta['created_at']}. "
-        f"{len(ok)} letters ({len(meta['results']) - len(ok)} failed). Rubric: evals/rubric.md. "
+        + (f"Split `{meta['split']}`. " if meta.get("split") else "")
+        + f"{len(ok)} letters ({len(meta['results']) - len(ok)} failed). Rubric: evals/rubric.md. "
         f"Grades: `{args.grades}`.",
         "",
         "| Score | Job | Words | " + " | ".join(AUTO_ITEMS + HUMAN_ITEMS) + " | Pass | Cost | Time |",
@@ -1457,13 +1498,7 @@ def cmd_analyze(args) -> int:
     if not EVAL_DB.exists() or not SET_FILE.exists():
         print("Run `letter_lab.py prepare` first.")
         return 1
-    keys = json.loads(SET_FILE.read_text(encoding="utf-8"))["jobs"]
-    if args.only:
-        unknown = sorted(set(args.only) - set(keys))
-        if unknown:
-            print(f"Not in {_rel(SET_FILE)}: {', '.join(unknown)}")
-            return 1
-        keys = [k for k in keys if k in args.only]
+    keys = _set_keys(args)
     _migrate_eval_db()
 
     from sqlalchemy import select
@@ -1853,6 +1888,9 @@ def func_sum(col):
     return func.coalesce(func.sum(col), 0)
 
 
+SPLIT_HELP = "v2: just the dev or test side of evals/sets/v2/split.json (scripts/eval_split.py)"
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -1883,6 +1921,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="workflow/agent: also offer the Phase 7c side-output tools (default none)")
     p.add_argument("--label", help="run id (default: timestamp-engine)")
     p.add_argument("--only", nargs="+", metavar="KEY", help="just these set keys (e.g. seek-94419843), for a smoke test")
+    p.add_argument("--split", choices=["dev", "test"], help=SPLIT_HELP + " (a v2 run needs this or --only)")
     p.add_argument("--resume", action="store_true",
                    help="continue an interrupted run (same --label): keep finished jobs, redo the rest")
     p.set_defaults(fn=cmd_run)
@@ -1911,6 +1950,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--label", help="run id (default: analysis-<timestamp>)")
     p.add_argument("--force", action="store_true", help="ignore the cached analysis and redo it")
     p.add_argument("--only", nargs="+", metavar="KEY", help="just these set keys (e.g. seek-94419843)")
+    p.add_argument("--split", choices=["dev", "test"], help=SPLIT_HELP)
     p.set_defaults(fn=cmd_analyze)
 
     p = add("analysis-report", help="summarise your checks.csv grades")

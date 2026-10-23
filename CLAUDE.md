@@ -615,8 +615,8 @@ ALL 49 LABELLED (2026-10-23; plan Decision log): Would apply = sent hoping to ge
 (Centrelink-count-only = N); scenario_ok N on #11, #82, #186 only. SPLIT FINAL (2026-10-23, owner:
 no more ads): dev 17 (10 relevant) / test 14 (11 relevant) in `evals/sets/v2/split.json`; at most
 one ad per near-duplicate family (#122, #152 out); #12 pinned to test, #157 to dev (`PINS`).
-Scenario 1 dev short by 2, scenario 2 has 3 ads. NEXT: set.json -> dev/test (owner reviews the
-diff first). Stage 5 DRAFTED 2026-10-23 (docs/letter-metrics-plan.md, awaiting the owner's
+Scenario 1 dev short by 2, scenario 2 has 3 ads. Runs pick a side with `letter_lab.py run|analyze
+--set v2 --split dev|test` (a v2 run refuses without --split or --only; set.json stays all 49). Stage 5 DRAFTED 2026-10-23 (docs/letter-metrics-plan.md, awaiting the owner's
 review): owner grade = 4-level send-readiness + untrue Y/N + reason ticks; honest requirement
 coverage against a fixed reference checklist; yes/no recruiter checklist; code signals; judge
 calibrated on half the dev grades. Build steps in its §7, each with a go-ahead. Evidence behind it:
