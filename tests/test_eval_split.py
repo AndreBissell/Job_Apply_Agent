@@ -50,11 +50,12 @@ def test_one_ad_per_family_when_the_scenario_has_spares():
     assert len(keys) == 2 and not {"k1", "k2"} <= keys
 
 
-def test_second_family_member_only_when_the_scenario_is_short():
-    pool = ads(1, "k1", "k2", "k3")  # need 3 of 3: both twins are needed
+def test_never_a_second_family_member_even_when_the_scenario_is_short():
+    pool = ads(1, "k1", "k2", "k3")  # need 3 of 3: the scenario stays short by one
     chosen, notes = es.choose(pool, {1: 3}, {"k1": 0, "k2": 0}, random.Random(1))
-    assert {a.key for a in chosen[1]} == {"k1", "k2", "k3"}
-    assert "second of its family: scenario short" in {notes["k1"], notes["k2"]}
+    keys = {a.key for a in chosen[1]}
+    assert len(keys) == 2 and "k3" in keys and not {"k1", "k2"} <= keys
+    assert "left out: a family member is already in" in {notes["k1"], notes["k2"]}
 
 
 def test_scarcest_scenario_gets_the_family_member():
@@ -94,13 +95,32 @@ def test_a_family_never_straddles_the_split():
         assert all(len(s) == 1 for s in sides.values()), (seed, sides)
 
 
-def test_targets_are_met_and_a_short_scenario_splits_in_proportion():
-    targets = {1: ("Strong", 7, 5), 7: ("Unrelated", 2, 1)}
-    chosen = {1: ads(1, *(f"k{i}" for i in range(10))), 7: ads(7, "k50", "k51", "k52")}
+def test_targets_are_met_and_a_short_scenario_keeps_test_full_when_it_can():
+    targets = {1: ("Strong", 7, 5), 2: ("Nice", 3, 2), 7: ("Unrelated", 2, 1)}
+    chosen = {1: ads(1, *(f"k{i}" for i in range(10))), 2: ads(2, "k20", "k21", "k22"),
+              7: ads(7, "k50", "k51", "k52")}
     dev, test, _ = es.split(chosen, targets, {}, random.Random(3))
     count = lambda group, s: sum(1 for a in group if a.scenario == s)  # noqa: E731
     assert (count(dev, 7), count(test, 7)) == (2, 1)
-    assert (count(dev, 1), count(test, 1)) == (6, 4)  # 10 of 12: 10 * 7/12 = 5.8 -> 6
+    assert (count(dev, 1), count(test, 1)) == (5, 5)  # 10 of 12: test keeps 5, dev still has 5
+    assert (count(dev, 2), count(test, 2)) == (2, 1)  # 3 of 5: test 2 would leave dev 1, so 3 * 3/5 -> 2
+
+
+def test_pins_swap_ads_between_sides():
+    dev, test = ads(1, "k1", "k2"), ads(1, "k3", "k4")
+    new_dev, new_test = es.pin(dev, test, {1: "test", 3: "dev"}, {})
+    assert {a.key for a in new_dev} == {"k2", "k3"} and {a.key for a in new_test} == {"k1", "k4"}
+    assert es.pin(dev, test, {1: "dev"}, {}) == (dev, test)  # already there: nothing moves
+
+
+def test_pins_refuse_to_change_counts_or_touch_a_family():
+    dev, test = ads(1, "k1", "k2"), ads(1, "k3")
+    with pytest.raises(SystemExit, match="change the dev/test counts"):
+        es.pin(dev, test, {1: "test"}, {})
+    with pytest.raises(SystemExit, match="near-duplicate"):
+        es.pin(dev, test, {1: "test", 3: "dev"}, {"k1": 0})
+    with pytest.raises(SystemExit, match="not in the chosen set"):
+        es.pin(dev, test, {99: "dev"}, {})
 
 
 def test_the_same_seed_gives_the_same_split():

@@ -5,11 +5,11 @@ evals/candidates/candidates.csv: `final_scenario` (filled at stage 3) when prese
 draw's `scenario`; `scenario_ok` = N or `final_scenario` = none drops an ad. Every frozen ad needs a row there, and only
 frozen ads can be chosen.
 
-Near-duplicate rules (owner, 2026-10-21; the plan's Decision log):
+Near-duplicate rules (owner, 2026-10-21, tightened 2026-10-23; the plan's Decision log):
   family = ads at least FAMILY_SIMILARITY alike, joined transitively;
-  choose scarcest scenario first, one ad per family unless a scenario would fall short;
-  a family with more than one chosen ad goes to dev, whole; the rest is a seeded random
-  split within each scenario.
+  choose scarcest scenario first, never more than one ad per family, even if a scenario
+  falls short; a seeded random split within each scenario (a short scenario keeps test at
+  its target while dev still has as many, else splits in proportion); then the owner's PINS.
 
     python scripts/eval_split.py           # print the proposed split (writes nothing)
     python scripts/eval_split.py --write   # save it to evals/sets/v2/split.json (refuses if there)
@@ -41,6 +41,9 @@ TRACKER = ROOT / "scripts" / "eval_pool.py"
 SPLIT_FILE = SET_DIR / "split.json"
 SEED = 20261021
 FAMILY_SIMILARITY = 0.6  # at freezing, families were 0.79+ and every other pair under 0.5
+# Owner's placements over the seeded split (job_id -> side), the plan's Decision log 2026-10-23:
+# test keeps 5 strong fits the owner would apply for, so #12 (Y) goes to test, #157 (N) to dev.
+PINS = {12: "test", 157: "dev"}
 
 
 @dataclass(frozen=True)
@@ -87,21 +90,21 @@ def families(texts: dict[str, str], threshold: float = FAMILY_SIMILARITY) -> lis
 
 def choose(ads: list[Ad], need: dict[int, int], family_of: dict[str, int],
            rng: random.Random) -> tuple[dict[int, list[Ad]], dict[str, str]]:
-    """Up to need[s] ads per scenario: scarcest scenario first, one ad per family unless a
-    scenario would otherwise fall short. Returns the chosen ads and a note per ad."""
+    """Up to need[s] ads per scenario: scarcest scenario first, never more than one ad per
+    family, even when a scenario falls short (owner, 2026-10-23). Returns the chosen ads and a
+    note per ad."""
     pool = {s: sorted((a for a in ads if a.scenario == s), key=lambda a: a.key) for s in need}
     for s in sorted(pool):
         rng.shuffle(pool[s])
     order = sorted(need, key=lambda s: (len(pool[s]) - need[s], s))
     chosen: dict[int, list[Ad]] = {s: [] for s in need}
-    skipped: dict[int, list[Ad]] = {s: [] for s in need}
     taken: set[int] = set()
     notes: dict[str, str] = {}
     for s in order:
         for ad in pool[s]:
             fam = family_of.get(ad.key)
             if fam is not None and fam in taken:
-                skipped[s].append(ad)
+                notes[ad.key] = "left out: a family member is already in"
                 continue
             if len(chosen[s]) == need[s]:
                 notes[ad.key] = "spare"
@@ -110,13 +113,6 @@ def choose(ads: list[Ad], need: dict[int, int], family_of: dict[str, int],
             if fam is not None:
                 taken.add(fam)
                 notes[ad.key] = "first of its family"
-    for s in order:
-        for ad in skipped[s]:
-            if len(chosen[s]) < need[s]:
-                chosen[s].append(ad)
-                notes[ad.key] = "second of its family: scenario short"
-            else:
-                notes[ad.key] = "left out: a family member is already in"
     return chosen, notes
 
 
@@ -135,7 +131,12 @@ def split(chosen: dict[int, list[Ad]], targets: dict[int, tuple[str, int, int]],
     for s in sorted(chosen):
         _name, d, t = targets[s]
         ads = chosen[s]
-        dev_n = d if len(ads) >= d + t else int(len(ads) * d / (d + t) + 0.5)
+        if len(ads) >= d + t:
+            dev_n = d
+        elif len(ads) - t >= t:  # short: test keeps its target if dev still has as many (2026-10-23)
+            dev_n = len(ads) - t
+        else:
+            dev_n = int(len(ads) * d / (d + t) + 0.5)
         forced = [a for a in ads if family_of.get(a.key) in to_dev]
         rest = sorted((a for a in ads if a not in forced), key=lambda a: a.key)
         rng.shuffle(rest)
@@ -145,6 +146,30 @@ def split(chosen: dict[int, list[Ad]], targets: dict[int, tuple[str, int, int]],
         dev += forced + rest[:room]
         test += rest[room:]
     return dev, test, warnings
+
+
+def pin(dev: list[Ad], test: list[Ad], pins: dict[int, str],
+        family_of: dict[str, int]) -> tuple[list[Ad], list[Ad]]:
+    """Move pinned ads to their side. Errors unless every pin is chosen, outside a family, and
+    the moves leave each scenario's dev/test counts unchanged (pins come in swaps)."""
+    sides = {"dev": dev, "test": test}
+    where = {a.job_id: (side, a) for side, group in sides.items() for a in group}
+    moved: dict[int, int] = {}
+    for jid, side in pins.items():
+        if jid not in where:
+            raise SystemExit(f"pinned #{jid} is not in the chosen set")
+        now, ad = where[jid]
+        if ad.key in family_of:
+            raise SystemExit(f"pinned #{jid} has a near-duplicate; pin the family's ad instead")
+        if now != side:
+            moved[ad.scenario] = moved.get(ad.scenario, 0) + (1 if side == "test" else -1)
+    if any(moved.values()):
+        raise SystemExit(f"pins change the dev/test counts (scenario: net moves to test): {moved}")
+    new = {side: [a for a in group if pins.get(a.job_id, side) == side] for side, group in sides.items()}
+    for side, group in sides.items():
+        other = "test" if side == "dev" else "dev"
+        new[other] += [a for a in group if pins.get(a.job_id, side) == other]
+    return new["dev"], new["test"]
 
 
 def read_tags(path: Path, frozen: dict[int, dict]) -> list[Ad]:
@@ -188,15 +213,19 @@ def plan(set_dir: Path = SET_DIR, tags: Path = TAGS, seed: int = SEED) -> dict:
     rng = random.Random(seed)
     chosen, notes = choose(ads, {s: d + t for s, (_n, d, t) in targets.items()}, family_of, rng)
     dev, test, warnings = split(chosen, targets, family_of, rng)
+    dev, test = pin(dev, test, PINS, family_of)
     by_key = {a.key: a for a in ads}
     short = {s: d + t - len(chosen[s]) for s, (_n, d, t) in targets.items() if len(chosen[s]) < d + t}
 
     def row(a: Ad) -> dict:
+        note = "; ".join(n for n in (notes.get(a.key, ""),
+                                     f"pinned to {PINS[a.job_id]}" if a.job_id in PINS else "") if n)
         return {"key": a.key, "job_id": a.job_id, "scenario": a.scenario, "title": a.title,
-                "company": a.company, "note": notes.get(a.key, "")}
+                "company": a.company, "note": note}
 
     return {
         "set": set_dir.name, "seed": seed, "family_similarity": FAMILY_SIMILARITY,
+        "pins": {str(k): v for k, v in PINS.items()},
         "made_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
         "manifest_sha256": eval_freeze.sha256(set_dir / "MANIFEST.json"),
         "families": [[{"key": k, "job_id": job_id[k], "note": notes.get(k, "not usable")

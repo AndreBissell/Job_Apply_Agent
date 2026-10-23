@@ -10,9 +10,9 @@ and after changes, at known cost. The dev set is tuned on; the test set is held 
 2. Freeze: snapshot the chosen ads (`letter_lab.py snapshot`) into the eval copy.
 3. Tag each ad: scenario (from analyze_job + match_profile in the eval copy, confirmed by the
    user) and **Would I apply? Yes/No**.
-4. Split: stratified by scenario, random within each scenario, into dev 20 / test 15, with
-   near-duplicate ads kept to one side and used only when needed (rules in the Decision log,
-   2026-10-21; `scripts/eval_split.py`).
+4. Split: stratified by scenario, random within each scenario, into dev 20 / test 15, at most
+   one ad per near-duplicate family (rules in the Decision log, 2026-10-21 and 2026-10-23;
+   `scripts/eval_split.py`). **Done 2026-10-23: dev 17 / test 14, no more ads.**
 5. Define the metrics before any grading.
 6. Generate letters with the current system (unedited letters are what gets graded).
 7. The user hand-grades the dev letters (no judge grades shown first, so nothing anchors them).
@@ -28,7 +28,7 @@ and after changes, at known cost. The dev set is tuned on; the test set is held 
 | 1. Strong fit | 7 | 5 | Score 85+, no must-have gap, every nice-to-have supported. Partials allowed. |
 | 2. Missing a nice-to-have | 3 | 2 | Score 85+, no must-have gap, at least one nice-to-have partial or gap. |
 | 3. Missing a must-have | 4 | 3 | At least one must-have gap (ask_user fires). |
-| 4. Listing-only skill | 2 | 2 | A requirement backed only by a listed skill (`guardrails.listing_only`). |
+| 4. Listing-only skill | 2 | 2 | Score 60+, and a requirement backed only by a listed skill (`guardrails.listing_only`). Floor added 2026-10-22. |
 | ~~5. Screening questions~~ | 0 | 0 | Dropped 2026-10-20: no real ad had one (Decision log). |
 | 6. Borderline | 2 | 2 | Score 70–84. |
 | 7. Unrelated | 2 | 1 | Score under 40. |
@@ -151,16 +151,83 @@ stage 3.
     3 -> 7: #129, #193. No scenario: #121 (90 -> 60, the only ad to cross 85), #160 (78 -> 60),
     #165 (40). Score noise up to 30 points (#121); #168 75 -> 55, #197 60 -> 75, #51 55 -> 40.
   - Counts: 1: 12, 2: 4, 3: 4, 4: 13, 6: 6, 7: 7, none: 3.
-  - **Open (owner):** the plan's table has no score floor on scenario 4, but `eval_pool.py`
-    used 60. Written without it (the table). With `--listing-floor 60`, #50, #163, #168 become
-    3 and #51, #52, #66, #142, #143 fit none: 3 = 7 (target 7), 4 = 5 (target 4).
+  - **Decided (owner, same day): scenario 4 has a 60 floor**, as `eval_pool.py` had. Without it,
+    nearly every low-scoring developer ad with a missing must-have also lists a skill, so 4
+    swallowed them. Re-tagged with `eval_tag.py --write --decided-gaps count --listing-floor 60`:
+    #50, #163, #168 -> 3; #51, #52, #66, #142, #143 -> none. Counts 1: 12, 2: 4, 3: 7, 4: 5,
+    6: 6, 7: 7, none: 8.
   - Split dry run (no floor): dev 17 / test 14; short: 2 by 1, 3 by 3. Scenario 1 is full only
     by using both CIMIC twins and Hampshire #122; one per family leaves it at 10.
     With the floor: dev 19 / test 15, only 2 short by 1.
   - Strong-fit scan needed: **2** (score 85+, no must-have gap) so neither twin is needed, plus
-    1 more 85+ ad with a nice-to-have gap for scenario 2.
+    1 more 85+ ad with a nice-to-have gap for scenario 2. (Superseded by the labels, next entry.)
+- 2026-10-23: **all 49 candidates labelled** (owner, in chat, one ad at a time; no LLM calls).
+  `would_apply`, `scenario_ok` and `comment` are filled in candidates.csv; backup taken first,
+  every other cell checked unchanged.
+  - **What the two answers mean** (settled while labelling; use the same meaning for reserve ads):
+    - *Would apply* = Y only if the owner would send it **hoping to get the job**, long shots
+      included. An application sent only for the Centrelink count is N: its letter's quality
+      doesn't matter to the owner, so it shouldn't count towards the relevant score. #69 and
+      #163 were changed Y -> N under this rule; #50 stayed Y.
+    - *Scenario OK* asks whether the ad's **scenario** is right (`eval_split.py` drops every N).
+      The owner mostly answered a slightly different question: "are the gap / partial /
+      supported verdicts right?". For scenarios 1-4 the two are nearly the same, since the
+      scenario comes from those verdicts. They differ only when a verdict is wrong but the
+      scenario still holds; those were answered Y with the mislabel in the comment (#12, #54,
+      #72, #73, #103, #193, #197). The three N rows are all mislabels that change the tag:
+      #11 (an essential support requirement is really a gap, so 3 not 2), #82 and #186 (an
+      essential is really a gap, so the fit is below the 70-84 borderline band). Kept as N.
+      For scenarios 6 and 7 the question was "is this score band a fair read of the fit?".
+      For `none` ads only Would apply was asked.
+  - Would apply = Y: 1: 9 of 12 (N: CIMIC #152 and #153, degree not on their list; #157, a
+    sales role), 2: 4/4, 3: 3/7, 4: 4/5, 6: 5/6, 7: 0/7, none: 5/8. 30 of 49 in all.
+  - Split dry run: dev 19 / test 14. Only scenario 2 is short (dev 2/3, test 1/2) after #11
+    dropped out. Scenario 1 is full only with both CIMIC twins and Hampshire #122, and dev's 7
+    strong fits include #152, #153 and #157, all Would apply = N: just 4 relevant ones.
+  - ~~Scan needed now: 2 ads at 85+ with a nice-to-have gap, and about 3 strong fits the owner
+    would really apply for.~~ Superseded the same day (next entry): no more ads.
+- 2026-10-23: **the split is final: dev 17 / test 14, no more ads** (owner). Stage 1 is closed;
+  the 49 frozen ads are the whole pool. Written to `evals/sets/v2/split.json` (gitignored).
+  - **Why no scan:** the two shortfalls barely touch the main metric. Scenario 2 (3 ads: dev #46,
+    #124; test #27) runs the same agent path as a strong fit (a nice-to-have gap never fires
+    ask_user), and 3 or 5 ads is an anecdote either way. The Would apply = N strong fits only
+    count in the secondary overall score.
+  - **Near-duplicates are never doubled any more** (replaces rules 2 and 4 of 2026-10-21): at
+    most one ad per family, even when its scenario falls short. Out: Hampshire #122 (its twin
+    #124 is in scenario 2) and CIMIC #152 (twin #153 in). #160 was already out (`none`). So the
+    "family goes to dev whole" rule no longer fires; the code keeps it as a guard.
+  - **A short scenario keeps test at its target** while dev still has at least as many; else it
+    splits in proportion as before. Scenario 1 (10 for 12): dev 5 / test 5. Scenario 2 (3 for
+    5): dev 2 / test 1 (test 2 would leave dev 1).
+  - **Pins** (owner): the seeded shuffle put #157 (N, a sales role) in test and #12 (Y) in dev.
+    Pinned #12 to test and #157 to dev (`PINS` in `eval_split.py`, also in split.json), so test
+    keeps 5 strong fits the owner would apply for. Done before any letter or grade exists, so it
+    can't bias results. The final split equals the 2026-10-23 dry run minus #122 and #152.
+  - Result: dev 17 (10 relevant): sc1 #73 #78 #153 #157 #191, sc2 #46 #124, sc3 #69 #168 #189
+    #205, sc4 #79 #90, sc6 #65 #85, sc7 #135 #162. Test 14 (11 relevant): sc1 #12 #47 #54 #71
+    #77, sc2 #27, sc3 #50 #149 #163, sc4 #60 #141, sc6 #53 #197, sc7 #193.
+  - Short against the 20 / 15 target: scenario 1 dev by 2, scenario 2 dev by 1 and test by 1.
+    Report per-scenario results for 1 and 2 with their counts; don't read much into scenario 2.
+  - Every ad in both sets gets a letter and is graded; Would apply only picks which letters
+    count in the main (relevant) score. The overall score uses all 31.
+  - Dev 20 / test 11 was considered and rejected (owner): the only move that keeps test's
+    relevant count (test's three N ads, #149 #163 #193, to dev) leaves test with no unrelated ad
+    and one missing-a-must-have ad, the cases where a tuned writer most likely overclaims
+    unseen, and each test letter would weigh ~9% instead of ~7%.
+  - Next: point set.json at the split (dev / test) after the owner reviews the diff, then stage 5
+    (define the metrics before any grading).
 
 ## Follow-ups (not for this eval)
+
+- From the labels (2026-10-23), match_profile verdicts the owner disagreed with:
+  - Years and seniority asks ("5+ years", "8+ years", "senior commercial") rated **partial**
+    against an internship (#69, #72, #103, #162, #193). They read as gaps.
+  - Non-technical customer service used as evidence for **technical / IT support** (#11, #186).
+  - A duty of the job ("interrogate the employer's live pricing systems", #149) tagged as an
+    essential the candidate is missing. The owner kept the tag, but duties in an ad's
+    "accountabilities" list are not skills a candidate can bring.
+  - The frozen profile undersells real skills in places (owner's comments in the sheet). Not for
+    this eval: the profile stays frozen; update it after the baseline.
 
 - The scorer bunches on a few values (of 112 usable ads, 27 at exactly 35 and 15 at exactly 60),
   which leaves the middle bands coarse. Changing it would move every score mid-build, and the

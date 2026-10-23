@@ -19,6 +19,26 @@ Full feature plan: docs/job-application-assistant-plan.md
 Full DB design: docs/database-schema.md
 
 
+PUBLIC REPO — nothing private gets committed (owner, 2026-10-22)
+
+This repo is PUBLIC on GitHub and is cloned by scrapers. The owner's name (Andre
+Bissell) and the commit email are fine to appear. NOTHING ELSE personal may be
+committed: no phone, address, date of birth, visa/work-rights details, Centrelink
+or other government IDs, real cover letters, real profile/CV text, writing samples,
+screening answers, screenshots, databases, API keys or GCP project ids.
+- Test data and examples use fake people ("Liam Chen", "Bob", @example.com) and
+  fake employers ("Acme", "LogiCo"), never the real profile.
+- Real data stays in gitignored places (real.db, app.db, .env, screenshots*/,
+  evals/jobs|runs|panels|candidates|work, evals/sets/** except MANIFEST.json,
+  reports/, backups/, dev_data/). Before adding a new folder that holds real data,
+  add it to .gitignore first.
+- Before every commit, check the staged diff (`git diff --cached`) for personal
+  data; if unsure whether something counts, ask the owner before committing.
+- Already in history and accepted by the owner: the name, the old commit email, and
+  the existing references to the real CV in tests/test_style_lint.py and a few docs.
+  Don't add more.
+
+
 SEEK ACCESS POLICY — how this app is allowed to touch Seek
 
 
@@ -589,11 +609,14 @@ default, `--write` only once the real tags and the owner's labels exist. DONE 20
 in `evals/results/v2/`; v2 `prepare` verifies, builds once, scores only unscored ads) and the paid
 stage-3 analysis ($1.235, run `stage3`). The scenario rule lives once in `scripts/eval_tags.py`
 (eval_pool.py + `scripts/eval_tag.py` use it); final tags are in candidates.csv (`final_scenario`,
-`eval_score`, `why`; `none` = fits no scenario). Counts 1:12 2:4 3:4 4:13 6:6 7:7 none:3.
-NEXT: the owner's labels in candidates.csv (Would apply, scenario OK), the open listing-floor
-question (`eval_tag.py --listing-floor 60`; plan Decision log 2026-10-22), a targeted scan for
-2-3 more 85+ ads (`eval_freeze.py --add`), then `eval_split.py --write`. set.json -> dev/test
-needs the owner's review of the diff first.
+`eval_score`, `why`; `none` = fits no scenario).
+Scenario 4 now has a 60 floor (owner, 2026-10-22): counts 1:12 2:4 3:7 4:5 6:6 7:7 none:8.
+ALL 49 LABELLED (2026-10-23; plan Decision log): Would apply = sent hoping to get the job
+(Centrelink-count-only = N); scenario_ok N on #11, #82, #186 only. SPLIT FINAL (2026-10-23, owner:
+no more ads): dev 17 (10 relevant) / test 14 (11 relevant) in `evals/sets/v2/split.json`; at most
+one ad per near-duplicate family (#122, #152 out); #12 pinned to test, #157 to dev (`PINS`).
+Scenario 1 dev short by 2, scenario 2 has 3 ads. NEXT: set.json -> dev/test (owner reviews the
+diff first), then stage 5 (metrics before any grading).
 The real profile is frozen as of 2026-10-20. Strong fit = score 85+ and
 no must-have GAP (`Requirement.needs_user`); partials are allowed (owner, 2026-10-20). Main metric:
 the relevant score (Would apply = Yes ads).
