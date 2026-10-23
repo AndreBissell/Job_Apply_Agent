@@ -1,6 +1,8 @@
 # Cover-letter metrics, v2 (eval-set stage 5)
 
-**Status:** DRAFT definitions, 2026-10-23, waiting on the owner's review. No code yet.
+**Status:** APPROVED by the owner, 2026-10-23. No code yet; build steps in §7, each with a
+go-ahead. Thresholds that are still guesses (C7's 10%, G1's 5-term run, the +60-word length
+probe) are tuned once on the first real letters, before any grading, then frozen.
 **Applies to:** runs on the frozen v2 set (`letter_lab.py --set v2`). v1 runs keep
 `evals/rubric.md`'s table, so the old results stay readable.
 **Parent plan:** docs/eval-set-plan.md (this is its stage 5; stages 7 and 8 use the human form
@@ -36,7 +38,7 @@ the metric changes it led to, which are folded in below. Summary:
 | 47% of employers say a tailored letter influences the hire, and 53% rank examples of skills as the most important content. | SEEK employer research (au.seek.com career advice) | Concrete evidence is its own dimension (D5), separate from coverage. |
 | Once an AI writing tool appeared on Freelancer.com, the link between a letter's word overlap with the job post (TF-IDF) and callbacks fell 51%, and the premium for tailored letters disappeared. Employers moved to verifiable signals such as work history. | Cui, Dias & Ye 2025 (arXiv 2509.25054); Galdin & Silbert 2025 (arXiv 2511.08785) | **Keyword overlap is a diagnostic only, never a target.** Reward specific, checkable profile evidence applied to the ad; penalise echoing the ad's own wording (C3). |
 | Recruiters penalise generic or obviously AI text rather than AI use as such: about 1 in 5 would reject an obviously AI-written letter. | TopResume hiring-manager survey 2025 | AI-tell checks (D6) and cross-letter repetition (C4). |
-| The first screen of a résumé takes seconds (7.4 s on average). | Ladders eye-tracking study 2018 | First-paragraph test (D1). |
+| The first screen of a résumé takes seconds (7.4 s on average). | Ladders eye-tracking study 2018 | First-paragraph test (in D2). |
 | AI screeners parse the application, match it against the requirements, then score and rank it (Workday HiredScore letter grades, Oracle 0–5; seekAi shortlists in some markets). | Jobscan; SEEK product pages | The AI-screener view (Layer 4), noted for later. |
 | LLM screeners prefer text written by their own model (67–82% self-preference in a résumé experiment). | Xu, Li & Jiang 2025 (arXiv 2509.00462) | Grade with a different model family from the Gemini writer (Opus), and keep an AI-screener score secondary. |
 | Splitting each criterion into yes/no checklist questions makes LLM judges much more consistent than Likert scales. | CheckEval, EMNLP 2025 (arXiv 2403.18771) | Layer 2 is a yes/no checklist, not 1–5 scores. |
@@ -76,8 +78,7 @@ analysis, but they are measured against this one.
 | M1 | **Must-cover recall** | addressed `must_cover` items / `must_cover` items, with `guardrails.must_cover` applied to the reference. Target 100%. |
 | M2 | **Weighted backed coverage** | Σ weight of addressed supported/partial items / Σ weight of all supported/partial items. Weights: essential 4, important 2, nice-to-have 1 (owner, 2026-10-23: one essential is worth at least two important items). `not_for_letter` and `implied` items are left out. The "hit as many as possible" number; on one page it will never be 100%. |
 | M3 | **Best-evidence rate** | of the addressed headline items, the share that use the strongest evidence the reference holds for them. Strength order: work experience > project or thesis > qualification > listed skill. |
-| M4 | **Claim honesty** | the judge lists every factual claim and labels it `supported`, `stretch`, `fabricated` or `employer_fact_not_in_ad`, using the v1 standard's rulings (scope, audience, seniority, rounded numbers, bare-listing experience). Reported: fabrications per letter (gate: 0), stretches per letter, and claim precision = supported / all claims. |
-| M5 | **Gap handling** | a not-backed item claimed as had counts as a fabrication; a partial item claimed as full counts as a stretch. Honest "related experience" framing is fine. |
+| M4 | **Claim honesty** | the judge lists every factual claim and labels it `supported`, `stretch`, `fabricated` or `employer_fact_not_in_ad`, using the v1 standard's rulings (scope, audience, seniority, rounded numbers, bare-listing experience). Gaps follow the same labels: a not-backed requirement claimed as had is `fabricated`; a partial one claimed as full is a `stretch`; honest "related experience" framing is fine. Reported: fabrications per letter (gate: 0), of which gap claims; stretches per letter; and claim precision = supported / all claims. |
 | — | **Honest coverage** (headline) | M2 for a letter with 0 fabrications, else 0. One number for "as many requirements as possible without lying". |
 
 **"Addressed"** works the way `check_requirements` does: the judge quotes the letter's words that
@@ -95,7 +96,7 @@ Each sub-question is answered Y/N with a short quote or reason. A dimension's sc
 of Y. The dimensions split into two groups, following the one validated rubric found for this
 (Galdin & Silbert 2025: before AI writing tools, employers paid for the **custom** criteria and
 not for the **generic** ones; research doc A1):
-- **custom** = D1, D2, D3, D4, D7 (the letter shows it was written for this job);
+- **custom** = D2, D3, D4, D7 (the letter shows it was written for this job);
 - **generic** = D5, D6 (quality any good letter has).
 
 Both group means are reported. The **checklist score** = (2 × custom mean + generic mean) / 3,
@@ -103,12 +104,11 @@ the same 2:1 weighting the paper used.
 
 | Dim | Sub-questions (each Y/N) | Owner tick it maps to (§4) |
 |---|---|---|
-| D1 First impression (6-second test) | Does the first paragraph name the role? Does it state the strongest matching evidence? Does it avoid stock openers ("I am writing to express")? | generic, sounds AI |
-| D2 Applied, not recited | Does every body paragraph tie its evidence to a duty or requirement named in the ad? Is the connecting sentence specific rather than a formula ("prepares me to")? | weak example, generic |
+| D2 Applied, not recited | Does the first paragraph state the strongest matching evidence (the 6-second test)? Does every body paragraph tie its evidence to a duty or requirement named in the ad? Is the connecting sentence specific rather than a formula ("prepares me to")? | weak example, generic |
 | D3 Employer-specific | Is at least one ad fact about this employer, team, product or program used meaningfully? Does it pass the swap test (the sentence stops fitting if another employer's name is swapped in)? (v1's specific_detail) | generic |
 | D4 Motivation | Is there a specific reason for wanting this role or employer, grounded in the ad, beyond generic praise? | no real reason |
 | D5 Concrete evidence | Are there at least 2 pieces of evidence with specifics (tool, task, and scale or outcome)? Does every number come from the profile? Is at least one specific **checkable** (a named project, tool or organisation, or a number from the profile)? (research doc A3) | weak example |
-| D6 Voice and polish | Fewer than 3 machine-written tells? No phrase or structure repeated? Australian spelling? Tone matching the ad (`analysis.tone`)? 250–340 words? A close specific to the role? Self-promotion kept moderate, with no stacked superlatives? (A4) | sounds AI, waffly |
+| D6 Voice and polish | No stock opener ("I am writing to express")? Fewer than 3 machine-written tells? No phrase or structure repeated? Australian spelling? Tone matching the ad (`analysis.tone`)? 250–340 words? A close specific to the role? Self-promotion kept moderate, with no stacked superlatives? (A4) | sounds AI, waffly |
 | D7 Understands the job | Does the letter show it grasped the goal of the role and what is hard about it (beyond restating the duties), and connect the candidate to that? (Galdin & Silbert's "understands the goal / complexity" criteria) | generic, no real reason |
 
 The judge also gives a **predicted send-readiness (1–4)** on the owner's scale (§4), reasoned from
@@ -118,15 +118,11 @@ Layers 1 and 2. That prediction is the number calibrated to the owner's grade (�
 
 | Id | Signal | Definition |
 |---|---|---|
-| C1 | Gates | Layer 0. |
-| C2 | Keyword coverage | share of the ad's hard skills (`job_skills` hard + `analysis.keywords`, both through `prefilter.normalise_skill`) that the reference backs AND that appear in the letter. **Diagnostic only** (§2): it checks the letter uses the employer's own name for skills it really has. |
 | C3 | Ad echo / profile copy | share of letter words in runs of 6+ words copied verbatim from the ad (parroting); share in runs of 8+ words copied from the profile (the measure panel 4 used: 36% -> 18%). |
 | C4 | Cross-letter repetition | 4–6-word phrases that appear in 3 or more of a run's letters, with names and skill terms excluded. Per run: the count and the list. Catches formulas such as "prepares me to" or "exactly the kind of", which a grader reading one letter at a time can't see. |
 | C5 | Style warnings | `style_lint.lint` warnings: gap-led sentences, stock close or bridge, US spellings, low sentence-length variance, too many paragraphs starting with "I". |
 | C6 | Cost and time | per letter, from the existing `cost-report`. |
 | C7 | Nearest-letter similarity | normalised edit distance from each letter's body (greeting and sign-off removed) to the closest other letter in the run; flagged under 10% as a near-template. Galdin & Silbert zeroed the "custom" score of any proposal under 4% from another by the same writer (research doc A1). |
-| C8 | Intensity | superlatives and intensifiers per 100 words ("exceptional", "highly", "passionate", "deeply"). Diagnostic: heavy self-promotion reads as disingenuous (A4). |
-
 ### Layer 4: AI-screener view (noted, not built)
 
 A Claude-family screener would read only the ad and the letter, then give a 0–100 fit score and
@@ -153,7 +149,7 @@ When two versions are compared: the **A/B win rate** of the new version over the
 (wins + ½ ties, divided by ads compared), with a sign test, from the owner's picks and from the
 judge's.
 
-Everything else (M2–M5 alone, D1–D7 alone, C2–C8) is diagnostic: it explains a headline move,
+Everything else (M2–M4 alone, D2–D7 alone, C3–C7) is diagnostic: it explains a headline move,
 and is never optimised on its own.
 
 ## 4. The owner's grading form (about 2 minutes per letter)
@@ -217,10 +213,10 @@ every ad, in both orders; if its pick changes with the order, it counts as a tie
 1. **Reference checklist**: a builder reading `checks.csv` and the candidates.csv comments; the
    corrections drafted, then confirmed by the owner; written to `evals/work/v2/reference/`.
 2. **Standard v2 + judge schema**: `evals/grading-standard-v2.md`, the judge's JSON shape
-   (claims with labels, per-requirement quotes, D1–D7 answers, predicted send-readiness); extend
+   (claims with labels, per-requirement quotes, D2–D7 answers, predicted send-readiness); extend
    `scripts/grading_panel.py` with a v2 pack, a pairwise pack in both orders, and an agreement
    report (exact / ±1, weighted kappa, TPR/TNR, per-tick).
-3. **Grading sheet + code metrics**: `letter_lab.py grade-sheet` (the §4 form, blind), G1 and C2–C8
+3. **Grading sheet + code metrics**: `letter_lab.py grade-sheet` (the §4 form, blind), G1 and C3–C7
    plus the scorecard in `report`, reusing `rubric.auto_checks`, `style_lint.lint`,
    `check_requirements.quote_in_letter`, `guardrails.must_cover` / `listing_only` and
    `prefilter.normalise_skill`. Tests use fake letters and fake employers.
@@ -251,3 +247,22 @@ every ad, in both orders; if its pick changes with the order, it counts as a tie
   letters exist, compute M2 both ways to see whether the ranking of letters changes. Watch for
   M2 rising while send-readiness falls: that would mean letters are cramming more requirements
   in with less evidence each.
+- 2026-10-23: **5 overlapping metrics cut** (owner). The rest keep their ids, so references
+  elsewhere stay valid.
+  - C1 (gates): a second listing of Layer 0.
+  - M5 (gap handling): its rules were M4's labels; now part of M4's definition, with gap claims
+    as a sub-count of fabrications.
+  - C8 (intensity): a word list can't read context; D6's self-promotion question covers it.
+  - C2 (keyword coverage): only an exact-term check, and keyword overlap is a weak signal; M2
+    with the explicit rule covers coverage.
+  - D1 (first impression): "names the role" was almost always yes; "strongest evidence first"
+    moved into D2 and "no stock opener" into D6.
+  - C3 was considered and kept: it compares a letter with its sources (the ad, the profile),
+    while C7 compares letters with each other, and profile copy is a number that has moved
+    (36% -> 18%).
+  - Now: Layer 0 = 5 gates + G1; Layer 1 = M1–M4 + honest coverage; Layer 2 = D2–D7; Layer 3 =
+    C3–C7.
+- 2026-10-23: **plan approved** (owner). The definitions are fixed before any letter is graded.
+  The guessed thresholds (C7, G1, the length probe) may be tuned once on the first real letters,
+  before grading, and are then frozen. Judge calibration (§6) may still reword a yes/no question
+  if the judge can't match the owner's grades; any such change is logged here.

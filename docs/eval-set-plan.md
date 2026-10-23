@@ -13,8 +13,8 @@ and after changes, at known cost. The dev set is tuned on; the test set is held 
 4. Split: stratified by scenario, random within each scenario, into dev 20 / test 15, at most
    one ad per near-duplicate family (rules in the Decision log, 2026-10-21 and 2026-10-23;
    `scripts/eval_split.py`). **Done 2026-10-23: dev 17 / test 14, no more ads.**
-5. Define the metrics before any grading. DRAFTED 2026-10-23 in docs/letter-metrics-plan.md
-   (awaiting the owner's review).
+5. Define the metrics before any grading. **Done 2026-10-23: docs/letter-metrics-plan.md,
+   approved by the owner.**
 6. Generate letters with the current system (unedited letters are what gets graded).
 7. The user hand-grades the dev letters (no judge grades shown first, so nothing anchors them).
 8. Calibrate the LLM judge on half the dev grades, check it on the other half, then freeze and
@@ -229,6 +229,9 @@ stage 3.
   checks it on the other half (that doc's §6). Coverage is measured against one fixed reference
   checklist per ad: stage 3's `checks.csv` plus the owner's labelling corrections, confirmed
   before use. An AI-screener metric is noted in future_work/ only (owner).
+- 2026-10-23: **stage 5 approved** (owner), after M2's weights moved to 4/2/1 and 5 overlapping
+  metrics were cut (22 remain; that doc's Decision log). Next: its §7 build step 1, the reference
+  checklist, with the owner's go-ahead.
 
 ## Follow-ups (not for this eval)
 
