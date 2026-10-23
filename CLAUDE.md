@@ -616,7 +616,11 @@ ALL 49 LABELLED (2026-10-23; plan Decision log): Would apply = sent hoping to ge
 no more ads): dev 17 (10 relevant) / test 14 (11 relevant) in `evals/sets/v2/split.json`; at most
 one ad per near-duplicate family (#122, #152 out); #12 pinned to test, #157 to dev (`PINS`).
 Scenario 1 dev short by 2, scenario 2 has 3 ads. NEXT: set.json -> dev/test (owner reviews the
-diff first), then stage 5 (metrics before any grading).
+diff first). Stage 5 DRAFTED 2026-10-23 (docs/letter-metrics-plan.md, awaiting the owner's
+review): owner grade = 4-level send-readiness + untrue Y/N + reason ticks; honest requirement
+coverage against a fixed reference checklist; yes/no recruiter checklist; code signals; judge
+calibrated on half the dev grades. Build steps in its §7, each with a go-ahead. Evidence behind it:
+docs/ai-recruitment-research.md (AI screeners' biases, rated by strength; lines we never cross).
 The real profile is frozen as of 2026-10-20. Strong fit = score 85+ and
 no must-have GAP (`Requirement.needs_user`); partials are allowed (owner, 2026-10-20). Main metric:
 the relevant score (Would apply = Yes ads).
