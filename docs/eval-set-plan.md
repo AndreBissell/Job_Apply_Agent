@@ -232,6 +232,17 @@ stage 3.
 - 2026-10-23: **stage 5 approved** (owner), after M2's weights moved to 4/2/1 and 5 overlapping
   metrics were cut (22 remain; that doc's Decision log). Next: its §7 build step 1, the reference
   checklist, with the owner's go-ahead.
+- 2026-10-26: **reference checklist built and frozen** (metrics plan §7 step 1; no LLM calls).
+  `scripts/eval_reference.py` (propose / show / decide / build / verify; tests in
+  tests/test_eval_reference.py) -> `evals/work/v2/reference/` (gitignored): one read-only JSON per
+  split ad (31) + MANIFEST.json with hashes; `verify` checks them. Source: the stage-3 run in
+  eval.db, checked row for row against checks.csv. 16 proposals, owner answered each in chat:
+  10 accepted, 6 rejected; #12's and #168's comments confirmed as no change (the frozen profile
+  doesn't back the skill). The labelling follow-ups below are corrected in the reference only,
+  not in match_profile. Scenario tags are NOT moved by it: a tag describes the path the agent
+  takes on its own analysis. Only #149 would move (3 -> 1, its one must-have gap was a duty).
+  Totals before -> after: partial 130 -> 123, gap 92 -> 98, must-cover 110 -> 106, must-have
+  gaps 20 -> 23; 376 -> 377 rows (one split). Details in the metrics plan's Decision log.
 
 ## Follow-ups (not for this eval)
 

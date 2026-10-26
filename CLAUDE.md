@@ -261,7 +261,7 @@ job-app-assistant/
     run_matching.py    # batch LLM matching/scoring
     run_cover_letters.py  # batch cover-letter generation (dev/testing only)
     letter_lab.py      # cover-letter eval harness (evals/rubric.md); analyze = Phase 3 hand-check pack; loop-report = revisions
-    grading_panel.py   # blind Opus grading panel: pack / disagreements / merge (evals/grading-panel.md)
+    grading_panel.py   # blind Opus grading panel: pack / disagreements / merge; v2-* per-letter judges (evals/grading-panel.md)
     screening_eval.py  # Quick Apply question-help eval: build-set / sort / labels / drafts / report (Phase 9c)
     eval_pool.py       # eval set: sorts real.db's ads into the scenarios (docs/eval-set-plan.md), read-only
     eval_draw.py       # eval set: seeded draw of the candidates -> evals/candidates/candidates.csv
@@ -619,7 +619,13 @@ Scenario 1 dev short by 2, scenario 2 has 3 ads. Runs pick a side with `letter_l
 --set v2 --split dev|test` (a v2 run refuses without --split or --only; set.json stays all 49). Stage 5 APPROVED 2026-10-23 (docs/letter-metrics-plan.md, 22
 metrics, M2 weights 4/2/1): owner grade = 4-level send-readiness + untrue Y/N + reason ticks; honest requirement
 coverage against a fixed reference checklist; yes/no recruiter checklist; code signals; judge
-calibrated on half the dev grades. Build steps in its §7, each with a go-ahead. Evidence behind it:
+calibrated on half the dev grades. Build steps in its §7, each with a go-ahead. Step 1 DONE
+2026-10-26 (`scripts/eval_reference.py`: the owner-corrected reference checklist, the answer key).
+Step 2 BUILT 2026-10-26: `evals/grading-standard-v2.md` (approved; frozen after stage 8) and
+`grading_panel.py v2-*` (ONE FRESH OPUS SUBAGENT PER LETTER per grader A/B, a fresh adjudicator per
+split letter, pairwise in both orders, agreement with the owner; procedure and prompts in
+evals/grading-panel.md). The owner's answer key is the truth; judges' `checklist_doubts` go to
+panels/<tag>/checklist-doubts.md for a recheck. Next: step 3 (grade-sheet + code metrics). Evidence behind it:
 docs/ai-recruitment-research.md (AI screeners' biases, rated by strength; lines we never cross).
 The real profile is frozen as of 2026-10-20. Strong fit = score 85+ and
 no must-have GAP (`Requirement.needs_user`); partials are allowed (owner, 2026-10-20). Main metric:

@@ -203,7 +203,10 @@ every ad, in both orders; if its pick changes with the order, it counts as a tie
    only if no padded copy scores higher than its original.
 7. **Bias controls, kept from v1:** blind and shuffled; an Opus judge (a different model family
    from the Gemini writer; run as Claude Code subagents, so no Vertex spend); "length is not
-   quality" in the prompt; 2 graders + an adjudicator; pairwise in both orders.
+   quality" in the prompt; 2 graders + an adjudicator; pairwise in both orders. **New in v2: one
+   fresh judge per letter** (and per pair-order for the A/B picks): each subagent sees only the
+   profile, one ad, its reference checklist and one letter, so no letter can anchor another and
+   the judge can't drift over a long packet. This replaces v1's reverse-order second grader.
 8. **Afterwards:** on later runs the owner grades about 5 letters plus the A/B picks, to catch
    drift. If agreement drops, recalibrate. The **test set** is graded once, at the end, by both
    the owner and the frozen judge.
@@ -212,10 +215,14 @@ every ad, in both orders; if its pick changes with the order, it counts as a tie
 
 1. **Reference checklist**: a builder reading `checks.csv` and the candidates.csv comments; the
    corrections drafted, then confirmed by the owner; written to `evals/work/v2/reference/`.
+   **Done 2026-10-26** (`scripts/eval_reference.py`; Decision log).
 2. **Standard v2 + judge schema**: `evals/grading-standard-v2.md`, the judge's JSON shape
    (claims with labels, per-requirement quotes, D2–D7 answers, predicted send-readiness); extend
    `scripts/grading_panel.py` with a v2 pack, a pairwise pack in both orders, and an agreement
    report (exact / ±1, weighted kappa, TPR/TNR, per-tick).
+   **Built 2026-10-26** (`v2-*` commands; procedure and judge prompts in `evals/grading-panel.md`;
+   `tests/test_grading_panel_v2.py`, fake data). Not yet run on real letters: none exist until
+   stage 6, so the first real check is a free `v2-pack` on the baseline letters.
 3. **Grading sheet + code metrics**: `letter_lab.py grade-sheet` (the §4 form, blind), G1 and C3–C7
    plus the scorecard in `report`, reusing `rubric.auto_checks`, `style_lint.lint`,
    `check_requirements.quote_in_letter`, `guardrails.must_cover` / `listing_only` and
@@ -266,3 +273,68 @@ every ad, in both orders; if its pick changes with the order, it counts as a tie
   The guessed thresholds (C7, G1, the length probe) may be tuned once on the first real letters,
   before grading, and are then frozen. Judge calibration (§6) may still reword a yes/no question
   if the judge can't match the owner's grades; any such change is logged here.
+- 2026-10-26: **reference checklist built and frozen** (§7 step 1; no LLM calls).
+  `scripts/eval_reference.py` reads the stage-3 run (eval.db, checked row for row against
+  checks.csv), proposes corrections, records the owner's yes/no per row, then writes one read-only
+  JSON per split ad to `evals/work/v2/reference/ads/` with MANIFEST.json (hashes, sources, every
+  decision with its reason). Each row still loads as a `Requirement`, so `guardrails.must_cover`
+  / `listing_only` apply to it unchanged; each file also maps every cited pointer to its profile
+  text and kind (work / project / qualification / skill), which M3 ranks by.
+  - **Scope (owner):** the labelling error patterns are corrected on every split ad, not only the
+    commented ones: a consistent answer key matters more than matching the comments.
+  - **Rules (owner, set while answering):**
+    - *Years asks*: relevant paid work only (projects, thesis and coursework are not years;
+      non-technical jobs don't count towards technical asks), against a range's lower number:
+      under half the years asked = gap, half or more = partial, all = supported. An ask with no
+      number of years ("demonstrated experience as a developer") is judged on the evidence, not
+      on duration. "Building and shipping working solutions" is not limited to paid work, so a
+      degree's projects count there (kept partial).
+    - *Seniority asks* ("senior", "lead"): supported only if a relevant job title held says so.
+    - A row that becomes a gap keeps what the analysis cited as `related_evidence`, never as
+      `evidence` (guardrails read `evidence` as backing): the judge can then tell honest
+      related-experience framing from a claim of the years.
+    - *A row bundling two asks is split*: "2-3 years' experience including C#, JS/TS, HTML/CSS"
+      became a years row (gap) and a stack row (supported), so a letter is credited for the
+      backed half and flagged only for claiming the other.
+    - *Non-technical customer service* is dropped as evidence for technical product support, but
+      kept for "talk to clients on the phone" (that is what customer service shows).
+    - *A duty of the job* drops from essential to important only when no candidate could bring it
+      (it needs the employer's own systems) or it is the job's domain overview rather than a
+      listed requirement; duties that are core skills (manual testing, test cases, lakehouse
+      design) stay essential.
+    - Evidence follows the frozen profile, not the owner's real skills; where the owner has more
+      (comments on #12, #168), add it to the profile after the baseline.
+  - **Counts:** 16 proposals on 13 of 31 ads, 10 accepted / 6 rejected. 376 -> 377 rows; partial
+    130 -> 123, gap 92 -> 98, supported 154 -> 156, must-cover 110 -> 106, must-have gaps 20 -> 23,
+    M2 weight base 653 -> 635.
+  - Scenario tags are unchanged (the agent's path comes from its own analysis); only #149 would
+    move on the reference (3 -> 1).
+- 2026-10-26: **standard v2 drafted** (§7 step 2; `evals/grading-standard-v2.md`, DRAFT, no code
+  yet). Owner decisions:
+  - **The packet carries the full profile** as well as the reference checklist: M4 checks every
+    claim against the profile, and the checklist's evidence map holds only the entries cited for
+    a requirement, so an honest claim from another entry would look fabricated.
+  - **v2 gets its own `disagreements` and `merge`** in `scripts/grading_panel.py`, split per
+    question, because §6.7 keeps 2 graders + an adjudicator.
+  - **The judge doesn't pick the must-haves:** `guardrails.must_cover` on the reference decides
+    them. v1's "what is a must-have" ruling is carried over as an explanation only.
+  - **Weighted kappa is reported with a warning:** on 8–9 letters one disagreement swings it, so
+    the exact and ±1 counts are the main agreement figures.
+  - **One fresh judge per letter** (owner's suggestion), and per pair-order for the A/B picks
+    (§6.7).
+  - **v1's "not sendable" triggers are counted by the edit each one takes**, not an automatic cap
+    at 2: a one-sentence fix is still a light edit. A cap would bunch nearly every letter at 2,
+    which is how `would_send` sat at 0/15. Untrue claims are already scored on their own (the
+    untrue figure, the fabrication gate).
+  - **Stretch vs fabricated:** a stretch inflates something an entry backs; fabricated has no
+    entry behind its core fact. So an invented result, number or tool is **fabricated** (v1 had
+    listed them as stretches, when only Y/N mattered); a bigger audience or a rounded-up number
+    stays a stretch; a gap claimed as had is fabricated; unsure = stretch.
+  - **Smaller mechanics:** code counts the words for D6f; the judge reads tone from the ad; D6d is
+    strict (any US spelling = N; v1's "more than three" stays in send-readiness); ticks only
+    below a 4; A/B picks go fewer untrue claims > predicted grade > coverage > checklist, and
+    never length.
+  - **The owner's answer key is the truth.** The judge grades by it; where it thinks a row is
+    wrong it writes a `checklist_doubts` entry, which never changes a score. Code collects them
+    into one list for the owner to recheck later.
+  - Standard v2 **approved** (owner). It is frozen after stage 8 adds the calibration examples.
