@@ -177,6 +177,12 @@ On the 10 relevant dev ads (Would apply = Y): two letters for the same ad side b
 writers hidden. Pick **A**, **B** or **same** (about 1 minute each). The judge does the same on
 every ad, in both orders; if its pick changes with the order, it counts as a tie.
 
+**Who picks (owner, 2026-10-26):** the owner picks on the **first 2 comparisons** (about 20 ads,
+enough to see whether the judge agrees). After that the judge picks alone if it mostly agreed;
+the owner reads the ads it disagreed on, and keeps picking if it misses the same kind of thing.
+The owner always picks when the change is about voice (whether a letter sounds like them is
+theirs to judge). The owner's pick form is built with the first comparison, not before.
+
 ## 6. How the judge is built and calibrated
 
 1. **Standard v2** (`evals/grading-standard-v2.md`, build step 2) writes Layers 1–2 as questions,
