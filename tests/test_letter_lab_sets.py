@@ -63,7 +63,7 @@ def test_importing_still_points_at_the_v1_eval_db():
 
 @pytest.mark.parametrize("argv", [
     ["snapshot"], ["prepare"], ["run"], ["read", "r"], ["report", "r"], ["loop-report", "r"],
-    ["cost-report", "r"], ["analyze"], ["analysis-report", "r"], ["plant", "r"],
+    ["cost-report", "r"], ["grade-sheet", "r"], ["analyze"], ["analysis-report", "r"], ["plant", "r"],
 ])
 def test_every_command_takes_set_and_defaults_to_v1(argv):
     parser = lab.build_parser()

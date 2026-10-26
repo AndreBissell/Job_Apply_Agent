@@ -37,6 +37,12 @@ Eval sets (`--set`, on every command; default v1):
     python scripts/letter_lab.py run --set v2 --split dev --engine agent --label dev-agent-v1
         # --split dev|test = one side of evals/sets/v2/split.json (scripts/eval_split.py);
         # a v2 run needs it (or --only), since v2's set.json is all 49 frozen ads
+    python scripts/letter_lab.py grade-sheet --set v2 <run>       # the owner's blind form (metrics plan §4)
+    #    ... open evals/work/v2/grading/<sheet>/sheet.html, fill in grades-owner.csv beside it ...
+    python scripts/letter_lab.py grade-sheet --set v2 --unblind <sheet>   # -> runs/<run>/grades-owner.csv
+    python scripts/letter_lab.py report --set v2 <run> [--judge TAG] [--picks TAG]
+        # the scorecard (metrics plan §3) -> evals/results/v2/<run>.md (numbers and ad keys only)
+        # + runs/<run>/report-detail.md (gitignored: quotes the letters)
 
 Privacy: evals/jobs/, evals/eval.db, evals/set.json and evals/runs/ hold ad text,
 your profile and letters written as you — all gitignored. Only the summary in
@@ -54,6 +60,7 @@ import csv
 import datetime
 import json
 import os
+import random
 import re
 import sqlite3
 import sys
@@ -972,6 +979,8 @@ def _yn(value: str) -> bool | None:
 
 
 def cmd_report(args) -> int:
+    if FROZEN_DIR is not None:  # v2: the metrics plan's scorecard (section 4e)
+        return _report_v2(args)
     from app.llm.letter.rubric import AUTO_ITEMS, HUMAN_ITEMS
 
     run_dir = RUNS_DIR / args.run_id
@@ -1479,6 +1488,475 @@ def cmd_cost_report(args) -> int:
 
 
 # ---------------------------------------------------------------------------
+# 4d. grade-sheet (v2): the owner's blind form (docs/letter-metrics-plan.md §4)
+# ---------------------------------------------------------------------------
+# A sheet lives in a folder named by a random id, so nothing the owner opens names the run;
+# the key that un-blinds it is kept in a separate folder. `--unblind` copies the filled CSV
+# into runs/<run>/grades-owner.csv, where `report` and grading_panel.py v2-agreement read it.
+def _grading_dirs() -> tuple[Path, Path]:
+    work = RUNS_DIR.parent
+    return work / "grading", work / "grading-keys"
+
+
+def _grading_panel():
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import grading_panel  # stdlib-only at import; its DATABASE_URL default doesn't override ours
+
+    return grading_panel
+
+
+def _sheet_html(sheet_id: str, items: list[dict]) -> str:
+    """The form: one section per letter, the ad on the left and the letter on the right."""
+    from html import escape
+
+    gp = _grading_panel()
+    ticks = " · ".join(f"<code>{t}</code>" for t in gp.TICKS)
+    sections = []
+    for n, it in enumerate(items, 1):
+        ad = it["ad"]
+        head = escape(ad["title"]) + (f" · {escape(ad['company'])}" if ad.get("company") else "") \
+            + (f" · {escape(ad['location'])}" if ad.get("location") else "")
+        sections.append(f"""
+<section id="l{n}">
+  <h2>Letter {n} of {len(items)} <span class="key">CSV row {n} · <code>{escape(it['key'])}</code></span></h2>
+  <div class="pair">
+    <div class="col ad"><h3>The ad</h3><p class="adhead">{head}</p><div class="text">{escape(ad['raw_description'].strip())}</div></div>
+    <div class="col letter"><h3>The letter <span class="words">{it['words']} words</span></h3><div class="text">{escape(it['letter'])}</div></div>
+  </div>
+  <p class="form">1. <b>send_readiness</b> 4 / 3 / 2 / 1 &nbsp; 2. <b>untrue</b> N, or Y + the bad bit in <b>untrue_text</b>
+  &nbsp; 3. Why not a 4? Y under any of {ticks} &nbsp; (optional <b>note</b>)</p>
+</section>""")
+    nav = " ".join(f'<a href="#l{n}">{n}</a>' for n in range(1, len(items) + 1))
+    return f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Grading sheet {sheet_id}</title>
+<style>
+:root {{ --bg: #fbfaf7; --fg: #1d1d1b; --muted: #6b6a66; --line: #dddad2; --panel: #ffffff; --accent: #2f5d8a; }}
+@media (prefers-color-scheme: dark) {{
+  :root {{ --bg: #1b1b1a; --fg: #e8e6e1; --muted: #a09e98; --line: #3a3936; --panel: #242422; --accent: #8fb7dd; }}
+}}
+body {{ margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 system-ui, sans-serif; }}
+header, section {{ max-width: 1400px; margin: 0 auto; padding: 16px; }}
+nav {{ position: sticky; top: 0; background: var(--bg); border-bottom: 1px solid var(--line); padding: 8px 16px; z-index: 1; }}
+nav a {{ color: var(--accent); margin-right: 8px; text-decoration: none; }}
+h1 {{ font-size: 1.4em; }} h2 {{ font-size: 1.15em; border-top: 2px solid var(--line); padding-top: 16px; }}
+h3 {{ font-size: 0.95em; margin: 0 0 8px; color: var(--muted); }}
+.key, .words {{ font-weight: normal; color: var(--muted); font-size: 0.85em; margin-left: 8px; }}
+.pair {{ display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }}
+@media (max-width: 800px) {{ .pair {{ grid-template-columns: 1fr; }} }}
+.col {{ background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 12px; }}
+.ad .text {{ max-height: 75vh; overflow: auto; font-size: 0.9em; color: var(--muted); }}
+.adhead {{ margin: 0 0 8px; font-weight: 600; }}
+.text {{ white-space: pre-wrap; overflow-wrap: anywhere; }}
+.form {{ background: var(--panel); border-left: 3px solid var(--accent); padding: 8px 12px; }}
+table {{ border-collapse: collapse; }} td, th {{ border: 1px solid var(--line); padding: 4px 8px; text-align: left; vertical-align: top; }}
+code {{ font-size: 0.9em; }}
+</style></head><body>
+<header>
+<h1>Grading sheet {sheet_id}</h1>
+<p>{len(items)} letters in random order. Grade each in <code>grades-owner.csv</code> (same folder), row <i>n</i> = letter <i>n</i>.
+About 2 minutes per letter. Grade from the ad and the letter alone.</p>
+<table>
+<tr><th>Column</th><th>What to write</th></tr>
+<tr><td><code>send_readiness</code></td><td><b>4</b> send as is (word-level fixes only) · <b>3</b> light edits (change, add or delete at most 2 sentences) ·
+<b>2</b> heavy edits (rework a paragraph, or swap the main example) · <b>1</b> start over</td></tr>
+<tr><td><code>untrue</code>, <code>untrue_text</code></td><td>Anything untrue or stretched? <b>N</b>, or <b>Y</b> with the bad bit pasted into <code>untrue_text</code></td></tr>
+<tr><td>{ticks}</td><td>Why not a 4? <b>Y</b> under each that applies (blank = not ticked): generic / fits any company · missed something important ·
+weak or wrong example used · sounds AI / stock phrases · no real reason for wanting this job · too long / waffly</td></tr>
+<tr><td><code>note</code></td><td>Optional, one line</td></tr>
+</table>
+<p>When you're done: <code>python scripts/letter_lab.py grade-sheet --set v2 --unblind {sheet_id}</code></p>
+</header>
+<nav>Letters: {nav}</nav>
+{''.join(sections)}
+</body></html>
+"""
+
+
+def _filled(row: dict) -> bool:
+    return any((v or "").strip() for k, v in row.items() if k != "key")
+
+
+def _read_csv(path: Path) -> tuple[list[str], list[dict]]:
+    with path.open(encoding="utf-8-sig", newline="") as fh:  # -sig: Excel saves a BOM
+        reader = csv.DictReader(fh)
+        return list(reader.fieldnames or []), list(reader)
+
+
+def cmd_grade_sheet(args) -> int:
+    if FROZEN_DIR is None:
+        print("grade-sheet is for the v2 form (--set v2); v1 runs are graded in grades.csv.")
+        return 1
+    if args.unblind:
+        return _unblind(args.unblind)
+    if not args.run_id:
+        print("Name a run, or --unblind a sheet id.")
+        return 1
+    run_dir = RUNS_DIR / args.run_id
+    if not (run_dir / "run.json").exists():
+        print(f"No run {args.run_id} in {_rel(RUNS_DIR)}/")
+        return 1
+    gp = _grading_panel()
+    sheets, keys_dir = _grading_dirs()
+    if keys_dir.exists() and not args.new:
+        for path in sorted(keys_dir.glob("*.json")):
+            if json.loads(path.read_text(encoding="utf-8"))["run"] == args.run_id:
+                print(f"This run already has sheet {path.stem} ({_rel(sheets / path.stem)}/). "
+                      "Pass --new for another one (e.g. a few more letters with --only).")
+                return 1
+    meta = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+    keys = [r["key"] for r in meta["results"]
+            if "error" not in r and (run_dir / "letters" / f"{r['key']}.txt").exists()]
+    if args.only:
+        unknown = sorted(set(args.only) - set(keys))
+        if unknown:
+            print(f"No letter in this run for: {', '.join(unknown)}")
+            return 1
+        keys = [k for k in keys if k in set(args.only)]
+    if not keys:
+        print("No letters to grade.")
+        return 1
+
+    from app.llm.letter.rubric import word_count
+
+    rng = random.Random(args.seed)
+    rng.shuffle(keys)
+    while True:
+        sheet_id = f"S{rng.randrange(1000, 10000)}"
+        if not (sheets / sheet_id).exists() and not (keys_dir / f"{sheet_id}.json").exists():
+            break
+    items = []
+    for key in keys:
+        letter = (run_dir / "letters" / f"{key}.txt").read_text(encoding="utf-8").strip()
+        ad = json.loads((FROZEN_DIR / "ads" / f"{key}.json").read_text(encoding="utf-8"))
+        items.append({"key": key, "ad": ad, "letter": letter, "words": word_count(letter)})
+    out = sheets / sheet_id
+    out.mkdir(parents=True)  # a new folder every time, so a started CSV is never written over
+    keys_dir.mkdir(parents=True, exist_ok=True)
+    (out / "sheet.html").write_text(_sheet_html(sheet_id, items), encoding="utf-8")
+    with (out / "grades-owner.csv").open("w", newline="", encoding="utf-8-sig") as fh:
+        w = csv.writer(fh)
+        w.writerow(gp.OWNER_FIELDS)
+        w.writerows([k, *[""] * (len(gp.OWNER_FIELDS) - 1)] for k in keys)
+    (keys_dir / f"{sheet_id}.json").write_text(json.dumps({
+        "sheet": sheet_id, "run": args.run_id, "keys": keys,
+        "made_at": datetime.datetime.now().isoformat(timespec="seconds")}, indent=2), encoding="utf-8")
+    print(f"Sheet {sheet_id}: {len(keys)} letters -> {_rel(out / 'sheet.html')} (open it in your browser)")
+    print(f"Grade in {_rel(out / 'grades-owner.csv')}; then: letter_lab.py grade-sheet --set v2 --unblind {sheet_id}")
+    return 0
+
+
+def _unblind(sheet_id: str) -> int:
+    """Copy a sheet's graded rows into its run's grades-owner.csv. Rows already graded there are
+    never changed: a key graded differently in both is refused, naming each one."""
+    gp = _grading_panel()
+    sheets, keys_dir = _grading_dirs()
+    key_path, src = keys_dir / f"{sheet_id}.json", sheets / sheet_id / "grades-owner.csv"
+    if not key_path.exists() or not src.exists():
+        print(f"No sheet {sheet_id}")
+        return 1
+    key = json.loads(key_path.read_text(encoding="utf-8"))
+    fields, rows = _read_csv(src)
+    if tuple(fields) != gp.OWNER_FIELDS:
+        print(f"{_rel(src)}: the columns changed; want exactly {', '.join(gp.OWNER_FIELDS)}")
+        return 1
+    stray = sorted({r["key"] for r in rows} - set(key["keys"]))
+    if stray:
+        print(f"{_rel(src)}: rows not on this sheet: {', '.join(stray)}")
+        return 1
+    graded = gp.read_owner(src)  # refuses a bad send_readiness / untrue, naming the row
+    partial = [r["key"] for r in rows if _filled(r) and r["key"] not in graded]
+    dst = RUNS_DIR / key["run"] / "grades-owner.csv"
+    existing: dict[str, dict] = {}
+    if dst.exists():
+        dst_fields, dst_rows = _read_csv(dst)
+        if tuple(dst_fields) != gp.OWNER_FIELDS:
+            print(f"{_rel(dst)} has other columns; fix it by hand first")
+            return 1
+        existing = {r["key"]: r for r in dst_rows}
+    clash = [k for k, r in graded.items() if k in existing and _filled(existing[k]) and existing[k] != r]
+    if clash:
+        print(f"Already graded differently in the run's grades-owner.csv: {', '.join(sorted(clash))}; nothing copied")
+        return 1
+    existing.update(graded)
+    with dst.open("w", newline="", encoding="utf-8-sig") as fh:
+        w = csv.DictWriter(fh, fieldnames=gp.OWNER_FIELDS)
+        w.writeheader()
+        w.writerows(existing.values())
+    print(f"Sheet {sheet_id}: {len(graded)} graded row(s) -> {_rel(dst)}"
+          + (f"; {len(rows) - len(graded) - len(partial)} blank" if len(rows) > len(graded) + len(partial) else ""))
+    if partial:
+        print(f"  not copied, started but no send_readiness: {', '.join(partial)}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# 4e. report (v2): the headline scorecard (docs/letter-metrics-plan.md §3)
+# ---------------------------------------------------------------------------
+# Two files: evals/results/v2/<run>.md is committed, so it holds numbers and ad keys only;
+# runs/<run>/report-detail.md (gitignored) holds everything that quotes a letter, ad or profile.
+CANDIDATES = EVALS / "candidates" / "candidates.csv"
+PANELS_DIR = EVALS / "panels"
+
+
+def _letter_metrics():
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import letter_metrics
+
+    return letter_metrics
+
+
+def _v2_ads() -> dict[str, dict]:
+    """key -> {scenario, side, relevant} for the split's ads. relevant = the owner's Would apply
+    label in candidates.csv (True / False), None when it has no label."""
+    split = json.loads((FROZEN_DIR / "split.json").read_text(encoding="utf-8"))
+    would = {}
+    if CANDIDATES.exists():
+        with CANDIDATES.open(encoding="utf-8-sig", newline="") as fh:  # saved by Excel: a BOM
+            for r in csv.DictReader(fh):
+                col = next((c for c in r if c.startswith("would_apply")), None)
+                if col:
+                    would[str(r["job_id"]).strip()] = (r[col] or "").strip().upper()[:1]
+    return {a["key"]: {"scenario": a["scenario"], "side": side,
+                       "relevant": {"Y": True, "N": False}.get(would.get(str(a["job_id"])))}
+            for side in ("dev", "test") for a in split.get(side, [])}
+
+
+def _v2_profile_inputs() -> dict:
+    """What the code checks need from the frozen profile and ads in the v2 eval.db."""
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    from app.db import SessionLocal
+    from app.models import JobListing, Profile
+
+    with SessionLocal() as db:
+        p = db.get(Profile, PROFILE_ID, options=[selectinload(Profile.qualifications),
+                                                 selectinload(Profile.experiences), selectinload(Profile.skills)])
+        quals = [", ".join(x for x in (q.title, q.institution, q.field_of_study) if x) for q in p.qualifications]
+        jobs = db.scalars(select(JobListing).options(selectinload(JobListing.job_skills))).all()
+        return {
+            "name": p.name,
+            # C3's profile copy is against the evidence, not the writing sample (owner, 2026-10-26)
+            "evidence": [t for t in (p.summary, *(e.description for e in p.experiences), *quals,
+                                     *(s.name for s in p.skills)) if t],
+            "writing_sample": p.writing_sample,
+            "skills": [s.name for s in p.skills],
+            "exp_kinds": {str(e.id): "work" if e.experience_type == "job" else "project" for e in p.experiences},
+            "job_skills": {_key(j.source, j.source_job_id): [s.name for s in j.job_skills] for j in jobs},
+        }
+
+
+def _judge_file(run_dir: Path, tag: str | None) -> tuple[str | None, dict]:
+    """(tag, judge-<tag>.json): the one given, else the only one in the run folder."""
+    if tag is None:
+        found = sorted(run_dir.glob("judge-*.json"))
+        if not found:
+            return None, {}
+        if len(found) > 1:
+            raise SystemExit("This run has several judge files; pick one with --judge "
+                             + " / ".join(p.stem.removeprefix("judge-") for p in found))
+        tag = found[0].stem.removeprefix("judge-")
+    path = run_dir / f"judge-{tag}.json"
+    if not path.exists():
+        raise SystemExit(f"No {path.name} in {_rel(run_dir)} (grading_panel.py v2-merge writes it)")
+    return tag, json.loads(path.read_text(encoding="utf-8"))
+
+
+def _picks(tag: str | None, run: str) -> dict | None:
+    if tag is None:
+        return None
+    path = PANELS_DIR / tag / "picks.json"
+    if not path.exists():
+        raise SystemExit(f"No {_rel(path)} (grading_panel.py v2-picks writes it)")
+    picks = json.loads(path.read_text(encoding="utf-8"))
+    if run not in (picks["baseline"], picks["new"]):
+        raise SystemExit(f"{tag}'s picks compare {picks['new']} with {picks['baseline']}, not {run}")
+    return picks | {"tag": tag}
+
+
+def _pct(v: float | None) -> str:
+    return "—" if v is None else f"{v:.0%}"
+
+
+def _num(v: float | None, fmt: str = "{:.2f}") -> str:
+    return "—" if v is None else fmt.format(v)
+
+
+def _scorecard_rows(groups: list[tuple[str, dict]], picks: dict | None) -> tuple[list[str], list[str]]:
+    """(headline lines, diagnostics lines): one column per group of letters."""
+    head = "| Measure | " + " | ".join(f"{name} ({s['letters']})" for name, s in groups) + " |"
+    rule = "|---|" + "---|" * len(groups)
+
+    def row(label: str, cell) -> str:
+        return f"| {label} | " + " | ".join(cell(s) for _, s in groups) + " |"
+
+    headline = [
+        head, rule,
+        row("1. Send-readiness, mean 1-4", lambda s: f"{_num(s['send_readiness'])} (owner {s['by_owner']}, "
+                                                    f"judge {s['by_judge']})"),
+        row("&nbsp;&nbsp;&nbsp;send-ready rate (3 or 4)", lambda s: _pct(s["send_ready"])),
+        row("2. Fabrication-free rate", lambda s: f"{_pct(s['fabrication_free'])} of {s['judged']} judged"),
+        row("3. Must-cover recall (M1)", lambda s: _pct(s["m1"])),
+        row("4. Honest coverage", lambda s: _pct(s["honest"])),
+        row("5. Recruiter checklist (custom 2:1 generic)",
+            lambda s: f"{_pct(s['checklist'])} (custom {_pct(s['custom'])}, generic {_pct(s['generic'])})"),
+        row("6. Cost per letter", lambda s: _num(s["cost_per_letter"], "${:.3f}")),
+    ]
+    if picks:
+        headline += ["", f"**A/B win rate** of `{picks['new']}` over `{picks['baseline']}` (picks `{picks['tag']}`, "
+                         f"{picks['ads']} ads): **{picks['win_rate']:.0%}** ({picks['new_wins']} wins, "
+                         f"{picks['baseline_wins']} losses, {picks['ties']} ties; sign test p = {picks['sign_test_p']})."]
+    diagnostics = [
+        head, rule,
+        row("M2 weighted backed coverage", lambda s: _pct(s["m2"])),
+        row("M3 best-evidence rate", lambda s: _pct(s["m3"])),
+        row("M4 fabrications per letter (gap claims)",
+            lambda s: f"{_num(s['fabricated'])} ({_num(s['gap_fabrications'])})"),
+        row("M4 stretches per letter", lambda s: _num(s["stretch"])),
+        row("M4 claim precision", lambda s: _pct(s["precision"])),
+        *[row(f"{d} checklist", lambda s, d=d: _pct(s["dims"][d])) for d in ("D2", "D3", "D4", "D5", "D6", "D7")],
+        row("Code gates (5 rubric items) passed", lambda s: f"{s['gates']}/{s['letters']}"),
+        row("G1 no stuffing passed", lambda s: f"{s['g1']}/{s['letters']}"),
+        row("C3 ad echo (6+ word runs)", lambda s: _pct(s["ad_echo"])),
+        row("C3 profile copy (8+ word runs)", lambda s: _pct(s["profile_copy"])),
+        row("C3 writing-sample copy (6+ word runs)", lambda s: _pct(s["sample_copy"])),
+        row("C5 style warnings per letter", lambda s: _num(s["warnings"], "{:.1f}")),
+        row("C6 seconds per letter", lambda s: _num(s["seconds_per_letter"], "{:.0f}")),
+        row("C7 near-templates (under 10%)", lambda s: str(s["near_templates"])),
+    ]
+    return headline, diagnostics
+
+
+def _report_detail(run: str, rows: list[dict], extra: dict, repeated: list[dict]) -> str:
+    lines = [f"# Report detail: {run}", "",
+             "Gitignored: it quotes the letters, ads and profile. The numbers are in "
+             f"evals/results/v2/{run}.md.", "",
+             f"## C4 phrases in 3+ letters ({len(repeated)})", ""]
+    lines += [f"- \"{r['phrase']}\" ({len(r['letters'])}: {', '.join(r['letters'])})" for r in repeated] or ["None."]
+    for r in rows:
+        e = extra[r["key"]]
+        lines += ["", f"## {r['key']} · {e['title']} · {e['company']}", "",
+                  f"- G1: longest skill list {len(e['g1']['list'])}"
+                  + (f": {', '.join(e['g1']['list'])}" if e["g1"]["list"] else "")
+                  + (f"; named 3+ times: {e['g1']['over_mentioned']}" if e["g1"]["over_mentioned"] else ""),
+                  *[f"- {label}: " + (" / ".join(f'"{x}"' for x in runs) or "none")
+                    for label, runs in (("Ad echo", e["echo"]), ("Profile copy", e["copy"]),
+                                        ("Writing-sample copy", e["sample"]))],
+                  f"- Nearest letter: {e['nearest'] or '—'} ({_pct(r['nearest_distance'])} apart)",
+                  *[f"- Style: {w}" for w in e["warnings"]],
+                  *[f"- Not counted as addressed: {p}" for p in e["dropped"]]]
+    return "\n".join(lines) + "\n"
+
+
+def _report_v2(args) -> int:
+    gp, lm = _grading_panel(), _letter_metrics()
+    import eval_reference  # its M2_WEIGHTS; it points DATABASE_URL at the v2 eval.db, as _use_set did
+
+    from app.llm.letter.rubric import AUTO_ITEMS, auto_checks
+
+    run_dir = RUNS_DIR / args.run_id
+    if not (run_dir / "run.json").exists():
+        print(f"No run {args.run_id} in {_rel(RUNS_DIR)}/")
+        return 1
+    meta = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+    tag, judge = _judge_file(run_dir, args.judge)
+    owner_path = run_dir / "grades-owner.csv"
+    owner = gp.read_owner(owner_path) if owner_path.exists() else {}
+    picks = _picks(args.picks, args.run_id)
+    ads, prof = _v2_ads(), _v2_profile_inputs()
+    ref_dir = RUNS_DIR.parent / "reference" / "ads"
+
+    results = [r for r in meta["results"] if not r.get("error") and (run_dir / "letters" / f"{r['key']}.txt").exists()]
+    letters = {r["key"]: (run_dir / "letters" / f"{r['key']}.txt").read_text(encoding="utf-8") for r in results}
+    bodies = {k: lm.body(t) for k, t in letters.items()}
+    frozen = {k: json.loads((FROZEN_DIR / "ads" / f"{k}.json").read_text(encoding="utf-8")) for k in letters}
+    refs = {k: json.loads((ref_dir / f"{k}.json").read_text(encoding="utf-8"))
+            for k in letters if (ref_dir / f"{k}.json").exists()}
+    vocab = {k: lm.skill_vocab(prof["skills"] + prof["job_skills"].get(k, [])
+                               + [q.get("skill") for q in refs.get(k, {}).get("requirements", [])]) for k in letters}
+    repeated = lm.repeated_phrases(bodies, frozenset().union(*vocab.values()),
+                                   [prof["name"]] + [a.get("company") for a in frozen.values()])
+    near = lm.nearest_letters(bodies)
+    unjudged = sorted(k for k in letters if k in judge and k not in refs)
+    if unjudged:
+        print(f"No reference checklist for {', '.join(unjudged)}: judge numbers left out for them")
+
+    rows, extra = [], {}
+    for r in results:
+        k, text, body = r["key"], letters[r["key"]], bodies[r["key"]]
+        auto, g1, style = auto_checks(text), lm.no_stuffing(body, vocab[k]), lm.style_warnings(text)
+        echo = lm.ad_echo(body, frozen[k]["raw_description"])
+        copy, sample = lm.profile_copy(body, prof["evidence"]), lm.sample_copy(body, prof["writing_sample"])
+        ad = ads.get(k, {})
+        row = {"key": k, "scenario": ad.get("scenario"), "relevant": ad.get("relevant"),
+               "cost_usd": r.get("cost_usd"), "seconds": r.get("seconds"),
+               "gates": all(auto[i] for i in AUTO_ITEMS), "g1": g1["passed"],
+               "ad_echo": echo["share"], "profile_copy": copy["share"], "sample_copy": sample and sample["share"],
+               "warnings": sum(style["kinds"].values()), "near_template": near[k]["near_template"],
+               "nearest_distance": near[k]["distance"], "fabricated": None, "judge_grade": None}
+        dropped = []
+        if k in judge and k in refs:
+            flags = gp._flags(refs[k])
+            row |= lm.judged(text, refs[k], judge[k], flags, prof["exp_kinds"], eval_reference.M2_WEIGHTS)
+            said = {q["id"] for q in judge[k]["requirements"] if str(q.get("addressed", "")).upper().startswith("Y")}
+            dropped = sorted(said - lm.addressed_rows(text, judge[k], flags))
+        if k in owner:
+            row |= {"grade": int(owner[k]["send_readiness"]), "grade_by": "owner"}
+        else:
+            row |= {"grade": row["judge_grade"], "grade_by": "judge" if row["judge_grade"] is not None else None}
+        rows.append(row)
+        extra[k] = {"title": frozen[k].get("title"), "company": frozen[k].get("company"), "g1": g1,
+                    "echo": echo["runs"], "copy": copy["runs"], "sample": sample["runs"] if sample else [],
+                    "warnings": style["warnings"], "nearest": near[k]["nearest"],
+                    "dropped": [f"{rid} (quote not in the letter, or a listed skill presented as experience)"
+                                for rid in dropped]}
+    # relevant ads first (plan §3), then by key
+    rows.sort(key=lambda x: (x["relevant"] is not True, x["key"]))
+    relevant = [x for x in rows if x["relevant"]]
+    groups = ([("Relevant ads", lm.scorecard(relevant))] if relevant else []) + [("All ads", lm.scorecard(rows))]
+    headline, diagnostics = _scorecard_rows(groups, picks)
+
+    failed = len(meta["results"]) - len(results)
+    lines = [
+        f"# Letter eval (v2): {meta['run_id']}", "",
+        f"Engine `{meta.get('engine')}`, strong model `{meta.get('strong_model')}`, run {meta.get('created_at')}. "
+        + (f"Split `{meta['split']}`. " if meta.get("split") else "")
+        + f"{len(rows)} letters ({failed} failed). Judge: " + (f"`{tag}` ({len(judge)} letters)" if tag else "none")
+        + f". Owner grades: {sum(x['grade_by'] == 'owner' for x in rows)}. Metrics: docs/letter-metrics-plan.md §3.",
+        "", "Relevant = the owner would apply (Would apply = Y). Send-readiness is the owner's grade where there "
+        "is one, else the judge's. Rates are shares of letters; M1, honest coverage and the checklist are "
+        "per-letter means.", "",
+        "## Headline", "", *headline, "",
+        "## Diagnostics (explain a headline move; never optimised alone)", "", *diagnostics, "",
+        f"C4 cross-letter repetition: **{len(repeated)}** phrase(s) of 4-6 words in 3+ letters "
+        "(listed in the detail file).", "",
+        "## Per letter", "",
+        "| Ad | Scen | Rel | SR | By | Fab | M1 | M2 | Honest | M3 | Checklist | Gates | G1 | Echo | Copy | Sample "
+        "| Warn | C7 | Cost |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
+    ]
+    for x in rows:
+        rel = {True: "Y", False: "N"}.get(x["relevant"], "?")
+        lines.append(
+            f"| `{x['key']}` | {x['scenario'] or '?'} | {rel} | {x['grade'] or '—'} | {x['grade_by'] or '—'} | "
+            f"{_num(x['fabricated'], '{}')} | {_pct(x.get('m1'))} | {_pct(x.get('m2'))} | {_pct(x.get('honest'))} | "
+            f"{_pct(x.get('m3'))} | {_pct(x.get('checklist'))} | {'✓' if x['gates'] else '✗'} | "
+            f"{'✓' if x['g1'] else '✗'} | {_pct(x['ad_echo'])} | {_pct(x['profile_copy'])} | "
+            f"{_pct(x['sample_copy'])} | {x['warnings']} | {_pct(x['nearest_distance'])}"
+            f"{' ⚠' if x['near_template'] else ''} | {_num(x['cost_usd'], '${:.3f}')} |")
+    lines += ["", f"Phrases, lists and warnings that quote the letters: `{_rel(run_dir / 'report-detail.md')}` "
+                  "(gitignored)."]
+
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    out = RESULTS_DIR / f"{meta['run_id']}.md"
+    out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (run_dir / "report-detail.md").write_text(_report_detail(meta["run_id"], rows, extra, repeated), encoding="utf-8")
+    print(f"Wrote {_rel(out)} and {_rel(run_dir / 'report-detail.md')}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # 5. analyze (Phase 3): requirements checklist + evidence map, for hand-checking
 # ---------------------------------------------------------------------------
 _ROLE_TITLES = {
@@ -1934,7 +2412,9 @@ def build_parser() -> argparse.ArgumentParser:
     p = add("report", help="merge code checks + grades into evals/results/<run>.md")
     p.add_argument("run_id")
     p.add_argument("--grades", default="grades.csv",
-                   help="grades file in the run folder (grades-opus-v1.csv -> evals/results/<run>-opus-v1.md)")
+                   help="v1: grades file in the run folder (grades-opus-v1.csv -> evals/results/<run>-opus-v1.md)")
+    p.add_argument("--judge", metavar="TAG", help="v2: the run's judge-TAG.json (default: the only one there)")
+    p.add_argument("--picks", metavar="TAG", help="v2: add the A/B win rate from evals/panels/TAG/picks.json")
     p.set_defaults(fn=cmd_report)
 
     p = add("loop-report", help="per-draft checks and what each revision changed -> evals/results/<run>-loop.md")
@@ -1945,6 +2425,14 @@ def build_parser() -> argparse.ArgumentParser:
     p = add("cost-report", help="per-task cost, tokens and time -> evals/results/cost-<runs>.md")
     p.add_argument("run_ids", nargs="+", help="tools/workflow/agent runs (they need letter_run_id rows in eval.db)")
     p.set_defaults(fn=cmd_cost_report)
+
+    p = add("grade-sheet", help="v2: the owner's blind form (HTML + blank grades-owner.csv), or --unblind it")
+    p.add_argument("run_id", nargs="?", help="the v2 run to grade")
+    p.add_argument("--only", nargs="+", metavar="KEY", help="just these letters (e.g. ~5 for a drift check)")
+    p.add_argument("--new", action="store_true", help="make another sheet for a run that already has one")
+    p.add_argument("--seed", type=int, help="shuffle seed (default: random)")
+    p.add_argument("--unblind", metavar="SHEET", help="copy sheet SHEET's grades into its run's grades-owner.csv")
+    p.set_defaults(fn=cmd_grade_sheet)
 
     p = add("analyze", help="run analyze_job + match_profile on the set; write a hand-check pack")
     p.add_argument("--label", help="run id (default: analysis-<timestamp>)")

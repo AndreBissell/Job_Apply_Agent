@@ -758,7 +758,7 @@ def _ticked(v: str | None) -> bool:
 
 
 def read_owner(path: Path) -> dict[str, dict]:
-    with path.open(encoding="utf-8") as fh:
+    with path.open(encoding="utf-8-sig") as fh:  # -sig: Excel saves CSVs with a BOM
         rows = {r["key"]: r for r in csv.DictReader(fh) if (r.get("send_readiness") or "").strip()}
     for key, r in rows.items():
         if r["send_readiness"].strip() not in ("1", "2", "3", "4"):

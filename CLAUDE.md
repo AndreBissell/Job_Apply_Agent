@@ -625,7 +625,13 @@ Step 2 BUILT 2026-10-26: `evals/grading-standard-v2.md` (approved; frozen after 
 `grading_panel.py v2-*` (ONE FRESH OPUS SUBAGENT PER LETTER per grader A/B, a fresh adjudicator per
 split letter, pairwise in both orders, agreement with the owner; procedure and prompts in
 evals/grading-panel.md). The owner's answer key is the truth; judges' `checklist_doubts` go to
-panels/<tag>/checklist-doubts.md for a recheck. Next: step 3 (grade-sheet + code metrics). Evidence behind it:
+panels/<tag>/checklist-doubts.md for a recheck. Step 3 BUILT 2026-10-26 (no LLM): `letter_lab.py
+grade-sheet --set v2 <run>` (blind HTML sheet + blank CSV in evals/work/v2/grading/<S####>/, key kept in
+grading-keys/; `--unblind <S####>` -> runs/<run>/grades-owner.csv, never overwrites a graded row),
+`scripts/letter_metrics.py` (G1, C3 incl. writing-sample copy, C4, C5, C6, C7, M1-M4, honest coverage,
+checklist score, `scorecard`) and `report --set v2 <run> [--judge TAG] [--picks TAG]` -> committed
+evals/results/v2/<run>.md (numbers + ad keys only) + gitignored runs/<run>/report-detail.md. Next: stage 6
+baseline letters (~$3.90 dev; ask first). Evidence behind it:
 docs/ai-recruitment-research.md (AI screeners' biases, rated by strength; lines we never cross).
 The real profile is frozen as of 2026-10-20. Strong fit = score 85+ and
 no must-have GAP (`Requirement.needs_user`); partials are allowed (owner, 2026-10-20). Main metric:

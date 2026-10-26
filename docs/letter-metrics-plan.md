@@ -233,6 +233,10 @@ theirs to judge). The owner's pick form is built with the first comparison, not 
    plus the scorecard in `report`, reusing `rubric.auto_checks`, `style_lint.lint`,
    `check_requirements.quote_in_letter`, `guardrails.must_cover` / `listing_only` and
    `prefilter.normalise_skill`. Tests use fake letters and fake employers.
+   **Built 2026-10-26** (Decision log): `letter_lab.py grade-sheet` / `--unblind`, the checks and
+   scoring in `scripts/letter_metrics.py`, and `report --set v2 [--judge TAG] [--picks TAG]`
+   (`tests/test_letter_lab_grade_sheet.py`, `test_letter_metrics.py`, `test_letter_lab_report_v2.py`).
+   Not yet run on real letters: none exist until stage 6.
 4. Then eval-set stages 6–8 as planned: baseline letters, owner grades, judge calibration.
 
 ## Decision log
@@ -344,3 +348,37 @@ theirs to judge). The owner's pick form is built with the first comparison, not 
     wrong it writes a `checklist_doubts` entry, which never changes a score. Code collects them
     into one list for the owner to recheck later.
   - Standard v2 **approved** (owner). It is frozen after stage 8 adds the calibration examples.
+- 2026-10-26: **step 3 built** (grade sheet, code checks, scorecard; no paid calls). Owner decisions:
+  - **The sheet is an HTML page**, the letter beside its ad, with a blank `grades-owner.csv`
+    (columns = `grading_panel.OWNER_FIELDS`). **Blind by a neutral folder:** each sheet lives in
+    `evals/work/v2/grading/<S####>/`, its key in a separate `grading-keys/` folder, and
+    `grade-sheet --unblind <S####>` copies the graded rows into `runs/<run>/grades-owner.csv`. It
+    never changes a row already graded differently, and a second sheet for a run needs `--new`.
+  - **The committed report holds numbers and ad keys only** (`evals/results/v2/<run>.md`).
+    Anything that quotes a letter, ad or profile (C4 phrases, G1 lists, copied runs, style
+    warnings, titles) goes to the gitignored `runs/<run>/report-detail.md`.
+  - **G1's skill terms are known skill names:** the profile's skills, the ad's `job_skills` and
+    the reference rows' `skill`, matched through `normalise_skill` with no capitalisation rule.
+    Ordinary words that are also skill names ("excel at", "go live") may count; look at that
+    when the thresholds are tuned on the first real letters.
+  - **C3 profile copy is against the evidence text only** (summary, experiences, qualifications,
+    skills). **Writing-sample copy is a separate diagnostic** (6+ word runs, because known stock
+    lines already seen copied from the sample are about 6 words). Kept apart so the later voice review
+    (`future_work/voice-toggle-and-comparison.md`) can see each move: without the sample, the
+    writer's voice falls back to the experience text, so profile copy may rise as sample copy falls.
+  - Defaults Claude chose and the owner did not change:
+    - C3, C4 and C7 read the body only.
+    - C7 is word-level edit distance divided by the longer body (no library: ~2 s for 17 letters).
+    - C4 skips phrases touching a skill or a name, and lists one shared wording once.
+    - Only `fabricated` claims count for the fabrication-free rate and honest coverage; stretches
+      and employer facts are reported under M4.
+    - A judge's "addressed" counts only when its quote is in the letter (checked again by the
+      report) and a listing-only row is presented as a skill.
+    - D6f is replaced by code's word count (250-340).
+    - M3 ranks a summary pointer below a listed skill.
+    - C6 comes from run.json.
+    - `report` picks the judge file when there is only one.
+    - The A/B win rate comes from a panel's `picks.json` (`--picks TAG`); the owner's pick form is
+      built with the first comparison.
+  - **Excel-saved CSVs:** `grading_panel.read_owner` now reads a file with a BOM, and the blank
+    sheet is written with one, so Excel shows the text correctly.
