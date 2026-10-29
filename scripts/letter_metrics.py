@@ -32,7 +32,8 @@ from app.llm.letter.tools.style_lint import (
 from app.llm.prefilter import normalise_skill
 
 STUFF_RUN = 5  # G1: a comma list of this many skill terms is stuffing (a guess)
-MAX_SKILL_MENTIONS = 2  # G1: a skill named more often than this is stuffing
+MAX_SKILL_MENTIONS = 3  # G1: a skill named more often than this is stuffing (owner, 2026-10-29: was 2)
+TITLE_RUN = 3  # G1: a skill inside this many words in a row from the ad's title is the role's name
 AD_ECHO_N = 6  # C3: runs of 6+ words copied from the ad
 PROFILE_COPY_N = 8  # C3: runs of 8+ words copied from the profile (panel 4's measure)
 # C3: runs of 6+ words copied from the writing sample, kept apart from profile copy so the voice
@@ -138,14 +139,38 @@ def longest_skill_list(text: str, vocab: frozenset[str]) -> list[str]:
     return best
 
 
-def skill_mentions(text: str, vocab: frozenset[str]) -> Counter:
-    return Counter(skill for _, _, skill in _skill_spans(words(text), vocab))
+def _phrase_positions(tokens: list[str], phrases) -> set[int]:
+    """Positions in `tokens` covered by any of `phrases` (tuples of words) found whole."""
+    out = set()
+    for p in phrases:
+        for i in range(len(tokens) - len(p) + 1):
+            if tuple(tokens[i:i + len(p)]) == p:
+                out.update(range(i, i + len(p)))
+    return out
 
 
-def no_stuffing(body_text: str, vocab: frozenset[str]) -> dict:
-    """G1: no list of STUFF_RUN+ skill terms, and no skill named more than MAX_SKILL_MENTIONS times."""
+def name_phrases(employer: str | None, title: str | None) -> set[tuple]:
+    """G1: what counts as a name in a letter: the employer's name whole, and any TITLE_RUN words in a
+    row from the ad's title ("Acme AI Graduate Program" names a program, it doesn't repeat "AI")."""
+    out = {w} if employer and (w := tuple(words(employer))) else set()
+    t = words(title or "")
+    if 0 < len(t) < TITLE_RUN:
+        out.add(tuple(t))
+    return out | {tuple(t[i:i + TITLE_RUN]) for i in range(len(t) - TITLE_RUN + 1)}
+
+
+def skill_mentions(text: str, vocab: frozenset[str], names=()) -> Counter:
+    """How often each skill is named, leaving out mentions inside one of `names` (name_phrases)."""
+    toks = words(text)
+    named = _phrase_positions(toks, names)
+    return Counter(skill for a, b, skill in _skill_spans(toks, vocab) if named.isdisjoint(range(a, b)))
+
+
+def no_stuffing(body_text: str, vocab: frozenset[str], names=()) -> dict:
+    """G1: no list of STUFF_RUN+ skill terms, and no skill named more than MAX_SKILL_MENTIONS times
+    outside the employer's name and the ad's title (`names`, from name_phrases)."""
     run = longest_skill_list(body_text, vocab)
-    over = {s: n for s, n in skill_mentions(body_text, vocab).most_common() if n > MAX_SKILL_MENTIONS}
+    over = {s: n for s, n in skill_mentions(body_text, vocab, names).most_common() if n > MAX_SKILL_MENTIONS}
     return {"passed": len(run) < STUFF_RUN and not over, "longest_list": len(run), "list": run,
             "over_mentioned": over}
 
@@ -216,17 +241,21 @@ def _merge(phrases: list[tuple], letters: set, tokens: dict) -> list[tuple]:
         phrases = [p for p in phrases if p is not a and p is not b] + [new]
 
 
-def repeated_phrases(bodies: dict[str, str], vocab: frozenset[str], names) -> list[dict]:
+def repeated_phrases(bodies: dict[str, str], vocab: frozenset[str], names, titles=()) -> list[dict]:
     """C4: phrases of 4-6 words in REPEAT_MIN_LETTERS+ of a run's letters, skipping any phrase that
-    touches a skill term or a name (the candidate's, the employers'). One wording is listed once:
-    a phrase inside a longer one found in the same letters is dropped, and overlapping phrases in
-    the same letters are joined, so one shared sentence counts once."""
+    touches a skill term, a word of a name (the candidate's, the ads' employers, the profile's
+    employers and institutions) or a whole title (the profile's projects; split at commas, and
+    matched whole because their words are ordinary ones like "web" or "app"; owner, 2026-10-29).
+    One wording is listed once: a phrase inside a longer one found in the same letters is dropped,
+    and overlapping phrases in the same letters are joined, so one shared sentence counts once."""
     name_words = {w.removesuffix("'s") for n in names if n for w in words(n)} - _NAME_STOPWORDS
+    title_phrases = {w for t in titles if t for part in t.split(",") if (w := tuple(words(part)))}
     tokens = {key: words(text) for key, text in bodies.items()}
     seen: dict[tuple, set] = defaultdict(set)
     for key, toks in tokens.items():
         skip = {i for a, b, _ in _skill_spans(toks, vocab) for i in range(a, b)}
         skip |= {i for i, t in enumerate(toks) if t.removesuffix("'s") in name_words}
+        skip |= _phrase_positions(toks, title_phrases)
         for n in REPEAT_N:
             for i in range(len(toks) - n + 1):
                 if skip.isdisjoint(range(i, i + n)):
@@ -250,6 +279,85 @@ def style_warnings(letter: str) -> dict:
     i_openers, short) and how many of each kind."""
     warnings = lint(letter)["warnings"]
     return {"warnings": warnings, "kinds": Counter(w.split(":", 1)[0] for w in warnings)}
+
+
+# C5b: the owner's sounds_ai rule (2026-10-29): more than STOCK_LIMIT hits is a Y. The list and the
+# limit are the owner's measuring stick and are never shown to the judge (the standard only says
+# "overuses stock phrasing"), so a judge can't learn the list instead of hearing the letter.
+STOCK_LIMIT = 8
+STOCK_PHRASES = {  # name -> pattern on the letter body; each match is one hit
+    "carries over to": r"\bcarr(?:y|ies|ied) over to\b",
+    "prepares me to/for": r"\bprepar(?:es?|ing) me (?:to|for)\b",
+    "This background/experience/... opening a sentence":
+        r"(?:^|[.!?]\s+)(?:this|that|these)\s+(?:[\w-]+\s+){0,3}?(?:background|experiences?|exposure|approach|mindset|practices|projects?)\b",
+    "gave/gives me": r"\b(?:gave|gives) me\b",
+    "aligns with": r"\baligns? with\b",
+    "bring this/my/that": r"\bbring (?:this|my|that)\b",
+    "equips me": r"\bequips? me\b",
+    "exactly the kind of": r"\bexactly the (?:kind|sort|type) of\b",
+    "I am drawn to / draws me to": r"\bI am drawn to\b|\bdraws me to\b",
+    "I am (particularly) interested in": r"\bI am (?:particularly |genuinely )?interested in\b",
+    "I want to work on/with/at": r"\bI want to work (?:on|with|at|under|in)\b",
+    "buzzword": r"\b(?:seamless(?:ly)?|tangible|genuine(?:ly)?|innovative|real[- ]world|meaningful|robust|cutting[- ]edge|passionate)\b",
+    "I recently completed my (opener)": r"\bI recently (?:completed|finished) my\b",
+}
+
+
+def recycled_runs(runs: dict[str, list[str]], bodies: dict[str, str]) -> dict[str, list[str]]:
+    """C5b: per letter, its profile-copy runs (C3) that share 8 words in a row with REPEAT_MIN_LETTERS+
+    of the run's letters: the same profile sentence pasted into letter after letter."""
+    n = PROFILE_COPY_N
+    grams = {k: {tuple(w[i:i + n]) for i in range(len(w) - n + 1)} for k, t in bodies.items() for w in [words(t)]}
+
+    def shared(run: str) -> bool:
+        w = words(run)
+        mine = {tuple(w[i:i + n]) for i in range(len(w) - n + 1)}
+        return sum(bool(mine & g) for g in grams.values()) >= REPEAT_MIN_LETTERS
+
+    return {k: [r for r in rs if shared(r)] for k, rs in runs.items()}
+
+
+def stock_phrases(body_text: str, profile_runs: list[str]) -> dict:
+    """C5b: hits of STOCK_PHRASES, plus one per profile line reused across letters (`profile_runs`,
+    from recycled_runs)."""
+    hits = {name: n for name, pat in STOCK_PHRASES.items()
+            if (n := len(re.findall(pat, body_text, re.IGNORECASE | re.MULTILINE)))}
+    total = sum(hits.values()) + len(profile_runs)
+    return {"hits": hits, "profile_runs": len(profile_runs), "total": total, "over": total > STOCK_LIMIT}
+
+
+# C5c: motivation. A helper for the owner's no_personal_reason tick, not a verdict: a reason built
+# from the ad's own words, naming nothing from the profile, is often the ad's blurb restated.
+_MOTIVE_RE = re.compile(r"\bdrawn to\b|\bdraws me\b|\bI (?:want|hope|would like|would love|am keen|am eager|am excited|plan)"
+                        r" to\b|\binterested in\b|\bexactly the\b|\bthe exact kind\b|\bappeals? to me\b|\battracts? me\b"
+                        r"|\bexcites me\b", re.IGNORECASE)
+_TIE_RE = re.compile(r"\bmy (?:degree|thesis|honours|internship|studies|project|projects|coursework|time at|work at)\b"
+                     r"|\b(?:I|I've|I have|having) (?:built|worked|developed|led|studied|learned|learnt|completed|used"
+                     r"|designed|tested|managed|enjoyed|found|spent)\b", re.IGNORECASE)
+_FUNCTION_WORDS = frozenset(
+    "a an the and or but of to in on for with at by from as is are be was were it its this that these those i i'm "
+    "my me we our you your they their them which who what how why when where so than then there into about across "
+    "over also just very really am will would can could should may might do".split())
+
+
+def motivation(body_text: str, ad_text: str, anchors=()) -> list[dict]:
+    """C5c: each sentence saying why the candidate wants the role, with `from_ad` (the share of its
+    content words also in the ad) and `ties` (what it names from the candidate's own history:
+    `anchors` such as employers, institutions and project titles, or "my degree", "I built"...)."""
+    ad = set(words(ad_text))
+    phrases = {w for a in anchors if a and (w := tuple(words(a)))}
+    out = []
+    for s in _SENTENCE_RE.split(body_text):
+        s = s.strip()
+        if not _MOTIVE_RE.search(s):
+            continue
+        toks = words(s)
+        content = [t for t in toks if t not in _FUNCTION_WORDS]
+        ties = sorted({" ".join(p) for p in phrases if _inside(p, tuple(toks))}
+                      | {m.group(0).lower() for m in _TIE_RE.finditer(s)})
+        out.append({"sentence": s, "from_ad": sum(t in ad for t in content) / len(content) if content else 0.0,
+                    "ties": ties})
+    return out
 
 
 def cost_time(results: list[dict]) -> dict:
@@ -392,6 +500,7 @@ def scorecard(rows: list[dict]) -> dict:
     measures are None on a letter the judge didn't grade, and are averaged over the ones it did."""
     graded = [r for r in rows if r.get("grade") is not None]
     by_judge = [r for r in rows if r.get("fabricated") is not None]
+    by_owner = [r for r in rows if r.get("owner_untrue") is not None]  # the owner's "anything untrue?" Y/N
     claims = sum(r["claims"] for r in by_judge)
     ct = cost_time(rows)
     return {
@@ -402,14 +511,18 @@ def scorecard(rows: list[dict]) -> dict:
         "by_judge": sum(r["grade_by"] == "judge" for r in graded),
         "judged": len(by_judge),
         "fabrication_free": sum(r["fabricated"] == 0 for r in by_judge) / len(by_judge) if by_judge else None,
+        "owner_checked": len(by_owner),
+        "owner_true": sum(not r["owner_untrue"] for r in by_owner),
         **{m: _mean(r.get(m) for r in rows) for m in ("m1", "honest", "checklist", "custom", "generic", "m2", "m3",
                                                      "fabricated", "gap_fabrications", "stretch", "ad_echo",
-                                                     "profile_copy", "sample_copy", "warnings")},
+                                                     "profile_copy", "sample_copy", "warnings", "stock")},
         "precision": sum(r["supported"] for r in by_judge) / claims if claims else None,
         "dims": {d: _mean(r["dims"].get(d) for r in by_judge) for d in CUSTOM_DIMS + GENERIC_DIMS},
         "gates": sum(r["gates"] for r in rows),
         "g1": sum(r["g1"] for r in rows),
         "near_templates": sum(r["near_template"] for r in rows),
+        "stock_over": sum(r["stock_over"] for r in rows),
+        "motive_tied": sum(r["motive_tied"] for r in rows),
         "cost_per_letter": ct["cost_per_letter"],
         "seconds_per_letter": ct["seconds_per_letter"],
     }

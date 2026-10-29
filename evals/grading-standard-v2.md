@@ -75,8 +75,13 @@ letter, and a quote it can't find counts as not addressed.
   synonym of it, AND gives the candidate's evidence for it.
 - **By implication doesn't count.** "Five years as a team manager" does not address "MS Office";
   "built a web app" does not address "Git". If the reader has to infer it, it is not addressed.
+- **Hard skills are named; traits are named or shown** (owner, 2026-10-29). A hard skill (a
+  language, tool or technique) must be named in the letter. A soft skill or trait (curiosity,
+  reliability, passion, drive) must be named, or shown through an example that demonstrates it.
+  Describing an activity alone doesn't show a trait: "I sat between the build and the end users"
+  does not address "curiosity about both building technology and helping clients use it".
 - **Partial rows** count as addressed when the related evidence is stated honestly against the
-  requirement ("I built the reporting in Tableau, and the same modelling carries over to Power
+  requirement ("I built the reporting in Tableau, and the same modelling applies to Power
   BI"). A partial row claimed as fully had is still addressed, but it is also a **stretch**
   claim (§5).
 - **Listing-only rows** (`listing_only` = yes) count as addressed only when the letter presents
@@ -151,19 +156,20 @@ words; for an N, give the reason in one line (and quote the failing words if the
 | **D2 Applied, not recited** | |
 | D2a | Does the first paragraph state the candidate's strongest evidence for the job (the best-backed headline items), so that a reader who stops after it knows why they fit? |
 | D2b | Does every body paragraph tie its evidence to a duty or requirement named in the ad? (Evidence listed without saying how it applies to this job's work is a N.) |
-| D2c | Are the sentences that connect evidence to the job specific to it, rather than a formula ("prepares me to", "exactly the kind of", "positions me well to")? |
+| D2c | Are the sentences that connect evidence to the job specific to it, rather than a formula that could join any experience to any job? |
 | **D3 Employer-specific** | |
-| D3a | Is at least one fact from the ad about this employer, team, product, project, program or platform used meaningfully, tied to why the candidate wants the role or how their experience applies? The role title, the company name, the contract length, generic industry phrases ("innovative solutions") and a restated requirement don't count. |
+| D3a | Is at least one fact from the ad about this employer, team, product, project, program or platform used meaningfully, tied to why the candidate wants the role or how their experience applies? The role title, the company name, the contract length, generic industry phrases ("a leader in the field") and a restated requirement don't count. |
 | D3b | **Swap test:** pick the most employer-specific sentence. If you swap in another employer advertising the same title and change only the name, does the sentence stop fitting? (Y = it stops fitting.) |
 | **D4 Motivation** | |
 | D4a | Is there a specific reason for wanting this role or this employer, grounded in the ad, beyond generic praise ("your reputation for excellence")? |
+| D4b | Is a reason for applying tied to the candidate: something in their own experience, study or goals that explains why they want this work (an interest they developed, something they want more of or want to go deeper in)? The ad's description of itself restated as the candidate's wish is a N, however specific ("Acme is building the future of logistics, which is where I want to start my career"); so is experience offered only as a skill to apply ("my background in X suits your team"), which shows fit, not motivation. Quote the sentence that ties the reason to the candidate. |
 | **D5 Concrete evidence** | |
 | D5a | Are there at least 2 pieces of evidence with specifics: the tool, the task, and the scale or the outcome? |
 | D5b | Does every number in the letter come from the profile (or the ad, for employer facts)? Y if the letter has no numbers. |
 | D5c | Is at least one specific **checkable**: a named project, tool or organisation, or a number from the profile? |
 | **D6 Voice and polish** | |
 | D6a | Does it avoid a stock opener ("I am writing to express my interest", "I am excited to apply for")? |
-| D6b | Does it have fewer than 3 machine-written tells ("demonstrating my ability to" tails, "seamlessly", triple adjectives, stacked intensifiers, "I am confident that my")? List the ones you find. |
+| D6b | Does it have fewer than 3 machine-written tells ("demonstrating my ability to" tails, triple adjectives, stacked intensifiers, "I am confident that my")? List the ones you find. |
 | D6c | Is no phrase, sentence structure or achievement repeated within the letter? |
 | D6d | Is the spelling Australian throughout? List any US spellings. |
 | D6e | Does the tone match the ad's own tone (formal, casual, technical, warm)? |
@@ -221,8 +227,8 @@ all of them unticked for a 4.
 | `generic` | it would fit any company advertising this title | D3a/D3b N, D2b N, D7a N |
 | `missed_important` | something important from the ad is missing | a `must_cover` row, or an essential or important supported row, not addressed |
 | `weak_example` | a weak or wrong example is used where a better one exists | D2a N, D5a N, weaker evidence used than the row holds |
-| `sounds_ai` | it sounds machine-written, or uses stock phrases | D6a, D6b, D6c or D2c N |
-| `no_real_reason` | no real reason for wanting this job | D4a N |
+| `sounds_ai` | it overuses stock or machine-sounding phrasing: formula sentences, stock enthusiasm, buzzwords, the same lines reused | D6a, D6b, D6c or D2c N |
+| `no_personal_reason` | no reason for applying is tied to the candidate's own experience, study or goals (not whether the candidate wants the job) | D4b N |
 | `too_long` | too long or waffly | D6f N, or filler that adds no fact |
 
 You may add a one-line `note`, as the owner may.
@@ -283,7 +289,7 @@ holds the one letter you graded (code later collects every letter's file into on
         "reason": "two one-sentence fixes; otherwise ready"
       },
       "ticks": {"generic": false, "missed_important": false, "weak_example": false,
-                "sounds_ai": false, "no_real_reason": false, "too_long": false},
+                "sounds_ai": false, "no_personal_reason": false, "too_long": false},
       "note": "",
       "checklist_doubts": []
     }
@@ -298,7 +304,7 @@ Field rules:
   `related` and `claimed`, which quote the words.
 - `claims`: every claim, in letter order. `about` is `candidate` or `employer`. `source` holds
   profile pointers, or for employer facts the ad's words. `requirement` is a row id or null.
-- `checklist`: all 18 ids, D2a to D7a.
+- `checklist`: all 19 ids, D2a to D7a.
 - `send_readiness.grade` is 1, 2, 3 or 4.
 - `ticks`: all six keys, true or false; all false when the grade is 4.
 - `checklist_doubts`: rows you think the answer key got wrong, as `{"id", "why"}`, where `why`

@@ -1562,7 +1562,7 @@ About 2 minutes per letter. Grade from the ad and the letter alone.</p>
 <b>2</b> heavy edits (rework a paragraph, or swap the main example) · <b>1</b> start over</td></tr>
 <tr><td><code>untrue</code>, <code>untrue_text</code></td><td>Anything untrue or stretched? <b>N</b>, or <b>Y</b> with the bad bit pasted into <code>untrue_text</code></td></tr>
 <tr><td>{ticks}</td><td>Why not a 4? <b>Y</b> under each that applies (blank = not ticked): generic / fits any company · missed something important ·
-weak or wrong example used · sounds AI / stock phrases · no real reason for wanting this job · too long / waffly</td></tr>
+weak or wrong example used · overuses stock / AI phrasing · no reason for applying tied to the candidate's own experience, study or goals · too long / waffly</td></tr>
 <tr><td><code>note</code></td><td>Optional, one line</td></tr>
 </table>
 <p>When you're done: <code>python scripts/letter_lab.py grade-sheet --set v2 --unblind {sheet_id}</code></p>
@@ -1742,6 +1742,10 @@ def _v2_profile_inputs() -> dict:
                                      *(s.name for s in p.skills)) if t],
             "writing_sample": p.writing_sample,
             "skills": [s.name for s in p.skills],
+            # C4 skips these: the same employer or university in every letter isn't a template
+            "org_names": [x for x in (*(e.organization for e in p.experiences),
+                                      *(q.institution for q in p.qualifications)) if x],
+            "project_titles": [e.title for e in p.experiences if e.experience_type != "job"],
             "exp_kinds": {str(e.id): "work" if e.experience_type == "job" else "project" for e in p.experiences},
             "job_skills": {_key(j.source, j.source_job_id): [s.name for s in j.job_skills] for j in jobs},
         }
@@ -1796,7 +1800,9 @@ def _scorecard_rows(groups: list[tuple[str, dict]], picks: dict | None) -> tuple
         row("1. Send-readiness, mean 1-4", lambda s: f"{_num(s['send_readiness'])} (owner {s['by_owner']}, "
                                                     f"judge {s['by_judge']})"),
         row("&nbsp;&nbsp;&nbsp;send-ready rate (3 or 4)", lambda s: _pct(s["send_ready"])),
-        row("2. Fabrication-free rate", lambda s: f"{_pct(s['fabrication_free'])} of {s['judged']} judged"),
+        row("2. Fabrication-free rate", lambda s: f"{_pct(s['fabrication_free'])} of {s['judged']} judged"
+                                                  + (f"; owner: {s['owner_true']} of {s['owner_checked']} with nothing "
+                                                     "untrue" if s["owner_checked"] else "")),
         row("3. Must-cover recall (M1)", lambda s: _pct(s["m1"])),
         row("4. Honest coverage", lambda s: _pct(s["honest"])),
         row("5. Recruiter checklist (custom 2:1 generic)",
@@ -1822,6 +1828,9 @@ def _scorecard_rows(groups: list[tuple[str, dict]], picks: dict | None) -> tuple
         row("C3 profile copy (8+ word runs)", lambda s: _pct(s["profile_copy"])),
         row("C3 writing-sample copy (6+ word runs)", lambda s: _pct(s["sample_copy"])),
         row("C5 style warnings per letter", lambda s: _num(s["warnings"], "{:.1f}")),
+        row("C5b stock-phrase hits per letter", lambda s: _num(s["stock"], "{:.1f}")
+            + f" ({s['stock_over']}/{s['letters']} over the owner's sounds_ai limit)"),
+        row("C5c motivation naming the candidate's own history", lambda s: f"{s['motive_tied']}/{s['letters']}"),
         row("C6 seconds per letter", lambda s: _num(s["seconds_per_letter"], "{:.0f}")),
         row("C7 near-templates (under 10%)", lambda s: str(s["near_templates"])),
     ]
@@ -1839,12 +1848,18 @@ def _report_detail(run: str, rows: list[dict], extra: dict, repeated: list[dict]
         lines += ["", f"## {r['key']} · {e['title']} · {e['company']}", "",
                   f"- G1: longest skill list {len(e['g1']['list'])}"
                   + (f": {', '.join(e['g1']['list'])}" if e["g1"]["list"] else "")
-                  + (f"; named 3+ times: {e['g1']['over_mentioned']}" if e["g1"]["over_mentioned"] else ""),
+                  + (f"; named {_letter_metrics().MAX_SKILL_MENTIONS + 1}+ times: {e['g1']['over_mentioned']}" if e["g1"]["over_mentioned"] else ""),
                   *[f"- {label}: " + (" / ".join(f'"{x}"' for x in runs) or "none")
                     for label, runs in (("Ad echo", e["echo"]), ("Profile copy", e["copy"]),
                                         ("Writing-sample copy", e["sample"]))],
                   f"- Nearest letter: {e['nearest'] or '—'} ({_pct(r['nearest_distance'])} apart)",
                   *[f"- Style: {w}" for w in e["warnings"]],
+                  f"- Stock phrases: {e['stock']['total']}"
+                  + (" (over the sounds_ai limit)" if e["stock"]["over"] else "") + ": "
+                  + ", ".join([f"{n} x{c}" for n, c in e["stock"]["hits"].items()]
+                              + ([f"profile lines x{e['stock']['profile_runs']}"] if e["stock"]["profile_runs"] else [])),
+                  *([f"- Motivation ({_pct(m['from_ad'])} from the ad; names: {', '.join(m['ties']) or 'nothing from the profile'}):"
+                    f" \"{m['sentence']}\"" for m in e["motive"]] or ["- Motivation: no sentence found"]),
                   *[f"- Not counted as addressed: {p}" for p in e["dropped"]]]
     return "\n".join(lines) + "\n"
 
@@ -1876,8 +1891,10 @@ def _report_v2(args) -> int:
     vocab = {k: lm.skill_vocab(prof["skills"] + prof["job_skills"].get(k, [])
                                + [q.get("skill") for q in refs.get(k, {}).get("requirements", [])]) for k in letters}
     repeated = lm.repeated_phrases(bodies, frozenset().union(*vocab.values()),
-                                   [prof["name"]] + [a.get("company") for a in frozen.values()])
+                                   [prof["name"]] + [a.get("company") for a in frozen.values()] + prof["org_names"],
+                                   prof["project_titles"])
     near = lm.nearest_letters(bodies)
+    recycled = lm.recycled_runs({k: lm.profile_copy(b, prof["evidence"])["runs"] for k, b in bodies.items()}, bodies)
     unjudged = sorted(k for k in letters if k in judge and k not in refs)
     if unjudged:
         print(f"No reference checklist for {', '.join(unjudged)}: judge numbers left out for them")
@@ -1885,15 +1902,19 @@ def _report_v2(args) -> int:
     rows, extra = [], {}
     for r in results:
         k, text, body = r["key"], letters[r["key"]], bodies[r["key"]]
-        auto, g1, style = auto_checks(text), lm.no_stuffing(body, vocab[k]), lm.style_warnings(text)
+        names = lm.name_phrases(frozen[k].get("company"), frozen[k].get("title"))
+        auto, g1, style = auto_checks(text), lm.no_stuffing(body, vocab[k], names), lm.style_warnings(text)
         echo = lm.ad_echo(body, frozen[k]["raw_description"])
         copy, sample = lm.profile_copy(body, prof["evidence"]), lm.sample_copy(body, prof["writing_sample"])
+        stock = lm.stock_phrases(body, recycled[k])
+        motive = lm.motivation(body, frozen[k]["raw_description"], prof["org_names"] + prof["project_titles"])
         ad = ads.get(k, {})
         row = {"key": k, "scenario": ad.get("scenario"), "relevant": ad.get("relevant"),
                "cost_usd": r.get("cost_usd"), "seconds": r.get("seconds"),
                "gates": all(auto[i] for i in AUTO_ITEMS), "g1": g1["passed"],
                "ad_echo": echo["share"], "profile_copy": copy["share"], "sample_copy": sample and sample["share"],
                "warnings": sum(style["kinds"].values()), "near_template": near[k]["near_template"],
+               "stock": stock["total"], "stock_over": stock["over"], "motive_tied": any(m["ties"] for m in motive),
                "nearest_distance": near[k]["distance"], "fabricated": None, "judge_grade": None}
         dropped = []
         if k in judge and k in refs:
@@ -1902,13 +1923,14 @@ def _report_v2(args) -> int:
             said = {q["id"] for q in judge[k]["requirements"] if str(q.get("addressed", "")).upper().startswith("Y")}
             dropped = sorted(said - lm.addressed_rows(text, judge[k], flags))
         if k in owner:
-            row |= {"grade": int(owner[k]["send_readiness"]), "grade_by": "owner"}
+            row |= {"grade": int(owner[k]["send_readiness"]), "grade_by": "owner",
+                    "owner_untrue": gp._yn(owner[k]["untrue"]) == "Y"}
         else:
             row |= {"grade": row["judge_grade"], "grade_by": "judge" if row["judge_grade"] is not None else None}
         rows.append(row)
         extra[k] = {"title": frozen[k].get("title"), "company": frozen[k].get("company"), "g1": g1,
                     "echo": echo["runs"], "copy": copy["runs"], "sample": sample["runs"] if sample else [],
-                    "warnings": style["warnings"], "nearest": near[k]["nearest"],
+                    "warnings": style["warnings"], "nearest": near[k]["nearest"], "stock": stock, "motive": motive,
                     "dropped": [f"{rid} (quote not in the letter, or a listed skill presented as experience)"
                                 for rid in dropped]}
     # relevant ads first (plan §3), then by key
@@ -1933,8 +1955,8 @@ def _report_v2(args) -> int:
         "(listed in the detail file).", "",
         "## Per letter", "",
         "| Ad | Scen | Rel | SR | By | Fab | M1 | M2 | Honest | M3 | Checklist | Gates | G1 | Echo | Copy | Sample "
-        "| Warn | C7 | Cost |",
-        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
+        "| Warn | Stock | C7 | Cost |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for x in rows:
         rel = {True: "Y", False: "N"}.get(x["relevant"], "?")
@@ -1943,7 +1965,7 @@ def _report_v2(args) -> int:
             f"{_num(x['fabricated'], '{}')} | {_pct(x.get('m1'))} | {_pct(x.get('m2'))} | {_pct(x.get('honest'))} | "
             f"{_pct(x.get('m3'))} | {_pct(x.get('checklist'))} | {'✓' if x['gates'] else '✗'} | "
             f"{'✓' if x['g1'] else '✗'} | {_pct(x['ad_echo'])} | {_pct(x['profile_copy'])} | "
-            f"{_pct(x['sample_copy'])} | {x['warnings']} | {_pct(x['nearest_distance'])}"
+            f"{_pct(x['sample_copy'])} | {x['warnings']} | {x['stock']} | {_pct(x['nearest_distance'])}"
             f"{' ⚠' if x['near_template'] else ''} | {_num(x['cost_usd'], '${:.3f}')} |")
     lines += ["", f"Phrases, lists and warnings that quote the letters: `{_rel(run_dir / 'report-detail.md')}` "
                   "(gitignored)."]

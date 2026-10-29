@@ -16,9 +16,18 @@ and after changes, at known cost. The dev set is tuned on; the test set is held 
 5. Define the metrics before any grading. **Done 2026-10-23: docs/letter-metrics-plan.md,
    approved by the owner.**
 6. Generate letters with the current system (unedited letters are what gets graded).
+   **Done 2026-10-27: run `dev-agent-v1`, 17 dev letters, $4.39 (Decision log).**
 7. The user hand-grades the dev letters (no judge grades shown first, so nothing anchors them).
+   **Done 2026-10-28, rechecked 2026-10-29: sheet S1674, 17/17 graded; relevant send-readiness
+   2.30, 3 of 10 send-ready; sounds_ai is a count rule and no_personal_reason (D4b) replaced
+   no_real_reason (Decision log).**
 8. Calibrate the LLM judge on half the dev grades, check it on the other half, then freeze and
-   version it.
+   version it. The judge runs on demand from a script with a choice of **backend** (Decision
+   log, 2026-10-28): `claude-cli` (the owner's Claude subscription, headless `claude -p`; the
+   default) or `vertex` (Claude Opus on Vertex AI through `app/llm/client.py`, billed). Both
+   send the same prompt from one builder. Calibrate on `claude-cli`; then run `vertex` once on
+   the check half and compare both with the owner's grades. Only if they agree equally well
+   are they interchangeable. Every judge output and report names the backend that produced it.
 9. Baseline scores. Main metric: the **relevant** score (Would apply = Yes ads); overall is
    secondary.
 
@@ -243,8 +252,152 @@ stage 3.
   takes on its own analysis. Only #149 would move (3 -> 1, its one must-have gap was a duty).
   Totals before -> after: partial 130 -> 123, gap 92 -> 98, must-cover 110 -> 106, must-have
   gaps 20 -> 23; 376 -> 377 rows (one split). Details in the metrics plan's Decision log.
+- 2026-10-27: **stage 6 done**: `letter_lab.py run --set v2 --split dev --engine agent --label
+  dev-agent-v1` (production's engine and limits, no side outputs: they don't change the letter).
+  17/17 letters, 0 errors, $4.39 ($0.258/letter, relevant $0.287; estimate was ~$3.90, since
+  rate-limit retries meant more drafts and checks), 487 s/letter. Gemini 429s and 5xx all the way through; the first
+  process hung for hours on one request after a 5xx (the client sets no request timeout), was killed
+  and finished with `--resume`. 15/17 clean. Not clean: `seek-95220494` (tool-call limit, a
+  must-cover years requirement the profile can't meet) and `seek-94890841` (check_claims hit 429
+  three times on draft 2, so the run handed back draft 1, which misses one requirement). Both are
+  kept as the system produced them. Code-only `report` on it: gates 17/17, G1 12/17, C3 ad echo 3%,
+  profile copy 14%, sample copy 3%, C7 near-templates 0 (nearest distances 77-87%), C4 115 phrases,
+  mostly the profile's own institution, employer and project names retold in every letter.
+- 2026-10-28: **the judge gets two swappable backends** (owner; for stage 8, nothing built yet).
+  Why: the owner wants the judge callable on demand, without a Claude Code session spawning
+  subagents, and to choose each week between spare Claude subscription usage and Vertex credits.
+  The v2 pipeline already passes everything through files (`v2-pack` -> `answers/<grader>/<lid>.json`
+  -> `v2-check` / `v2-merge` / `v2-agreement`), so only the step that fills `answers/` changes.
+  - **The judge gets the packet and the standard only, never the repo** (owner, 2026-10-29):
+    `letter_metrics.STOCK_PHRASES` and `STOCK_LIMIT` define the owner's sounds_ai rule and must
+    not reach it. The claude-cli backend runs from a folder holding just those files, with file
+    tools limited to it.
+  - **One new command**, `grading_panel.py v2-run <tag> --backend claude-cli|vertex`. One prompt
+    builder pastes the standard, profile, packet and output format into the prompt, so the judge
+    needs no file tools, and both backends get identical text.
+  - **`claude-cli`** (default; the owner mostly uses this): one headless `claude -p` per packet, a
+    fresh context each time, pinned to Opus, with Claude Code's own system prompt and tools kept
+    out (check the exact flags before relying on it). It sits outside `app/llm/client.py` on
+    purpose: the judge is eval tooling, not the app, as the subagent judge already was.
+  - **`vertex`**: `AnthropicVertex` through `app/llm/client.py` (`llm_usage` rows, cost, budget
+    guard). Before building: one test call (with the owner's go-ahead) to confirm the model is
+    enabled and whether the trial credits cover partner models; and a decision on the $5 daily
+    cap, which one ~$7 judge run would hit.
+  - **Same prompt is not quite the same judge** (Claude Code's setup, thinking and effort settings
+    differ), so: calibrate on `claude-cli`, run `vertex` once on the check half (~$3-4), compare
+    both with the owner. Interchangeable only if both agree equally well; otherwise reports
+    compare only runs graded on the same backend.
+  - **Always say what produced a rating.** Every answer file, `judge-<tag>.json` and report
+    records the backend and model next to the judge version, and owner grades stay labelled as
+    the owner's. Keep the backend constant across runs being compared where possible.
+  - Replaces "run as Claude Code subagents, so no Vertex spend" in docs/letter-metrics-plan.md §6
+    item 7 (that doc to be updated with stage 8).
+- 2026-10-28, final 2026-10-29: **stage 7 done**: the owner graded all 17 `dev-agent-v1` letters
+  blind (sheet S1674, shuffled, run not named; no judge or code score shown per letter first; no
+  LLM calls), then rechecked the grades with Claude the next day so the judge is calibrated on
+  consistent ones. The owner gave grades in chat and Claude typed them into the sheet's CSV, read
+  back per row. `grade-sheet --unblind S1674` -> `runs/dev-agent-v1/grades-owner.csv` (kept
+  identical to `grading/S1674/grades-owner.csv`); `report --set v2 dev-agent-v1` ->
+  evals/results/v2/dev-agent-v1.md.
+  - **Final grades** (relevant 10 / all 17):
+
+    | Measure | Relevant | All |
+    |---|---|---|
+    | Send-readiness mean (1/2/3/4 counts) | **2.30** (1/6/2/1) | 2.35 (1/10/5/1) |
+    | Send-ready (3+) | **3 of 10** | 6 of 17 |
+    | untrue | 0 | 1 |
+    | generic | 6 | 11 |
+    | missed_important | 8 | 11 |
+    | weak_example | 5 | 9 |
+    | sounds_ai (count rule) | 8 | 13 |
+    | no_personal_reason | 5 | 11 |
+    | too_long | 5 | 7 |
+
+    The only 4 is `seek-94904560` (scenario 3). Send-readiness never changed in the rechecks.
+  - **untrue**: Y on 1 letter, `seek-95085104` (not relevant): it puts a skill (AWS) inside an
+    experience (the internship) that didn't use it. Each sentence on its own is backed, so
+    check_claims, which checks one claim at a time, passed it (a "clean" run). The owner first
+    marked 4; on a recheck 3 were cleared as badly worded "carries over to" bridges, not false.
+    The report's fabrication-free row now shows the owner's count beside the judge's.
+  - **missed_important, rechecked row by row (2026-10-29)** against the owner's answer key (each
+    letter's essential and important rows, split into backed / gap / not-for-letter). Definition
+    unchanged: a backed (supported or partial) essential or important row not addressed. A gap is
+    never a miss and leaving one out is fine (the owner's gap-bridging idea is in
+    future_work/gap-bridging-tick.md). New rule in grading-standard-v2 §4.1: a hard skill must be
+    named; a trait must be named or shown by an example, and describing an activity alone doesn't
+    show a trait. 6 letters N -> Y, 2 Y -> N (one ticked for gaps, one for nice-to-have rows);
+    every Y note starts "Missed R_ (...)" so the judge can be checked row by row.
+  - **sounds_ai is a count rule (owner, 2026-10-29).** A stock-phrase count showed every letter
+    is built the same way: a profile fact, often pasted word for word, then a bridge sentence
+    ("prepares me to" in 14 letters, "carries over to" in 11); "I am drawn to" and "exactly the
+    kind of" come from the owner's own writing sample. The by-ear tick (14/17) didn't track the
+    count (Y letters 10.9 hits, N 9.7), so the owner set the rule: Y when
+    `letter_metrics.stock_phrases` (C5b) finds more than `STOCK_LIMIT` (8) hits, from 13 generic
+    phrase patterns plus one per profile line pasted into 3+ letters (`recycled_runs`). By ear ->
+    rule: `seek-95256463` and `seek-95084704` N -> Y; `seek-95205206`, `seek-95219353` and
+    `seek-95364016` Y -> N. Three letters sit exactly at 8. Owner-confirmed 2026-10-29.
+  - **no_real_reason became no_personal_reason (owner, 2026-10-29).** Every letter's motivation
+    was mostly the ad's own description restated with enthusiasm (a program's line about itself
+    presented as the place the candidate wants to start their career). D4a ("grounded in the ad")
+    passes that, so no_real_reason was 0/17 and could teach the judge nothing. New checklist item
+    **D4b** (19 items now; D4a unchanged): is a reason for applying tied to the candidate's own
+    experience, study or goals? N needs the candidate's past to explain why they want something in
+    the role ("Having worked on X, I want to understand Y"); experience offered only as a skill to
+    apply is fit, not motivation. The tick `no_personal_reason` = D4b N. Claude proposed the 17
+    values with `runs/dev-agent-v1/review-motivation-sounds-ai.md`; the owner confirmed them
+    2026-10-29, changing one (`seek-95140202` Y -> N): 11 Y, N on `seek-95110025`,
+    `seek-95219353`, `seek-95364016`, `seek-95140202`, `seek-95158567` and `seek-94904560`.
+    `letter_metrics.motivation` (C5c) lists each motivation sentence with its share of words from
+    the ad and the profile names it uses: a helper, not a verdict (it finds a profile name in
+    10/17 letters, more than the 6 with a personal reason, because a name used as a skill to
+    apply still counts for it).
+  - **The judge never sees the sounds_ai list or limit**, so it is graded on hearing overuse, not
+    on matching a list: the standard's sounds_ai says only "overuses stock or machine-sounding
+    phrasing", and the counted phrases were taken out of its examples (D2c, D3a, D6b, a §4.1
+    example). The list lives in code; the stage-8 runner must not give the judge the repo (see the
+    backends entry).
+  - **The 2 not-clean runs** (`seek-95220494`, `seek-94890841`) failed only on a years-of-experience
+    row the run's matcher rated partial; the owner's key says gap (years judged against relevant
+    paid work), so leaving it out was right and the revisions could not succeed (follow-up below).
+    `seek-94890841` stays on draft 1 (the 429 case), as production would have handed it back.
+  - **What the notes say, in the owner's words, summarised:** the weaker of two experiences used
+    as the main example where the stronger one fits (5 letters); experiences mixed within and
+    across paragraphs, so the letter reads as confused (5); a strong, fitting example underused
+    (`seek-95084704`); the ad's most important skill named last (`seek-94890841`); requirements the
+    profile lacks left out rather than framed as wanting to learn them (`seek-95219353`).
+  - **Code checks after grading (owner, 2026-10-29; nothing the judge sees):**
+    - G1's 5 failures were all a skill named 3+ times, none a skill list: the role's own core
+      skills, or "AI" where the employer's or program's name contains it. G1 now flags 4+ mentions
+      and skips mentions inside the employer's name or 3+ words in a row from the ad's title
+      (`letter_metrics.name_phrases`): 12/17 -> 14/17 pass; the 3 failing name "AI" 4-6 times.
+    - C4 also skips the profile's employers and institutions (word by word) and project titles
+      (whole): 115 -> 98 phrases. A project described inside an experience's text isn't a name
+      field, so it still shows (16 letters).
+    - C7 unchanged, an alarm (none under 10%; distances 77-87%); repeated wording shows in C4.
+    - The not-clean flag, G1 and C7 don't track the owner's main complaints (example choice and
+      order, motivation); that gap is what the stage-8 judge is for.
+  - Next: stage 8 (judge calibration, backends per the entry above), with the owner's go-ahead.
 
 ## Follow-ups (not for this eval)
+
+- From stage 7 (2026-10-28), not fixed yet:
+  - DONE 2026-10-28, superseded 2026-10-29: the tick label "no real reason for wanting this job"
+    read as "would I want this job"; it was reworded, then the tick itself became
+    `no_personal_reason` (D4b; stage 7 entry).
+  - DONE 2026-10-28: `report`'s fabrication-free row ignored the owner's `untrue`; it now adds
+    "owner: n of N with nothing untrue" (`scorecard` `owner_checked` / `owner_true`).
+  - check_claims passed the one owner-flagged untrue letter: a skill put inside an experience that
+    didn't use it, across sentences (see the stage 7 entry). It checks claims one at a time.
+  - `app/llm/client.py` sets no request timeout; a Gemini call hung for hours in stage 6.
+  - The writer builds every paragraph the same way (a profile fact, often pasted word for word,
+    then a stock bridge sentence) and restates the ad's blurb as the candidate's motivation; the
+    writing sample's "I am drawn to" / "exactly the kind of" end up in 8-9 of 17 letters. Writer
+    v3's "apply each piece of evidence" rule invites the bridge. Fix with the next wording
+    go-ahead (owner: wording is parked); C5b and C5c give it numbers to beat.
+  - `match_profile` rates years / seniority asks ("3+ years experience") as partial from an
+    internship, which makes them must-cover; the owner's key rates them gap. The run then revises
+    for a row it can never honestly meet (both not-clean runs in stage 6). Rate them against
+    relevant paid work, as the key does.
 
 - From the labels (2026-10-23), match_profile verdicts the owner disagreed with:
   - Years and seniority asks ("5+ years", "8+ years", "senior commercial") rated **partial**

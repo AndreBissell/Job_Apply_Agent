@@ -630,8 +630,23 @@ grade-sheet --set v2 <run>` (blind HTML sheet + blank CSV in evals/work/v2/gradi
 grading-keys/; `--unblind <S####>` -> runs/<run>/grades-owner.csv, never overwrites a graded row),
 `scripts/letter_metrics.py` (G1, C3 incl. writing-sample copy, C4, C5, C6, C7, M1-M4, honest coverage,
 checklist score, `scorecard`) and `report --set v2 <run> [--judge TAG] [--picks TAG]` -> committed
-evals/results/v2/<run>.md (numbers + ad keys only) + gitignored runs/<run>/report-detail.md. Next: stage 6
-baseline letters (~$3.90 dev; ask first). Evidence behind it:
+evals/results/v2/<run>.md (numbers + ad keys only) + gitignored runs/<run>/report-detail.md. Stage 6 DONE
+2026-10-27: run `dev-agent-v1` (agent, 17 dev letters, $4.39, 15/17 clean; eval-set plan Decision log).
+Stage 7 DONE 2026-10-28, rechecked 2026-10-29 (sheet S1674, owner grades in
+runs/dev-agent-v1/grades-owner.csv; eval-set plan Decision log has the final table): relevant
+send-readiness 2.30, 3 of 10 send-ready (all 2.35, 6/17); untrue 1/17 (0 relevant), a run
+check_claims passed. Ticks (all 17): generic 11, missed_important 11 (rechecked row by row: backed
+rows only, a gap is never a miss; hard skills named, traits named or shown; notes start "Missed R_"),
+weak_example 9, sounds_ai 13, no_personal_reason 11, too_long 7 (all owner-confirmed). sounds_ai is a COUNT RULE: Y when
+`letter_metrics.stock_phrases` (C5b) finds more than `STOCK_LIMIT` 8 hits; the list and the limit
+never go in the grading standard, which the judge reads, and the judge never gets the repo.
+`no_real_reason` became `no_personal_reason` = new item D4b (19 checklist items): a reason for
+applying tied to the candidate's own experience, study or goals, not the ad's blurb restated and
+not experience offered as a skill to apply (C5c `motivation` is a helper). Code checks after
+grading: G1 flags 4+ mentions outside the employer's name and the ad's title (14/17 pass); C4 skips
+the profile's employers, institutions and project titles (98 phrases); C7 unchanged. Stage 8 judge: two backends,
+`claude-cli` (owner's subscription, default) and `vertex`, one prompt builder, every rating names its
+backend (eval-set plan Decision log 2026-10-28). Next: stage 8, with the owner's go-ahead. Evidence behind it:
 docs/ai-recruitment-research.md (AI screeners' biases, rated by strength; lines we never cross).
 The real profile is frozen as of 2026-10-20. Strong fit = score 85+ and
 no must-have GAP (`Requirement.needs_user`); partials are allowed (owner, 2026-10-20). Main metric:

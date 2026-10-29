@@ -35,7 +35,7 @@ lab = _load()
 RUN = "dev-agent-secret-name"
 KEYS = ("acme-dev", "acme-data", "logico-ops")
 FIELDS = ("key", "send_readiness", "untrue", "untrue_text", "generic", "missed_important", "weak_example",
-          "sounds_ai", "no_real_reason", "too_long", "note")
+          "sounds_ai", "no_personal_reason", "too_long", "note")
 
 
 @pytest.fixture

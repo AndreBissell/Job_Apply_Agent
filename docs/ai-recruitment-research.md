@@ -142,7 +142,8 @@ guided with examples. Strong.**
   now look for it.
 - **What it means:** the effect depends on the model and is getting patched. Stuffing also reads
   badly to humans (A1 criterion 2, A4). Keywords come only with real evidence, in the ad's words,
-  and no skill is named more than twice.
+  and no skill is named more than three times outside the employer's name and the ad's title
+  (G1's limit; owner, 2026-10-29, after the first graded letters: was twice).
 
 **B4. LLM judges favour longer text; human recruiters don't. Strong (for LLM judges).**
 - Saito et al. 2023 (arXiv 2310.10076; LLM judges prefer longer answers even where humans prefer
@@ -211,7 +212,7 @@ change by model, and they are being patched.
 | A4 | D6 asks whether self-promotion is kept moderate, with no stacked superlatives. (A code count of intensifiers, C8, was cut: a word list can't read context.) | Layer 2 |
 | B1 | Judge from a different family to the writer (already). Layer 4 screener = **2+ model families**, reporting both scores and their agreement (Xu et al.'s ensemble mitigation) | §6, Layer 4 |
 | B2 | M1/M2 "addressed" requires an **explicit** mention a literal reader would find; a requirement covered only by implication counts as not addressed. Judge quotes its evidence (already) and is calibrated with your examples (already, now backed by evidence) | Layer 1, §6 |
-| B3 | **G1 no-stuffing guard**: no comma-run of 5+ skill terms and no skill named more than twice; C3 ad-echo stays diagnostic | Layer 0/3 |
+| B3 | **G1 no-stuffing guard**: no comma-run of 5+ skill terms and no skill named more than three times outside names (was twice until 2026-10-29); C3 ad-echo stays diagnostic | Layer 0/3 |
 | B4 | **Judge length probe**: during calibration, the judge also grades padded copies of 3 letters (+60 words of filler); it passes only if it doesn't score them higher | §6 |
 | B5 | Pairwise in both orders (already) | §5–6 |
 | B6 | No identity-based metric. D6's "standard Australian English" stays | — |

@@ -60,7 +60,8 @@ The 5 `rubric.auto_checks` items (`app/llm/letter/rubric.py`): em dashes ≤ 1, 
 ≤ 340 words, no placeholders, a sign-off. They stay exactly as they are so v1 and v2 runs agree on
 them. One new hard gate comes from Layer 1: **fabrications = 0**. One new guard (research doc
 B3): **G1 no stuffing**: no run of 5 or more comma-separated skill terms, and no skill named more
-than twice. Keywords come only with evidence.
+than 3 times, not counting mentions inside the employer's name or 3+ words in a row from the ad's
+title (owner, 2026-10-29: was "more than twice", counting names). Keywords come only with evidence.
 
 ### Layer 1: requirement coverage, honestly (the core metric)
 
@@ -106,7 +107,7 @@ the same 2:1 weighting the paper used.
 |---|---|---|
 | D2 Applied, not recited | Does the first paragraph state the strongest matching evidence (the 6-second test)? Does every body paragraph tie its evidence to a duty or requirement named in the ad? Is the connecting sentence specific rather than a formula ("prepares me to")? | weak example, generic |
 | D3 Employer-specific | Is at least one ad fact about this employer, team, product or program used meaningfully? Does it pass the swap test (the sentence stops fitting if another employer's name is swapped in)? (v1's specific_detail) | generic |
-| D4 Motivation | Is there a specific reason for wanting this role or employer, grounded in the ad, beyond generic praise? | no real reason |
+| D4 Motivation | Is there a specific reason for wanting this role or employer, grounded in the ad, beyond generic praise (D4a)? Is it tied to the candidate's own experience, study or goals, not the ad's description of itself restated (D4b, owner 2026-10-29)? | no personal reason |
 | D5 Concrete evidence | Are there at least 2 pieces of evidence with specifics (tool, task, and scale or outcome)? Does every number come from the profile? Is at least one specific **checkable** (a named project, tool or organisation, or a number from the profile)? (research doc A3) | weak example |
 | D6 Voice and polish | No stock opener ("I am writing to express")? Fewer than 3 machine-written tells? No phrase or structure repeated? Australian spelling? Tone matching the ad (`analysis.tone`)? 250–340 words? A close specific to the role? Self-promotion kept moderate, with no stacked superlatives? (A4) | sounds AI, waffly |
 | D7 Understands the job | Does the letter show it grasped the goal of the role and what is hard about it (beyond restating the duties), and connect the candidate to that? (Galdin & Silbert's "understands the goal / complexity" criteria) | generic, no real reason |
@@ -121,6 +122,8 @@ Layers 1 and 2. That prediction is the number calibrated to the owner's grade (�
 | C3 | Ad echo / profile copy | share of letter words in runs of 6+ words copied verbatim from the ad (parroting); share in runs of 8+ words copied from the profile (the measure panel 4 used: 36% -> 18%). |
 | C4 | Cross-letter repetition | 4–6-word phrases that appear in 3 or more of a run's letters, with names and skill terms excluded. Per run: the count and the list. Catches formulas such as "prepares me to" or "exactly the kind of", which a grader reading one letter at a time can't see. |
 | C5 | Style warnings | `style_lint.lint` warnings: gap-led sentences, stock close or bridge, US spellings, low sentence-length variance, too many paragraphs starting with "I". |
+| C5b | Stock phrases (owner, 2026-10-29) | hits of `letter_metrics.STOCK_PHRASES` (bridges, stock enthusiasm, buzzwords, a stock opener) plus one per profile line pasted into 3+ of the run's letters. More than `STOCK_LIMIT` (8) is the owner's sounds_ai Y. Never shown to the judge. |
+| C5c | Motivation (owner, 2026-10-29) | each sentence saying why the candidate wants the role, with its share of words found in the ad and the profile names it uses. A helper for `no_personal_reason` (D4b), not a verdict. |
 | C6 | Cost and time | per letter, from the existing `cost-report`. |
 | C7 | Nearest-letter similarity | normalised edit distance from each letter's body (greeting and sign-off removed) to the closest other letter in the run; flagged under 10% as a near-template. Galdin & Silbert zeroed the "custom" score of any proposal under 4% from another by the same writer (research doc A1). |
 ### Layer 4: AI-screener view (noted, not built)
@@ -163,7 +166,7 @@ A generated sheet, blind (the run isn't named) and shuffled, with the ad shown b
    - **1** start over
 2. **Anything untrue or stretched?** N, or Y plus the bad bit pasted in.
 3. **Why not a 4?** Tick any that apply: generic / fits any company · missed something important ·
-   weak or wrong example used · sounds AI / stock phrases · no real reason for wanting this job ·
+   weak or wrong example used · overuses stock / AI phrasing · no reason for applying tied to the candidate's own experience, study or goals ·
    too long / waffly. An optional one-line note.
 
 The ticks are the reasons the judge learns from (§6); the table in §3 shows which judge
@@ -368,8 +371,13 @@ theirs to judge). The owner's pick form is built with the first comparison, not 
     writer's voice falls back to the experience text, so profile copy may rise as sample copy falls.
   - Defaults Claude chose and the owner did not change:
     - C3, C4 and C7 read the body only.
+    - C5b stock phrases and C5c motivation (owner, 2026-10-29; eval-set plan Decision log): C5b is
+      the owner's sounds_ai rule (more than 8 hits), C5c a helper for `no_personal_reason` (D4b).
+      Neither list nor limit goes in the grading standard, which the judge reads.
     - C7 is word-level edit distance divided by the longer body (no library: ~2 s for 17 letters).
-    - C4 skips phrases touching a skill or a name, and lists one shared wording once.
+    - C4 skips phrases touching a skill or a name, and lists one shared wording once. Names are
+      the candidate's, the ads' employers and (owner, 2026-10-29) the profile's employers and
+      institutions, word by word, plus the profile's project titles matched whole.
     - Only `fabricated` claims count for the fabrication-free rate and honest coverage; stretches
       and employer facts are reported under M4.
     - A judge's "addressed" counts only when its quote is in the letter (checked again by the

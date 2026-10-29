@@ -40,12 +40,28 @@ def test_g1_fails_a_five_skill_list_and_passes_four():
     assert lm.no_stuffing("Skills: Python, SQL, Docker, AWS.", VOCAB)["passed"]
 
 
-def test_g1_fails_a_skill_named_three_times_counting_spellings_as_one():
-    twice = "I wrote Python at LogiCo. Python ran our reports."
-    assert lm.no_stuffing(twice, VOCAB)["passed"]
+def test_g1_fails_a_skill_named_four_times_counting_spellings_as_one():
     thrice = "I built PowerBI dashboards, trained staff in Power BI and fixed powerbi models."
-    result = lm.no_stuffing(thrice, VOCAB)
-    assert not result["passed"] and result["over_mentioned"] == {"power bi": 3}
+    assert lm.no_stuffing(thrice, VOCAB)["passed"]
+    four = thrice + " PowerBI is what I know best."
+    result = lm.no_stuffing(four, VOCAB)
+    assert not result["passed"] and result["over_mentioned"] == {"power bi": 4}
+
+
+def test_g1_leaves_out_mentions_inside_the_employer_name_or_the_ad_title():
+    names = lm.name_phrases("Acme.AI", "2027 Acme AI Graduate Program - Data")
+    text = ("I want to join Acme AI. The Acme AI Graduate Program fits me. I built AI tools "
+            "and AI reports, and studied AI.")
+    assert lm.skill_mentions(text, lm.skill_vocab(["AI"]), names) == {"ai": 3}
+    assert lm.skill_mentions(text, lm.skill_vocab(["AI"])) == {"ai": 5}
+    assert lm.no_stuffing(text, lm.skill_vocab(["AI"]), names)["passed"]
+
+
+def test_g1_name_phrases_are_the_employer_whole_and_title_runs():
+    assert lm.name_phrases("LogiCo", "Python Developer") == {("logico",), ("python", "developer")}
+    assert ("acme", "ai", "graduate") in lm.name_phrases(None, "Acme AI Graduate Program")
+    assert ("ai",) not in lm.name_phrases(None, "Acme AI Graduate Program")  # one title word isn't a name
+    assert lm.name_phrases(None, None) == set()
 
 
 def test_g1_matches_multi_word_and_symbol_skills_whole():
@@ -90,6 +106,16 @@ def test_c4_skips_phrases_touching_a_skill_or_a_name():
     assert lm.repeated_phrases(bodies, frozenset(), [])[0]["phrase"] == "liam chen here keen on python work"
 
 
+def test_c4_skips_a_project_title_only_where_it_appears_whole():
+    bodies = {k: "At uni my Web Shop for Pets project went live early." for k in "abc"}
+    titles = ["Capstone, Web Shop for Pets"]
+    assert lm.repeated_phrases(bodies, VOCAB, [], titles) == [
+        {"phrase": "project went live early", "letters": ["a", "b", "c"]}]
+    other = {k: "I built a web shop that sold books fast." for k in "abc"}  # "web shop" alone isn't the title
+    assert lm.repeated_phrases(other, VOCAB, [], titles) == [
+        {"phrase": "i built a web shop that sold books fast", "letters": ["a", "b", "c"]}]
+
+
 def test_c4_lists_one_shared_sentence_once():
     shared = "I am writing to apply because I enjoy solving hard problems with clear code."
     bodies = {k: f"{shared} Then something different number {k}." for k in ("one", "two", "three")}
@@ -120,6 +146,34 @@ def test_c6_averages_cost_and_time_over_letters_that_worked():
     assert lm.cost_time(results) == {"letters": 2, "total_cost": pytest.approx(0.6),
                                      "cost_per_letter": pytest.approx(0.3), "seconds_per_letter": 150}
     assert lm.cost_time([])["cost_per_letter"] is None
+
+
+def test_c5b_counts_stock_phrases_and_reused_profile_lines_against_the_limit():
+    body = ("At LogiCo I built Python tools. This background prepares me to support Acme, and it carries "
+            "over to your platform. Acme is exactly the kind of team I want to join.")
+    s = lm.stock_phrases(body, ["built python tools for the logico warehouse team"])
+    assert s["hits"] == {"carries over to": 1, "prepares me to/for": 1,
+                         "This background/experience/... opening a sentence": 1, "exactly the kind of": 1}
+    assert (s["profile_runs"], s["total"], s["over"]) == (1, 5, False)
+    assert lm.stock_phrases(body * 2, [])["total"] == 8 and lm.stock_phrases(body * 3, [])["over"]
+
+
+def test_c5b_a_profile_line_counts_only_when_pasted_into_three_letters():
+    line = "I built Python tools for the LogiCo warehouse team every week"
+    bodies = {"a": line, "b": line, "c": "Something else. " + line, "d": "Nothing alike."}
+    runs = {k: [line.lower()] for k in "abc"} | {"d": []}
+    assert lm.recycled_runs(runs, bodies) == runs
+    del bodies["c"], runs["c"]
+    assert lm.recycled_runs(runs, bodies) == {"a": [], "b": [], "d": []}
+
+
+def test_c5c_finds_motivation_sentences_their_ad_share_and_profile_ties():
+    ad = "Acme is building the future of logistics through its graduate program in Brisbane."
+    body = ("I am drawn to Acme because building the future of logistics is where I want to start. "
+            "Having built tools at LogiCo, I want to learn how your warehouse systems work. I wrote SQL reports.")
+    first, second = lm.motivation(body, ad, ["LogiCo", "Capstone, Web Shop for Pets"])
+    assert first["ties"] == [] and first["from_ad"] >= 0.5
+    assert second["ties"] == ["having built", "logico"] and second["from_ad"] < 0.2
 
 
 # C7 ------------------------------------------------------------------------
@@ -215,9 +269,10 @@ def test_checklist_weights_custom_2_to_1_and_code_counts_the_length():
 
 def test_scorecard_uses_the_owner_grade_where_there_is_one_and_counts_judged_letters_only():
     base = {"cost_usd": 0.2, "seconds": 100, "gates": True, "g1": True, "near_template": False, "warnings": 1,
-            "ad_echo": 0.1, "profile_copy": 0.2, "sample_copy": None}
+            "ad_echo": 0.1, "profile_copy": 0.2, "sample_copy": None, "stock": 9, "stock_over": True,
+            "motive_tied": False}
     judged_row = lm.judged(LETTER, REF, judge(), FLAGS, {"1": "work"}, WEIGHTS)
-    rows = [base | judged_row | {"grade": 4, "grade_by": "owner"},
+    rows = [base | judged_row | {"grade": 4, "grade_by": "owner", "owner_untrue": True},
             base | lm.judged(LETTER, REF, judge(fabricated=2), FLAGS, {"1": "work"}, WEIGHTS)
             | {"grade": 2, "grade_by": "judge"},
             base | {"fabricated": None, "grade": None, "grade_by": None, "g1": False, "cost_usd": 0.5}]
@@ -225,5 +280,7 @@ def test_scorecard_uses_the_owner_grade_where_there_is_one_and_counts_judged_let
     assert (s["letters"], s["judged"], s["by_owner"], s["by_judge"]) == (3, 2, 1, 1)
     assert s["send_readiness"] == 3 and s["send_ready"] == 0.5
     assert s["fabrication_free"] == 0.5 and s["honest"] == pytest.approx(2 / 7)
+    assert (s["owner_checked"], s["owner_true"]) == (1, 0)  # only the owner-graded row counts
     assert s["precision"] == 6 / 12 and s["g1"] == 2 and s["sample_copy"] is None
     assert s["cost_per_letter"] == pytest.approx(0.3)
+    assert (s["stock"], s["stock_over"], s["motive_tied"]) == (9, 3, 0)

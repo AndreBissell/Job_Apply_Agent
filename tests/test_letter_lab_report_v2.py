@@ -115,7 +115,7 @@ def work(tmp_path, monkeypatch):
     monkeypatch.setattr(lab, "PANELS_DIR", tmp_path / "panels")
     monkeypatch.setattr(lab, "_v2_profile_inputs", lambda: {
         "name": "Liam Chen", "evidence": [PROFILE_TEXT], "writing_sample": "The part I enjoyed most was the testing.",
-        "skills": ["Python", "SQL"], "exp_kinds": {"1": "work"}, "job_skills": {}})
+        "skills": ["Python", "SQL"], "org_names": [], "project_titles": [], "exp_kinds": {"1": "work"}, "job_skills": {}})
     return tmp_path
 
 
@@ -147,7 +147,8 @@ def test_relevant_ads_come_first_and_the_owner_grade_wins(work):
     assert table[1].startswith("| `initech-data` | 1 | ? | — | — | — |")  # not judged, no label
     assert table[2].startswith("| `logico-ops` | 1 | N | 4 | owner | 1 |")
     assert "| 1. Send-readiness, mean 1-4 | 3.00 (owner 0, judge 1) | 3.50 (owner 1, judge 1) |" in committed
-    assert "| 2. Fabrication-free rate | 100% of 1 judged | 50% of 2 judged |" in committed
+    assert ("| 2. Fabrication-free rate | 100% of 1 judged | 50% of 2 judged; owner: 1 of 1 with nothing untrue |"
+            in committed)  # the owner graded logico-ops only, and said N
     assert "| 4. Honest coverage | 100% | 50% |" in committed  # logico-ops has a fabrication
     assert "| 6. Cost per letter | $0.200 | $0.200 |" in committed
 

@@ -225,9 +225,9 @@ V2_DB = V2_WORK / "eval.db"
 V2_REF = V2_WORK / "reference" / "ads"
 V2_ADS = EVALS / "sets" / "v2" / "ads"
 GRADERS = ("A", "B")
-CHECKLIST = ("D2a", "D2b", "D2c", "D3a", "D3b", "D4a", "D5a", "D5b", "D5c",
+CHECKLIST = ("D2a", "D2b", "D2c", "D3a", "D3b", "D4a", "D4b", "D5a", "D5b", "D5c",
              "D6a", "D6b", "D6c", "D6d", "D6e", "D6f", "D6g", "D6h", "D7a")
-TICKS = ("generic", "missed_important", "weak_example", "sounds_ai", "no_real_reason", "too_long")
+TICKS = ("generic", "missed_important", "weak_example", "sounds_ai", "no_personal_reason", "too_long")
 LABELS = ("supported", "stretch", "fabricated", "employer_fact_not_in_ad")
 UNTRUE = LABELS[1:]
 PRESENTED = ("experience", "skill", "related", "claimed", "none")
