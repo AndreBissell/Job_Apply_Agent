@@ -101,6 +101,23 @@ Use the row's own `evidence` pointers where they fit, and any other profile poin
 letter used something else. Code compares what was used with the strongest evidence the row
 holds, in this order: work experience > project or thesis > qualification > listed skill.
 
+**Relevance comes before kind** (owner, 2026-10-29). When you judge whether a letter used
+"weaker evidence when the row holds stronger" (§7.2) or a weak example (§7.3), first ask whether
+the example really shows what it is offered for. Among the examples that do, the candidate
+ranks them like this (owner, same day):
+
+1. **Professional work in the job's own field** where the skill was used: for a software job,
+   a software internship, where teamwork means working in a team on code.
+2. **University or personal work in the same field** (not professional) where the skill was
+   used: for a software job, a student software project or the thesis.
+3. **Work, professional or personal, outside the job's field** that still shows the skill: for
+   a software job, teamwork or adapting to change in a retail job.
+
+A higher rung beats a lower one whenever the profile has both for the same point, whatever
+code's order above says. A job outside the field is still the right example for a point only
+it really shows (talking to customers on the phone, when nothing in the field does). Code's
+order goes by kind only and can't see this, so it is yours to judge.
+
 ### 4.3 What a must-have is (v1 ruling, kept for reference)
 
 The checklist's `must_cover` flag already decides this, so you don't apply this rule. It explains
@@ -138,6 +155,18 @@ one label:
   whose entry doesn't say so;
 - a partial row claimed as fully had ("my Power BI experience" when the profile shows Tableau).
 
+**A summary sentence is fine** (owner, 2026-10-29). A sentence that sums up the examples told
+right after it ("I have tested my applications as I built them", followed by the unit tests on
+one project and the failure testing on another) is `supported` when it claims nothing beyond
+those examples. Judge the summary by the examples it introduces, not as a separate claim.
+
+**A skill put in the wrong experience** (owner, 2026-10-29). When a sentence places a skill, tool
+or result inside one experience (by naming it, or because the sentence sits in a passage about
+that experience), check **that experience's entry**. If only a different entry backs it, the
+claim is a `stretch`, even though the profile has the skill. Read across sentences: a paragraph
+that tells an internship and then says "I tested my cloud system for failures" puts that testing
+in the internship, unless the letter says which project it was.
+
 **Stretch or fabricated?** Ask whether some entry describes the claim's core fact. If one does
 and the letter inflates it, it is a stretch. If none does, it is fabricated. If you can't decide,
 say so in `why` and choose `stretch`.
@@ -157,6 +186,8 @@ words; for an N, give the reason in one line (and quote the failing words if the
 | D2a | Does the first paragraph state the candidate's strongest evidence for the job (the best-backed headline items), so that a reader who stops after it knows why they fit? |
 | D2b | Does every body paragraph tie its evidence to a duty or requirement named in the ad? (Evidence listed without saying how it applies to this job's work is a N.) |
 | D2c | Are the sentences that connect evidence to the job specific to it, rather than a formula that could join any experience to any job? |
+| D2d | Do the experiences in each body paragraph connect? Two or three experiences in one paragraph are fine when they are well aligned to the same point: they answer the same requirement, or one builds on the other. **Test:** state the paragraph's point in one sentence; every experience in the paragraph must support that sentence. Unrelated experiences put side by side, or experiences that don't serve one point, is a N. Name the paragraph and its experiences. |
+| D2e | Is each experience told in one place? Going back to an experience in a later paragraph, after a different one, is a N (the reader has to piece it together). Name the experience and the paragraphs it is split across. |
 | **D3 Employer-specific** | |
 | D3a | Is at least one fact from the ad about this employer, team, product, project, program or platform used meaningfully, tied to why the candidate wants the role or how their experience applies? The role title, the company name, the contract length, generic industry phrases ("a leader in the field") and a restated requirement don't count. |
 | D3b | **Swap test:** pick the most employer-specific sentence. If you swap in another employer advertising the same title and change only the name, does the sentence stop fitting? (Y = it stops fitting.) |
@@ -198,10 +229,14 @@ to the ad's work, no untrue claims, and a voice that reads like a person, in 250
 ### 7.2 How to grade it
 
 List the edits you'd make to turn the letter into one the candidate would be happy to send
-(`edits`), each with the number of sentences it touches. Grade from that list, using the scale.
+(`edits`), each with the number of sentences it touches. Then sort the problems into the tiers
+below: the tiers set the grade, and the scale (§7.1) says what each grade means to the candidate.
 These problems always need an edit (v1's "not sendable as is" triggers, kept):
 
-- a `must_cover` row not addressed, or addressed with weaker evidence when the row holds stronger;
+- a `must_cover` row not addressed, or addressed with weaker evidence when the row holds stronger
+  (stronger by relevance first, §4.2);
+- a body paragraph whose experiences don't connect (D2d N), or an experience split across
+  paragraphs (D2e N): regroup them (weighed in tier 3 below);
 - any `stretch`, `fabricated` or `employer_fact_not_in_ad` claim;
 - D3a or D3b is N (nothing about this employer);
 - over 340 words;
@@ -213,9 +248,35 @@ These problems always need an edit (v1's "not sendable as is" triggers, kept):
 - three or more machine-written tells;
 - more than three US spellings.
 
-Count each one at the edit it really takes: one stretched sentence fixed in place is 1 sentence;
-a missing employer reason usually needs a new sentence or two; a paragraph that recites the
-profile without applying it needs that paragraph reworked (a 2).
+Count each one at the edit it really takes: a missing employer reason usually needs a new
+sentence or two; a paragraph that recites the profile without applying it needs that paragraph
+reworked. An untrue claim is never a one-sentence fix (below).
+
+**How the candidate weighs the problems** (owner, 2026-10-29). The problems fall into three
+tiers, from most to least serious. **The tiers add up:** start at 4 and take off one grade for
+each tier the letter hits (a `fabricated` claim takes two). Several problems in one tier still
+cost that tier's grade only once.
+
+1. **An untrue claim** (any `stretch`, `fabricated` or `employer_fact_not_in_ad`). The most
+   serious. It is never a quick fix: the claim has to come out and the passage be rebuilt around
+   what is true. A `stretch` or an `employer_fact_not_in_ad` (something real, enlarged or
+   misplaced) costs **one grade**; a `fabricated` claim (something that never happened: an
+   activity, result or job with nothing in the profile behind it) costs **two**.
+2. **A missed important requirement, or a weak example** (`missed_important`, `weak_example`).
+   Serious: **one grade**. A wrong example (it doesn't show what it is offered for) is worse
+   than a weaker one (it shows it, from a lower rung of §4.2): say which in your reason, and
+   weigh it when choosing between a 2 and a 1.
+3. **Small problems:** generic, stock or machine-sounding, no personal reason, too long
+   (`generic`, `sounds_ai`, `no_personal_reason`, `too_long`), and **experiences mixed up between
+   paragraphs** (D2d or D2e N: the internship, then a project, then back to the internship).
+   They are fixed a sentence or a regrouping at a time: **one grade** in total, however many
+   apply, even when they touch more than the two sentences §7.1 allows a 3.
+
+So: no problems is a 4; problems from one tier make a 3; from two tiers, a 2.
+
+**The floor is 2.** Problems from all three tiers, or a fabricated claim with more, still make a
+2, unless fixing them means rewriting most of the letter (the problems run through every
+paragraph, or the reader can't follow which experience shows what). Only then is it a 1.
 
 ### 7.3 The reasons ("why not a 4?")
 
@@ -226,7 +287,7 @@ all of them unticked for a 4.
 |---|---|---|
 | `generic` | it would fit any company advertising this title | D3a/D3b N, D2b N, D7a N |
 | `missed_important` | something important from the ad is missing | a `must_cover` row, or an essential or important supported row, not addressed |
-| `weak_example` | a weak or wrong example is used where a better one exists | D2a N, D5a N, weaker evidence used than the row holds |
+| `weak_example` | a weak or wrong example is used where a better one exists: a **wrong** example doesn't show what it is offered for; a **weaker** one shows it, but a higher rung of §4.2 in the profile shows the same point. Judge **every point the letter makes**, including points that answer no row or a gap row. A weak example means the **main** example for a point is the weaker one; a thin weaker line added **after** the best example for the same point is not one: it is a sentence to cut, a small problem (tier 3) | D2a N, D5a N, weaker evidence used than the row holds (relevance first, §4.2) |
 | `sounds_ai` | it overuses stock or machine-sounding phrasing: formula sentences, stock enthusiasm, buzzwords, the same lines reused | D6a, D6b, D6c or D2c N |
 | `no_personal_reason` | no reason for applying is tied to the candidate's own experience, study or goals (not whether the candidate wants the job) | D4b N |
 | `too_long` | too long or waffly | D6f N, or filler that adds no fact |
@@ -252,8 +313,8 @@ reason for each pick.
 
 ## 9. The answer file (JSON)
 
-Write valid JSON with a tool to the answer path the packet names, and check it parses. The file
-holds the one letter you graded (code later collects every letter's file into one):
+Answer with valid JSON in this shape; code saves it. It holds the one letter you graded (code
+later collects every letter's file into one):
 
 ```json
 {
@@ -304,7 +365,7 @@ Field rules:
   `related` and `claimed`, which quote the words.
 - `claims`: every claim, in letter order. `about` is `candidate` or `employer`. `source` holds
   profile pointers, or for employer facts the ad's words. `requirement` is a row id or null.
-- `checklist`: all 19 ids, D2a to D7a.
+- `checklist`: all 21 ids, D2a to D7a.
 - `send_readiness.grade` is 1, 2, 3 or 4.
 - `ticks`: all six keys, true or false; all false when the grade is 4.
 - `checklist_doubts`: rows you think the answer key got wrong, as `{"id", "why"}`, where `why`
@@ -320,5 +381,16 @@ A pairwise answer file holds the one pair you judged: `{"standard": "v2", "pairs
 
 ## 10. Calibration examples
 
-Added in stage 8 from the calibration half of the owner's grades (their grade, ticks and notes
-on real letters, as worked examples). Until then this standard has none, and it is not frozen.
+The worked examples are the candidate's own grades on other letters for other jobs: the letter,
+the job's checklist rows, their send-readiness, untrue answer, reason ticks and note, and a worked
+reading of why, in this standard's terms. They come after this standard in your message. They
+quote real letters, so they live in a separate file that is never committed
+(`evals/work/v2/calibration/examples.md`); only letters from the calibration half are ever used,
+and a letter is never shown its own example.
+
+Use them to learn how strictly the candidate reads the scale (§7.1) and the reasons (§7.3): what a
+2 looks like next to a 3, which example choices they call weak, which paragraphs they call
+confused. Never compare your letter with them, and never let one raise or lower your grade
+because your letter resembles it: grade your letter by this standard, as §3 says.
+
+This standard is frozen as judge v1 once stage 8's calibration is done.

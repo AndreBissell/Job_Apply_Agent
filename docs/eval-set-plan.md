@@ -28,6 +28,8 @@ and after changes, at known cost. The dev set is tuned on; the test set is held 
    send the same prompt from one builder. Calibrate on `claude-cli`; then run `vertex` once on
    the check half and compare both with the owner's grades. Only if they agree equally well
    are they interchangeable. Every judge output and report names the backend that produced it.
+   **Approach agreed 2026-10-29 (Decision log): split, derived ticks, two new rules, probes,
+   pass bar.**
 9. Baseline scores. Main metric: the **relevant** score (Would apply = Yes ads); overall is
    secondary.
 
@@ -377,6 +379,280 @@ stage 3.
     - The not-clean flag, G1 and C7 don't track the owner's main complaints (example choice and
       order, motivation); that gap is what the stage-8 judge is for.
   - Next: stage 8 (judge calibration, backends per the entry above), with the owner's go-ahead.
+- 2026-10-29: **stage 8 approach agreed** (owner; no code yet, no LLM calls). Why it differs from
+  docs/letter-metrics-plan.md §6: the stage-7 grades bunch at 2 (1/10/5/1 for grades 1-4), so a
+  judge that answers 2 every time already meets "within ±1 on all but one" (16/17); and the 4, the
+  1 and the one untrue letter are single letters, so neither half can test them.
+  - **Split:** seeded, stratified by owner grade then relevance (not by scenario). `seek-94904560`
+    (the 4), `seek-95110025` (the 1) and `seek-95085104` (untrue) are forced into calibration,
+    where they are useful as examples: about 8 calibration / 9 check, with about 3 threes in the
+    check half so the 2-vs-3 boundary is tested. Code refuses a check-half letter as an example.
+    Made before any judge output exists.
+  - **Derived ticks:** the judge still answers all six ticks (it makes it think them through), but
+    the scorecard takes `missed_important` from its row answers (a backed essential or important
+    row with `addressed` N), `no_personal_reason` = D4b N, and `sounds_ai` = C5b over
+    `STOCK_LIMIT`. The judge's own sounds_ai is reported as an alarm, never calibrated on: when it
+    hears AI on letters the list passes, the list needs new phrases (writer v3 already swapped old
+    formulas for new ones once). Why: a tick can't contradict the judge's own row answers; missed
+    rows are compared row by row (about 100+ rows, not 9 ticks); one definition, in code, as D6f's
+    word count already is. Code-only motivation (C5c) was rejected: it can't tell a skill offered
+    for the job from a motive (a profile name in 10/17 letters, 6 with a personal reason).
+  - **Two new rules in the standard** (owner's notes; both shown by calibration-half letters):
+    - *Experiences connect* (5 letters): D2d "do the experiences in each body paragraph connect?"
+      (two are fine when they make one point, the same requirement or one building on the other;
+      test: one sentence states the paragraph's point and every experience in it supports it;
+      unrelated experiences side by side, or three or more that don't serve one point, = N) and
+      D2e "is each experience told in one place?" (going back to one in a later paragraph after
+      another = N). Added to §7.2's must-edit list as a paragraph rework (a 2). In D2, the custom
+      group. Checklist 19 -> 21 items.
+    - *Relevance before kind* (5 letters: a non-technical job used where the internship backs the
+      same row): the strongest evidence is the most relevant to the row first, then the kind
+      (technical work for a technical row beats non-technical paid work). M3's kind order can't see
+      this; noted as its limit.
+    Both are written into the standard at step 4 below.
+  - **Calibration examples** go in a gitignored file under `evals/work/v2/calibration/` (they quote
+    real letters; the repo is public), added to the prompt by the builder, with its hash in the
+    judge version. Only generic rules go in the committed standard. Iterate with ONE grader on the
+    calibration half, leave-one-out (a letter is never its own example); the check half is measured
+    once with the full panel (A + B + adjudicator), and a second time only for a logged change
+    justified on the calibration half.
+  - **Probes:** *length* = about 30 words of filler on the 3 shortest check letters, staying ≤ 340
+    (§6.6's +60 pushed every letter, 296-337 words, over the cap, so it tested the cap, not length
+    bias); *untrue* = 3-4 kinds of claim planted in copies of check letters, including a skill put
+    inside an experience that didn't use it (the one check_claims passed).
+  - **Pass bar** (fixed now, before any check-half run; 9 check letters, so counts):
+    send-readiness beats always-2 on exact matches, agrees on ready / not ready (3+ vs ≤ 2) on at
+    least 7 of 9, and is within ±1 on at least 8 of 9; every planted claim caught and every
+    judge-only untrue flag reviewed by the owner; at least 80% of the owner's missed rows also
+    missed by the judge; D4b agrees on at least 7 of 9; no padded copy scores higher than its
+    original. `generic`, `weak_example` and `too_long` are reported, not gated: with base rates
+    around 60%, 9 letters can't separate a judge from chance. (`too_long` isn't a word count: Y on
+    7 of the 11 letters graded 1-2, on none of the 6 graded 3+, all letters 296-337 words.)
+  - **claude-cli isolation:** `--bare` needs an API key (no subscription login), so isolation comes
+    from `--system-prompt`, `--tools ""`, `--setting-sources ""`, `--strict-mcp-config`,
+    `--disable-slash-commands`, `--no-session-persistence`, `--json-schema` (the §9 shape), a full
+    model id (not the `opus` alias) and a pinned `--effort`, run from an empty folder outside the
+    repo. One probe call must show that no CLAUDE.md, memory or hooks reach it before it is used.
+  - **Steps, each with the owner's go-ahead:** 1 `v2-run` backend + isolation probe; 2 `v2-split`;
+    3 derived ticks + agreement report (always-2 baseline, ready / not ready, row-level misses);
+    4 examples + the two rules; 5 calibration iterations; 6 probes; 7 check half; 8 freeze judge
+    v1 (model id, effort, CLI version, standard and examples hashes); 9 `vertex` once on the check
+    half (optional; test call and the $5 daily cap decided then); 10 judge all 17 dev letters.
+- 2026-10-29: **stage 8 step 1 done: `grading_panel.py v2-run`** (backend `claude-cli`; procedure
+  in evals/grading-panel.md, tests in tests/test_grading_panel_v2.py with a fake backend).
+  - **Isolation probe** (3 tiny calls, an empty folder, a canary question about RTK, which only
+    the owner's global CLAUDE.md mentions): with the flags above the judge had no tools and knew
+    nothing of CLAUDE.md; a control call without `--setting-sources ""` quoted CLAUDE.md and
+    RTK.md word for word, so the probe can see a leak. Two things still reach it: the account's
+    email and the working folder's path; the runner uses a neutral, empty `%TEMP%\letter-judge`.
+    Claude Code also makes a small side call on Haiku; the runner refuses an answer the judge
+    model didn't give.
+  - **The CLI on PATH (npm, 2.1.128) is too old** for `claude-opus-5-5` (the API asks for 2.1.280+)
+    and is a `.cmd` shim, which the runner refuses (cmd.exe mangles the schema's quotes). Set
+    `JUDGE_CLAUDE_BIN` to a newer `claude.exe` (the VS Code extension bundles 2.1.312), or update
+    the npm install.
+  - **Built:** `v2-run <tag> [--stage grade|adjudicate]`, one fresh `claude -p` per answer file,
+    prompt on stdin, `--json-schema` for §9's shape (the answer comes back as `structured_output`),
+    then `validate()`; a wrongly shaped answer is kept as `<lid>.rejected.json` and a fresh judge
+    tries again (2 in all). Every answer file records the judge version (backend, model, effort,
+    CLI version, standard and instructions hashes); `v2-merge` refuses a panel that mixes versions,
+    and the merged file, the agreement report and `letter_lab.py report` name it. The standard's
+    §9 now says "answer with valid JSON", not "write it with a tool". Pairs are not in `v2-run` yet
+    (not needed in stage 8; add before the first comparison).
+  - **One real run** on one calibration-half letter (`seek-94904560`, grader A only, a throwaway
+    panel, deleted after): valid on the first try, 68 s, $0.28 notional (Claude Code's own figure;
+    on the subscription it is usage, not a bill). At that rate the full 17-letter panel is about
+    $10 notional and the check half on `vertex` about $6 rather than $3-4.
+  - Next: step 2, `v2-split`, with the owner's go-ahead.
+- 2026-10-29: **stage 8 steps 2-4 built; step 5 started** (owner: go as far as possible before
+  feedback is needed). Procedure in evals/grading-panel.md ("Calibrating the judge").
+  - **Step 2, the halves** (`v2-split dev-agent-v1`, seed 20261029, written once to
+    `evals/work/v2/calibration/split.json`): calibration 8 = `seek-94904560` (the 4),
+    `seek-95110025` (the 1), `seek-95085104` (untrue), `seek-95100426`, `seek-95140202`,
+    `seek-95191929`, `seek-95220494`, `seek-95260505`; check 9 = `seek-94890841`, `seek-94932262`,
+    `seek-95084704`, `seek-95158567`, `seek-95205206`, `seek-95219353`, `seek-95220951`,
+    `seek-95256463`, `seek-95364016` (six 2s, three 3s; 5 relevant).
+  - **Step 3**: `v2-merge` writes the derived ticks (`missed_important` from the rows,
+    `no_personal_reason` from D4b; the judge's own six kept as `judge_ticks`; derived ticks are no
+    longer cells to adjudicate). A missable row = supported or partial, essential or important,
+    headline or mention (none of the owner's 15 missed rows is `implied`). `v2-agreement` scores
+    the pass bar (scaled from 9 letters), reads the owner's missed rows from the "Missed R_" notes,
+    and marks each tick derived / alarm / reported. `--half` on pack, run and agreement; one-grader
+    check and merge (`--graders A`).
+  - **Step 4**: D2d and D2e in the standard (§6, §7.2; checklist 21 items) and the relevance rule
+    (§4.2, §7.3); §10 now says where the examples live. `v2-examples` drafted
+    `calibration/examples.md` (the 8 calibration letters, their rows, the owner's grade, ticks
+    without sounds_ai, and note); Claude wrote the 8 worked readings. **Not yet confirmed by the
+    owner.** `v2-run` adds them (leave-one-out) and records their hash.
+  - **Step 5, two one-grader runs on the calibration half** (tags `cal-bare`, `cal-ex1`; the
+    second with the unconfirmed readings):
+
+    | Measure (8 letters) | Bare standard | With the draft examples | Bar |
+    |---|---|---|---|
+    | Exact (always-2 gets 4) | 4 | 4 | more than 4 |
+    | Ready / not ready | 6 | 5 | at least 6 |
+    | Within ±1 | 8 | 7 | at least 7 |
+    | Untrue flag caught (`seek-95085104`) | no | no | yes |
+    | D4b | 7 | 7 | at least 6 |
+    | Missed rows | 4/5 | 4/5 | 80% |
+    | generic / weak_example / too_long agree | 3 / 3 / 4 | 6 / 2 / 3 | reported |
+    | Grades given (1/2/3/4) | 0/7/1/0 | 0/4/4/0 | owner 1/4/2/1 |
+
+    Bare, the judge grades almost every letter 2. With the examples it moves up and ticks
+    `generic` like the owner, but it never gives a 1 or a 4, and it never flags the internship
+    AWS claim. Leave-one-out means the only untrue example is never shown to the letter it is
+    about, so only the planted claims (step 6) can test that. D2e caught both letters the owner
+    called mixed; D2d said N on `seek-95100426`, which the owner didn't fault. One grader, one
+    sample each: differences of a letter or two may be noise.
+  - Waiting on the owner: confirm the readings, rule on one judge-only stretch flag, and decide
+    whether §5 gets a rule for a skill placed in the wrong experience.
+- 2026-10-29: **owner's answers, and calibration run `cal-ex2`** (A + B, confirmed examples).
+  - Readings confirmed. On `seek-95110025` the owner did no help-desk work at either job: the
+    reading now says so (both jobs are related at most). The answer key rates that row (R2)
+    partial, with both jobs as evidence: a row for the checklist recheck, not changed now (the key
+    is frozen). The judge-only stretch on `seek-95110025` ("evaluated applications throughout their
+    development") is accepted: recorded in `calibration/accepted-untrue.json`, which
+    `v2-agreement` always reads, and in that example's Untrue line. The blind grades file is left
+    as graded (the split is pinned to its hash).
+  - §5 gains "a skill put in the wrong experience" (check that experience's entry, read across
+    sentences).
+  - `cal-ex2` stopped on the subscription's 5-hour usage limit after 15 of 16 judges (grader A on
+    `seek-95220494` missing). `v2-run` now stops at a usage limit instead of retrying. Grader B
+    alone (preview panel `cal-ex2-b`): exact 4/8 (always-2 4), ready 5/8, within ±1 7/8, untrue
+    caught 1 of 2 (the accepted stretch; the internship AWS claim still missed), D4b 6/8. B
+    applied the new rule once more, on `seek-95140202` (a judge-only flag for the owner).
+  - **The gaps are systematic, not noise:** A and B gave the same grade on every letter both
+    answered, and three runs agree. `seek-95110025` (owner 1) and `seek-95260505` (owner 2) get a
+    3: the judge sees the mixed experiences (D2e N) but counts regrouping them as a small edit.
+    `seek-95100426` (owner 3) gets a 2: D2d N, although its two experiences make one point.
+  - Resume after the reset: `v2-run cal-ex2`, then `v2-check`, `v2-disagreements`,
+    `v2-run cal-ex2 --stage adjudicate`, `v2-merge`, `v2-agreement ... --half calibration`.
+  - Usage: a one-grader pass on the calibration half is 8 judges; a full panel there is about 24;
+    the check half with probes about 35. The judge shares the owner's subscription window with
+    their own Claude Code sessions.
+  - **Owner correction, `seek-95100426`:** `missed_important` Y -> N. R6 (integrations and
+    automations between systems) has no experience behind it that really applies, so leaving it
+    out is not a miss. Changed in both copies of grades-owner.csv (run folder and sheet S1674,
+    still identical; the split's stored hash of the file is now stale, and the split itself is
+    unaffected, since it uses only grades, untrue and relevance) and in that letter's example.
+    **The answer key now says gap too** (owner, same day: nothing in the profile fills it, and a
+    gap is never a miss). Recorded the way the 16 earlier calls were: an owner correction in
+    `reference/inputs.json` (85:R6, the API and cloud work moved to `related_evidence`), `propose`
+    (every earlier decision kept), `decide 85:R6=yes`. The key's freeze was lifted on purpose to
+    rebuild it: backup in `evals/work/v2/reference.bak-20261029/`, old manifest and files removed,
+    `build` and `verify` re-run. Only `seek-95100426.json` changed; totals partial 123 -> 122,
+    gap 98 -> 99, M2 weight base 635 -> 633. Panels packed before this hold the old row.
+  - **The owner's weighting goes in the standard** (§7.2, "How the candidate weighs the
+    problems"), so the judge reasons the way the owner grades: (1) an untrue claim must come out
+    and the passage be rebuilt: a fabricated claim costs two grades (a 2 at best), a stretch or an
+    employer fact not in the ad one grade (an otherwise perfect letter is a 3; owner, same day); (2) a missed important requirement or a weak example usually keeps a letter below 4,
+    and together, or when the fix reworks a paragraph or swaps the main example, makes it a 2;
+    (3) generic, sounds AI, no personal reason and too long cost at most one grade on their own.
+    It fits all 8 calibration grades (untrue: 2 and 1; missed or weak: 2, 2, 2; tier 3 only: 3, 3;
+    none: 4). This **reverses** 2026-10-26's "one stretched sentence fixed in place is a light
+    edit" for untrue claims; the other "not sendable" triggers are still counted by the edit they
+    take (no automatic cap).
+  - **Owner's last three calls (same day):**
+    - The judge-only flag on `seek-95140202` (AI-assisted tools, in the
+      thesis paragraph) is **rejected**: the owner uses AI-assisted development in every project,
+      and the thesis itself is AI work. Not recorded as accepted, so it counts as a judge-only flag
+      (TNR) if the judge raises it again. The frozen profile names AI-assisted tools only under the
+      internship, so the judge can't know this: after the baseline, add it to the profile (with
+      the follow-ups below).
+    - **Mixed-up experiences are a small fix** (replaces Claude's proposed "regrouping is a
+      paragraph rework"): the internship, then a project, then back to the internship would be a
+      3 if it were the letter's only problem; alongside other edits it usually makes a 2. In the
+      standard: §7.2's must-edit list now says "regroup them", and tier 3 of the weighting holds
+      mix-ups; a 1 takes problems from all three tiers. The readings for `seek-95085104`,
+      `seek-95110025` and `seek-95140202` now say why each is a 2 or a 1 without calling the
+      mix-up heavy.
+    - **D2d:** two or three experiences in one paragraph are fine when they are well aligned to
+      the same point.
+  - Built while waiting: `v2-probe` / `v2-probe-report` (step 6 tooling, with tests). The probes
+    themselves are written only once the prompt has settled, so the check-half letters they copy
+    can't steer it.
+  - **Run `cal-ex3`** (grader A only, calibration half, everything above in; ~4 min): **FAIL**.
+    Exact 4/8 (= always-2, as in every run so far), ready 6/8, ±1 8/8, untrue 1/2, D4b 6/8,
+    missed rows 3/4 (one miss fails on 4 rows). The four grade misses, by cause:
+    - detection: `seek-95110025` (owner 1, judge 2) — the accepted stretch read as "a light
+      generalisation", the retail job not seen as a weak example, the jump-around not seen (D2d/D2e Y);
+    - weighting: `seek-95260505` (2 vs 3) — miss + no personal reason judged a 3;
+      `seek-95100426` (3 vs 2) — mix-up + no personal reason + formula bridges judged a 2, as
+      the tier-3 text ("alongside other edits it usually makes it a 2") says;
+    - strictness at the top: `seek-94904560` (4 vs 3) — a repeated "I want to / bring this"
+      structure and a thin retail-job line counted as edits.
+    - The owner's own ticks predict the owner's 8 grades exactly under an additive reading:
+      start at 4, take one grade per tier hit (tier 3 counts once however many apply; fabricated
+      two), floor at 2 unless fixing means rewriting most of it (then 1). Proposed to the owner;
+      not applied.
+    - Applied: §5 stretch bullet for a generalisation from single tasks to an ongoing practice
+      (generic example; the owner accepted this kind of call on `seek-95110025`).
+    - **Owner regrade:** `seek-94904560` 4 -> 3 after seeing the judge's edits (thin retail-job and
+      student-team lines, a repeated "I want to / bring this" pattern): "definitely a 3". Both
+      grades-owner.csv copies and the worked example updated; no ticks added. All-17 mean
+      send-readiness 2.35 -> 2.29; send-ready count unchanged (a 3 is ready). The calibration half
+      now has no 4. `cal-ex3` rescored: exact 5/8 (beats always-2), still FAIL on untrue TPR 1/2 and
+      missed rows 3/4.
+    - **Owner reversal:** `seek-95110025`'s "I have evaluated applications throughout their
+      development" is NOT a stretch (it introduces the two testing examples after it). Removed from
+      accepted-untrue.json (now empty); the worked example says Untrue N and keeps the 1 for the
+      miss, the misfit retail-job example and the unfollowable mix-up. The §5 generalisation bullet
+      added above is replaced by "A summary sentence is fine". The calibration half's only owner
+      untrue flag is now `seek-95085104` (AWS work placed in the internship), which `cal-ex3`
+      caught. Rescored: everything passes except missed rows 3/4 (`seek-95140202` R6, safety).
+    - **Owner correction:** `seek-95140202` R6 ("Safety first, Quality always", key: partial) is
+      NOT a miss: the letter covers the quality half, and nothing in the profile is safety
+      experience. The key needed no change (already partial, quality backed). missed_important
+      cleared in both grades-owner.csv copies (now 9/17), grade stays 2 (the retail-job example needs
+      paragraph 4 reworked), worked example updated. Same rule as `seek-95100426`: the part the
+      profile can't back is never a miss.
+    - **`cal-ex3` rescored: PASS** on the calibration half (exact 5/8, ready 6/8, ±1 8/8, untrue
+      1/1, D4b 6/8, missed rows 3/3). Still one grader on one run, and the examples and standard
+      have changed since, so it is not yet a frozen-judge result.
+    - **Additive weighting (owner: yes).** §7.2's weighting now reads: start at 4, one grade per
+      tier hit (fabricated two; a tier counts once however many of its problems apply; mix-ups are
+      tier 3), floor 2 unless fixing means rewriting most of the letter (then 1). §7.2's "recites
+      the profile ... (a 2)" dropped; the tiers set the grade. `seek-95085104`'s reading explains
+      the floor.
+    - **Run `cal-ex4`** (A + B + adjudicator, calibration half, fresh answers, ~7 min): **PASS**.
+      Exact 5/8, ready 7/8, ±1 8/8, untrue 1/1, D4b 6/8, missed rows 3/3, kappa 0.60; A/B agree
+      on 7/8 grades. Left: `seek-95085104` 2 vs 1 and `seek-95110025` 1 vs 2 (both judges call the
+      first one's mix-up a rewrite and the second's a regroup: the reverse of the owner);
+      `seek-95191929` 2 vs 3 (the adjudicator ruled weak_example can't apply when every row is a
+      gap). weak_example agrees 3/8, and 3 of the 4 owner-only ticks are "the retail job used where it
+      shouldn't be". The rejected AI-assisted flag on `seek-95140202` recurs (TNR 6/7), as expected.
+    - **Owner's example ranking** (replaces §4.2's two-line relevance rule): first, does the
+      example show what it is offered for (if not, a *wrong* example); then (1) professional work
+      in the job's field where the skill was used, (2) uni or personal work in the same field,
+      (3) work outside the field that still shows the skill. A higher rung beats a lower one for
+      the same point. `weak_example` now judges every point the letter makes, gap rows and
+      no-row points included (the adjudicator's `seek-95191929` ruling is overturned). Both kinds
+      stay one grade (tier 2); a wrong example is the worse kind, weighed between a 2 and a 1.
+      Owner kept `seek-95191929` and `seek-95140202` at 2 (the latter would be a 3 with the
+      internship as its example); readings updated.
+    - **Run `cal-ex5`** (A + B + adjudicator, ~9 min): **PASS** again: exact 5/8, ready 6/8, ±1
+      8/8, untrue 1/1, D4b 6/8, missed rows 3/3, kappa 0.45; A/B agree 7/8. `seek-95085104` now
+      matches (2: both judges applied the floor). New misses: `seek-94904560` 3 vs 2 (the
+      adjudicator called the thin retail-job and student-team lines after the internship "weaker
+      examples", tier 2); `seek-95191929` still 2 vs 3 (both graders still reason from rows: "all
+      rows are gaps", so no weak example); `seek-95110025` 1 vs 2 as before. weak_example agrees
+      2/8 (was 3/8). Between runs about 2 letters change: the misses are near run-to-run noise.
+    - **Owner regrade:** `seek-95110025` 1 -> **2**, and too_long withdrawn (309 words is in
+      range). Its problems are two tiers (missed R5 + the help-desk example; the split internship
+      story + retelling), and the fixes are contained, so the floor of 2 holds. The calibration
+      half now has no 1. Worked example updated. Rescored (no LLM): `cal-ex4` exact 6/8 and
+      `cal-ex5` exact 6/8 (always-2 now 5/8), both PASS; cal-ex5's only misses are now
+      `seek-94904560` and `seek-95191929`.
+    - **Owner kept `seek-94904560` at 3 and `seek-95191929` at 2**, and explained both misses.
+      (a) A thin weaker line added after the best example for the same point is a sentence to cut
+      (tier 3), not `weak_example`, which means the point's main example is the weaker one
+      (§7.3). (b) The judges left 95191929's retail-job paragraph unticked because only the retail entry
+      says "changing priorities". Owner: Agile sprint work with ongoing stakeholder feedback *is*
+      adapting to changing priorities. A §4.2 rule saying so was added, then reverted the same
+      day (owner): written to flip one letter around one profile entry, it overfits, and with
+      leave-one-out a pass would only show the answer was written in. That reading lives in the
+      95191929 worked example only. (a) stays in the standard: it defines the tick. Both worked
+      examples updated.
 
 ## Follow-ups (not for this eval)
 
@@ -407,7 +683,8 @@ stage 3.
     essential the candidate is missing. The owner kept the tag, but duties in an ad's
     "accountabilities" list are not skills a candidate can bring.
   - The frozen profile undersells real skills in places (owner's comments in the sheet). Not for
-    this eval: the profile stays frozen; update it after the baseline.
+    this eval: the profile stays frozen; update it after the baseline. One more from stage 8
+    (2026-10-29): AI-assisted development is used in every project, not only the internship.
 
 - The scorer bunches on a few values (of 112 usable ads, 27 at exactly 35 and 15 at exactly 60),
   which leaves the middle bands coarse. Changing it would move every score mid-build, and the

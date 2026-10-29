@@ -646,7 +646,14 @@ not experience offered as a skill to apply (C5c `motivation` is a helper). Code 
 grading: G1 flags 4+ mentions outside the employer's name and the ad's title (14/17 pass); C4 skips
 the profile's employers, institutions and project titles (98 phrases); C7 unchanged. Stage 8 judge: two backends,
 `claude-cli` (owner's subscription, default) and `vertex`, one prompt builder, every rating names its
-backend (eval-set plan Decision log 2026-10-28). Next: stage 8, with the owner's go-ahead. Evidence behind it:
+backend (eval-set plan Decision log 2026-10-28). Stage 8 approach agreed 2026-10-29 (split by grade,
+derived ticks, D2d/D2e + relevance rule, probes, pass bar; 10 steps). Step 1 DONE: `grading_panel.py
+v2-run` (claude-cli; set JUDGE_CLAUDE_BIN to a claude.exe >= 2.1.280, npm's 2.1.128 shim is refused).
+Steps 2-4 built (split, derived ticks + pass-bar report, D2d/D2e + relevance rule, draft worked
+examples in gitignored evals/work/v2/calibration/). Step 5 DONE 2026-10-29: runs cal-bare..cal-ex5, owner
+regrades and rules (additive tiers, floor 2, example rungs, thin extra line = tier 3); cal-ex5 PASS
+6/8 exact on the rescored owner grades (eval-set plan Decision log 2026-10-29). Next: step 7 (check
+half once, full panel) then step 6 (probes, graded by the same judge), step 8 freeze. Evidence behind it:
 docs/ai-recruitment-research.md (AI screeners' biases, rated by strength; lines we never cross).
 The real profile is frozen as of 2026-10-20. Strong fit = score 85+ and
 no must-have GAP (`Requirement.needs_user`); partials are allowed (owner, 2026-10-20). Main metric:

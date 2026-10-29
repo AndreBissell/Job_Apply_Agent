@@ -105,7 +105,7 @@ the same 2:1 weighting the paper used.
 
 | Dim | Sub-questions (each Y/N) | Owner tick it maps to (§4) |
 |---|---|---|
-| D2 Applied, not recited | Does the first paragraph state the strongest matching evidence (the 6-second test)? Does every body paragraph tie its evidence to a duty or requirement named in the ad? Is the connecting sentence specific rather than a formula ("prepares me to")? | weak example, generic |
+| D2 Applied, not recited | Does the first paragraph state the strongest matching evidence (the 6-second test)? Does every body paragraph tie its evidence to a duty or requirement named in the ad? Is the connecting sentence specific rather than a formula ("prepares me to")? Do the experiences in a paragraph connect (D2d), and is each experience told in one place (D2e; both owner, 2026-10-29)? | weak example, generic; D2d/D2e: send-readiness |
 | D3 Employer-specific | Is at least one ad fact about this employer, team, product or program used meaningfully? Does it pass the swap test (the sentence stops fitting if another employer's name is swapped in)? (v1's specific_detail) | generic |
 | D4 Motivation | Is there a specific reason for wanting this role or employer, grounded in the ad, beyond generic praise (D4a)? Is it tied to the candidate's own experience, study or goals, not the ad's description of itself restated (D4b, owner 2026-10-29)? | no personal reason |
 | D5 Concrete evidence | Are there at least 2 pieces of evidence with specifics (tool, task, and scale or outcome)? Does every number come from the profile? Is at least one specific **checkable** (a named project, tool or organisation, or a number from the profile)? (research doc A3) | weak example |
@@ -390,3 +390,22 @@ theirs to judge). The owner's pick form is built with the first comparison, not 
       built with the first comparison.
   - **Excel-saved CSVs:** `grading_panel.read_owner` now reads a file with a BOM, and the blank
     sheet is written with one, so Excel shows the text correctly.
+- 2026-10-29: **§6 changed for stage 8** (owner; full reasoning in docs/eval-set-plan.md's
+  Decision log, same date):
+  - §6.3: the halves are stratified by owner grade then relevance, not scenario; the 4, the 1 and
+    the untrue letter go to calibration. Examples live in a gitignored file, not §10 of the
+    committed standard.
+  - §6.4: the pass bar adds the always-2 baseline, ready / not ready (3+ vs ≤ 2) agreement and
+    row-level missed rows; untrue is tested with planted claims; `generic`, `weak_example` and
+    `too_long` are reported, not gated.
+  - §6.6: the length probe pads about 30 words and stays ≤ 340 (+60 went over the cap).
+  - §6.7: the judges run through `grading_panel.py v2-run` (claude-cli or vertex), not subagents.
+  - Ticks: `missed_important` comes from the judge's row answers, `no_personal_reason` from D4b,
+    `sounds_ai` from C5b; the judge's own `sounds_ai` is an alarm only.
+  - Layer 2 gains D2d (the experiences in a paragraph connect) and D2e (each experience told in
+    one place), both custom; evidence strength puts relevance to the row before kind, which M3
+    can't see (its known limit).
+  - The predicted send-readiness follows the owner's weighting of the reasons (standard §7.2):
+    untrue first (fabricated: two grades, a 2 at best; stretch or employer fact: one grade), then missed / weak example, then generic, sounds AI,
+    no personal reason and too long (at most one grade on their own). Reverses 2026-10-26's
+    "an untrue claim fixed in one sentence is a light edit".

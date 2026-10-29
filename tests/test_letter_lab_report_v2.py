@@ -159,7 +159,7 @@ def test_the_judge_file_is_picked_or_must_be_named(work):
     with pytest.raises(SystemExit, match="--judge t1 / t2"):
         report()
     assert report(judge="t2") == 0
-    assert "Judge: `t2` (0 letters)" in outputs(work)[0]
+    assert "Judge: `t2` (0 letters; none)" in outputs(work)[0]
     with pytest.raises(SystemExit, match="No judge-t9.json"):
         report(judge="t9")
 

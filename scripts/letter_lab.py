@@ -1944,7 +1944,7 @@ def _report_v2(args) -> int:
         f"# Letter eval (v2): {meta['run_id']}", "",
         f"Engine `{meta.get('engine')}`, strong model `{meta.get('strong_model')}`, run {meta.get('created_at')}. "
         + (f"Split `{meta['split']}`. " if meta.get("split") else "")
-        + f"{len(rows)} letters ({failed} failed). Judge: " + (f"`{tag}` ({len(judge)} letters)" if tag else "none")
+        + f"{len(rows)} letters ({failed} failed). Judge: " + (f"`{tag}` ({len(judge)} letters; {gp.panel_judge(judge)})" if tag else "none")
         + f". Owner grades: {sum(x['grade_by'] == 'owner' for x in rows)}. Metrics: docs/letter-metrics-plan.md §3.",
         "", "Relevant = the owner would apply (Would apply = Y). Send-readiness is the owner's grade where there "
         "is one, else the judge's. Rates are shares of letters; M1, honest coverage and the checklist are "

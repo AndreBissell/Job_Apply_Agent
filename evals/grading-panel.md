@@ -87,7 +87,17 @@ next one. That gives each letter the same judge, from the same starting point.
 - There are two graders, A and B, so a letter gets 2 fresh judges.
 - A letter where they split gets 1 fresh adjudicator.
 - Pairwise A/B picks get 1 fresh judge per pair, in each order.
-- The judges run as Claude Code subagents, so there is no Vertex spend.
+- The judges run through `v2-run` (2026-10-29), never as Claude Code subagents: a subagent has the
+  repo, and `scripts/letter_metrics.py` holds the owner's sounds_ai list, which a judge must not
+  see. Backend `claude-cli` (the default, the owner's subscription, no Vertex spend) runs one
+  headless `claude -p` per answer file with no tools, no setting sources (no CLAUDE.md, hooks or
+  memory), no MCP servers, no skills and no saved session, from an empty folder
+  (`%TEMP%\letter-judge`), with the prompt on stdin. The probe on 2026-10-29 showed only the
+  account's email and that folder's path still reach it. `vertex` is not built yet.
+- One prompt builder (`judge_prompt`) sends every backend the same text: the standard, the packet
+  from its profile block on, then the task (`JUDGE_SYSTEM` / `JUDGE_TASKS` in the script). Every
+  answer file records the judge version: backend, model, effort, CLI version, and hashes of the
+  standard and of the instructions.
 
 Everything under `evals/panels/` and `evals/work/` is gitignored. It holds the real profile,
 the real ads and the letters.
@@ -106,12 +116,17 @@ the real ads and the letters.
    - the key in `key/letters.json`. Judges are never pointed at the key.
 
    Letter ids and job numbers are shuffled, and no packet names its run. A used tag is refused.
-3. **Grade.** For every id in `index.txt`, start two fresh subagents, grader A and grader B,
-   each with the grader prompt below and that one packet. Never give one subagent a second
-   packet. A dev run of 17 letters takes 34 judges. Running them in parallel batches is fine.
+3. **Grade.**
+   `python scripts/grading_panel.py v2-run <tag> [--graders A B] [--jobs 3] [--only KEY ...]`
+   gives every packet in `index.txt` two fresh judges, grader A and grader B, and writes
+   `answers/<A|B>/<lid>.json`. A dev run of 17 letters takes 34 judges. Set `JUDGE_CLAUDE_BIN`
+   to a `claude.exe` new enough for the judge model (the VS Code extension bundles one; npm's
+   `claude.cmd` shim is refused, because cmd.exe mangles the JSON schema's quotes). An answer in
+   the wrong shape is kept as `<lid>.rejected.json` and a fresh judge tries again (2 in all);
+   running the command again redoes only what is missing, and `--redo` replaces answers.
 4. **Check.** `python scripts/grading_panel.py v2-check <tag>` names every answer that is
-   missing or has the wrong shape. Re-run each one it names with a new fresh judge. It also
-   lists quotes that aren't in the letter. Code doesn't credit those (step 7).
+   missing or has the wrong shape; run `v2-run` again for them. It also lists quotes that
+   aren't in the letter. Code doesn't credit those (step 7).
 5. **Disagreements.** `python scripts/grading_panel.py v2-disagreements <tag>` writes
    `disagreements/<lid>.json` for each letter where A and B split, and prints A/B agreement
    per group. A cell is one answer that can split:
@@ -120,10 +135,12 @@ the real ads and the letters.
    - each D question;
    - each requirement row;
    - each tick.
-6. **Adjudicate.** Give each disagreements file to a fresh subagent with the adjudicator
-   prompt. It writes `adjudication/<lid>.json`.
+6. **Adjudicate.** `python scripts/grading_panel.py v2-run <tag> --stage adjudicate` gives each
+   disagreements file a fresh adjudicator, which writes `adjudication/<lid>.json` with a ruling
+   for every split cell.
 7. **Merge.** `python scripts/grading_panel.py v2-merge <tag>` refuses while any split cell
-   has no ruling. When every cell has one, it:
+   has no ruling, or while the panel's answers come from more than one judge version. When
+   every cell has one, it:
    - takes agreed cells from A and split cells from the rulings;
    - checks every quote again: an addressed row whose quote isn't in the letter becomes N, and
      a claim whose quote isn't there is dropped;
@@ -154,7 +171,50 @@ the real ads and the letters.
    An ad is won only when both orders pick the same letter. A pick that follows the position
    is a tie.
 
-## v2 grader prompt (one packet; replace `<X>`, `<tag>`, `<lid>`)
+## Calibrating the judge (stage 8; eval-set plan Decision log 2026-10-29)
+
+1. **Halves, once.** `python scripts/grading_panel.py v2-split <run>` splits the owner's graded
+   letters into `evals/work/v2/calibration/split.json` (gitignored): a letter carrying a label no
+   other letter has (a grade given once, the only untrue Y) goes to calibration; the rest are
+   stratified by grade, then relevance, 9 to the check half. It is never redrawn.
+   `v2-pack`, `v2-run` and `v2-agreement` take `--half calibration|check`.
+2. **Worked examples.** `v2-examples` drafts `calibration/examples.md` from the calibration half
+   (each letter, its checklist rows, the owner's grade, ticks and note; never sounds_ai, the
+   owner's count rule). The worked readings are written by hand and confirmed by the owner.
+   `v2-run` adds the examples to every prompt (after the standard, before the packet), leaves out
+   the letter's own (leave-one-out), refuses the file while a reading is unwritten or if it holds
+   a check-half letter, and records its hash in the judge version. `--no-examples` runs the
+   standard alone.
+3. **Iterate on the calibration half** with one grader: `v2-run <tag> --graders A`, then
+   `v2-merge <tag> --graders A` (nothing to adjudicate) and
+   `v2-agreement <tag> <run> --half calibration`. Change the prompt only from what the
+   calibration half shows.
+4. **Measure the check half once** with the full panel (A + B + adjudicator), `--half check`.
+   `v2-agreement` scores the pass bar (exact against always-2, ready / not ready, within ±1,
+   untrue, missed rows row by row, D4b) and marks the ticks: missed_important and
+   no_personal_reason are derived by code from the rows and D4b, sounds_ai is an alarm (the
+   judge's ear against the owner's count rule), the rest are reported, not gated. A judge-only
+   untrue flag the owner accepts goes in `calibration/accepted-untrue.json` (`{key: claim}`),
+   which every later `v2-agreement` reads.
+5. **Probes.** `v2-probe <name> <run> --spec probes.json` writes a probe run (a run folder) of
+   copies of the run's letters, each with text inserted after an exact anchor sentence:
+   `pad` (filler; refused if the copy goes over the word cap, which would test the cap instead)
+   or `plant` (an untrue claim). Pack and judge it like any run, then
+   `v2-probe-report <tag> <name> --original <tag of the originals>`: a padded copy must grade no
+   higher than its original, and every plant must be labelled untrue. Both panels must be the
+   same judge version.
+
+`v2-run` stops when the subscription's usage limit is hit; run the same command after the reset
+and it carries on from the answers already saved.
+
+## v2 grader and adjudicator prompts (superseded 2026-10-29)
+
+The prompts the judges get now live in `scripts/grading_panel.py` (`JUDGE_SYSTEM`,
+`JUDGE_TASKS`), worded for a judge that has no files. The two below are the subagent versions,
+kept as a record. Pairs still use the pair-judge prompt below: add pairs to `v2-run` before the
+first comparison, so no pair judge gets the repo either.
+
+### v2 grader prompt (one packet; replace `<X>`, `<tag>`, `<lid>`)
 
 > You are grader `<X>`, one fresh judge for ONE cover letter. Accuracy and consistency matter
 > more than speed. Read `evals/grading-standard-v2.md` in full and apply it exactly. Then read
@@ -172,7 +232,7 @@ the real ads and the letters.
 > Write `evals/panels/<tag>/answers/<X>/<lid>.json` in the §9 shape with a tool, and check
 > that it parses. Reply with one line: the grade, the number of untrue claims and any doubt.
 
-## v2 adjudicator prompt (one letter; replace `<tag>`, `<lid>`)
+### v2 adjudicator prompt (one letter; replace `<tag>`, `<lid>`)
 
 > You are the adjudicator for ONE cover letter. Two judges (A and B) applied
 > `evals/grading-standard-v2.md` to it and split on the cells in
