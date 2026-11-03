@@ -1,7 +1,7 @@
 {
  "run": "dev-agent-v1",
- "status": "FROZEN 2026-11-03: all 17 labelled, after-pass reviews done; point values not set yet",
- "scheme": "points draft: each problem is low or high; values not set yet. Fit is a separate score. Scrubbed copy of the gitignored evals/work/v2/points-draft/labels.json: no notes, no quotes.",
+ "status": "FROZEN 2026-11-03: all 17 labelled, after-pass reviews done; point values set (see the severity guide)",
+ "scheme": "points scheme: each problem is low or high; values in evals/results/v2/points-severity-guide.md. Fit is a separate score. Scrubbed copy of the gitignored evals/work/v2/points-draft/labels.json: no notes, no quotes.",
  "order": "sheet S1674",
  "letters": {
   "seek-95260505": {"gut": 8, "untrue": [], "issues": [
