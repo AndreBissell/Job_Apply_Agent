@@ -1,0 +1,112 @@
+{
+ "run": "dev-agent-v1",
+ "status": "in progress (2026-11-03): all 17 letters labelled; after-pass reviews (generic, no personal reason, backup flags, parked untrue flags) not done yet",
+ "scheme": "points draft: each problem is low or high; values not set yet. Fit is a separate score. Scrubbed copy of the gitignored evals/work/v2/points-draft/labels.json: no notes, no quotes.",
+ "order": "sheet S1674",
+ "letters": {
+  "seek-95260505": {"gut": 8, "untrue": [], "issues": [
+   {"metric": "missed_row", "row": "R3", "level": "low", "presence": "owner-s7", "severity": "code"},
+   {"metric": "missed_row", "row": "R4", "level": "high", "presence": "owner", "severity": "code"},
+   {"metric": "generic", "level": "low", "presence": "owner-s7", "severity": "owner"},
+   {"metric": "no_personal_reason", "level": "high", "presence": "owner-s7", "severity": "owner"},
+   {"metric": "too_long", "level": "low", "presence": "owner-s7", "severity": "owner"},
+   {"metric": "stock_phrasing", "level": "low", "presence": "code", "severity": "code", "hits": 10}
+  ]},
+  "seek-95205206": {"gut": 6.5, "untrue": [], "issues": [
+   {"metric": "weak_example", "level": "low", "presence": "owner-s7", "severity": "owner"},
+   {"metric": "no_personal_reason", "level": "low", "presence": "owner-s7", "severity": "owner"},
+   {"metric": "too_long", "level": "low", "presence": "owner-s7", "severity": "owner"}
+  ]},
+  "seek-95110025": {"gut": 7.75, "untrue": [], "issues": [
+   {"metric": "missed_row", "row": "R5", "level": "low", "presence": "owner-s7", "severity": "code"},
+   {"metric": "weak_example", "level": "low", "presence": "owner-s7", "severity": "owner"},
+   {"metric": "mix_up", "level": "low", "presence": "owner-s7", "severity": "owner"},
+   {"metric": "stock_phrasing", "level": "high", "presence": "code", "severity": "code", "hits": 12}
+  ]},
+  "seek-95219353": {"gut": 7.5, "untrue": [], "issues": [
+   {"metric": "missed_row", "row": "R11", "level": "low", "presence": "owner-s7", "severity": "code"},
+   {"metric": "generic", "level": "low", "presence": "owner-s7", "severity": "owner"},
+   {"metric": "no_personal_reason", "level": "low", "presence": "owner", "severity": "owner"}
+  ]},
+  "seek-95220494": {"gut": 7.8, "untrue": [], "issues": [
+   {"metric": "generic", "level": "low", "presence": "owner-s7", "severity": "owner"},
+   {"metric": "no_personal_reason", "level": "low", "presence": "owner-s7", "severity": "owner"},
+   {"metric": "stock_phrasing", "level": "high", "presence": "code", "severity": "code", "hits": 16}
+  ]},
+  "seek-95220951": {"gut": 7, "untrue": [], "issues": [
+   {"metric": "missed_row", "row": "R7", "level": "low", "presence": "owner-s7", "severity": "code"},
+   {"metric": "missed_row", "row": "R8", "level": "low", "presence": "owner-s7", "severity": "code"},
+   {"metric": "generic", "level": "low", "presence": "owner-s7", "severity": "owner"},
+   {"metric": "no_personal_reason", "level": "low", "presence": "owner-s7", "severity": "owner"},
+   {"metric": "mix_up", "level": "low", "presence": "owner-s7", "severity": "owner"},
+   {"metric": "stock_phrasing", "level": "low", "presence": "code", "severity": "code", "hits": 11}
+  ]},
+  "seek-95364016": {"gut": 8.3, "untrue": [], "issues": [
+   {"metric": "generic", "level": "low", "presence": "owner-s7", "severity": "owner"},
+   {"metric": "weak_example", "level": "low", "presence": "owner-s7", "severity": "owner"}
+  ]},
+  "seek-95256463": {"gut": 6.7, "untrue": [], "issues": [
+   {"metric": "missed_row", "row": "R4", "level": "high", "presence": "owner-s7", "severity": "code"},
+   {"metric": "weak_example", "level": "low", "presence": "owner-s7", "severity": "owner"},
+   {"metric": "mix_up", "level": "low", "presence": "owner-s7", "severity": "owner"},
+   {"metric": "no_personal_reason", "level": "low", "presence": "owner-s7", "severity": "owner"},
+   {"metric": "generic", "level": "high", "presence": "owner", "severity": "owner"},
+   {"metric": "stock_phrasing", "level": "low", "presence": "code", "severity": "code", "hits": 10}
+  ]},
+  "seek-95085104": {"gut": 5.6, "untrue": [{"label": "stretch", "level": "low", "presence": "owner-s7", "severity": "owner"}], "issues": [
+   {"metric": "missed_row", "row": "R6", "level": "low", "presence": "owner-s7", "severity": "code"},
+   {"metric": "generic", "level": "low", "presence": "owner-s7", "severity": "owner"},
+   {"metric": "no_personal_reason", "level": "low", "presence": "owner-s7", "severity": "owner"},
+   {"metric": "too_long", "level": "low", "presence": "owner-s7", "severity": "owner"},
+   {"metric": "mix_up", "level": "high", "presence": "owner-s7", "severity": "owner"},
+   {"metric": "stock_phrasing", "level": "low", "presence": "code", "severity": "code", "hits": 11}
+  ]},
+  "seek-95140202": {"gut": 7.3, "untrue": [], "issues": [
+   {"metric": "weak_example", "level": "low", "presence": "owner-s7", "severity": "owner"},
+   {"metric": "generic", "level": "high", "presence": "owner-s7", "severity": "owner"},
+   {"metric": "too_long", "level": "high", "presence": "owner-s7", "severity": "owner"},
+   {"metric": "no_personal_reason", "level": "low", "presence": "owner", "severity": "owner"},
+   {"metric": "stock_phrasing", "level": "high", "presence": "code", "severity": "code", "hits": 13}
+  ]},
+  "seek-95158567": {"gut": 7.1, "untrue": [], "issues": [
+   {"metric": "generic", "level": "low", "presence": "owner-s7", "severity": "owner"},
+   {"metric": "no_personal_reason", "level": "low", "presence": "owner", "severity": "owner"},
+   {"metric": "weak_example", "level": "low", "presence": "owner-s7", "severity": "owner"},
+   {"metric": "stock_phrasing", "level": "high", "presence": "code", "severity": "code", "hits": 12}
+  ]},
+  "seek-95100426": {"gut": 8.4, "untrue": [], "issues": [
+   {"metric": "generic", "level": "low", "presence": "owner-s7", "severity": "owner"},
+   {"metric": "no_personal_reason", "level": "low", "presence": "owner-s7", "severity": "owner"},
+   {"metric": "stock_phrasing", "level": "low", "presence": "code", "severity": "code", "hits": 11}
+  ]},
+  "seek-95084704": {"gut": 8.0, "untrue": [], "issues": [
+   {"metric": "missed_row", "row": "R5", "level": "low", "presence": "owner-s7", "severity": "code"},
+   {"metric": "missed_row", "row": "R8", "level": "low", "presence": "owner-s7", "severity": "code"},
+   {"metric": "weak_example", "level": "low", "presence": "owner-s7", "severity": "owner"},
+   {"metric": "stock_phrasing", "level": "low", "presence": "code", "severity": "code", "hits": 10}
+  ]},
+  "seek-94932262": {"gut": 8.1, "untrue": [], "issues": [
+   {"metric": "missed_row", "row": "R5", "level": "low", "presence": "owner-s7", "severity": "code"},
+   {"metric": "mix_up", "level": "low", "presence": "owner-s7", "severity": "owner"},
+   {"metric": "no_personal_reason", "level": "low", "presence": "owner-s7", "severity": "owner"},
+   {"metric": "stock_phrasing", "level": "high", "presence": "code", "severity": "code", "hits": 13}
+  ]},
+  "seek-95191929": {"gut": 7.3, "untrue": [], "issues": [
+   {"metric": "weak_example", "level": "low", "presence": "owner-s7", "severity": "owner"},
+   {"metric": "generic", "level": "high", "presence": "owner-s7", "severity": "owner"},
+   {"metric": "no_personal_reason", "level": "low", "presence": "owner-s7", "severity": "owner"},
+   {"metric": "stock_phrasing", "level": "low", "presence": "code", "severity": "code", "hits": 11}
+  ]},
+  "seek-94904560": {"gut": 6.9, "untrue": [], "issues": [
+   {"metric": "weak_example", "level": "low", "presence": "owner", "severity": "owner"},
+   {"metric": "generic", "level": "low", "presence": "owner", "severity": "owner"}
+  ]},
+  "seek-94890841": {"gut": 7.9, "untrue": [], "issues": [
+   {"metric": "missed_row", "row": "R5", "level": "high", "presence": "owner-s7", "severity": "code"},
+   {"metric": "missed_row", "row": "R11", "level": "low", "presence": "owner-s7", "severity": "code"},
+   {"metric": "generic", "level": "low", "presence": "owner-s7", "severity": "owner"},
+   {"metric": "no_personal_reason", "level": "low", "presence": "owner-s7", "severity": "owner"},
+   {"metric": "stock_phrasing", "level": "high", "presence": "code", "severity": "code", "hits": 14}
+  ]}
+ }
+}
