@@ -1,6 +1,6 @@
 {
  "run": "dev-agent-v1",
- "status": "in progress (2026-11-03): all 17 letters labelled; generic and no personal reason reviews done; backup flags and parked untrue flags not done yet",
+ "status": "all 17 labelled; after-pass reviews done (generic, no personal reason, backup flags, parked untrue flags); not frozen yet",
  "scheme": "points draft: each problem is low or high; values not set yet. Fit is a separate score. Scrubbed copy of the gitignored evals/work/v2/points-draft/labels.json: no notes, no quotes.",
  "order": "sheet S1674",
  "letters": {
@@ -13,7 +13,7 @@
    {"metric": "stock_phrasing", "level": "low", "presence": "code", "severity": "code", "hits": 10}
   ]},
   "seek-95205206": {"gut": 6.5, "untrue": [], "issues": [
-   {"metric": "weak_example", "level": "low", "presence": "owner-s7", "severity": "owner"},
+   {"metric": "weak_example", "level": "high", "presence": "claude-flag", "severity": "owner"},
    {"metric": "no_personal_reason", "level": "low", "presence": "owner-s7", "severity": "owner"},
    {"metric": "too_long", "level": "low", "presence": "owner-s7", "severity": "owner"},
    {"metric": "generic", "level": "low", "presence": "claude-flag", "severity": "owner"}
@@ -60,7 +60,7 @@
    {"metric": "stock_phrasing", "level": "low", "presence": "code", "severity": "code", "hits": 11}
   ]},
   "seek-95140202": {"gut": 7.3, "untrue": [], "issues": [
-   {"metric": "weak_example", "level": "low", "presence": "owner-s7", "severity": "owner"},
+   {"metric": "weak_example", "level": "high", "presence": "claude-flag", "severity": "owner"},
    {"metric": "generic", "level": "low", "presence": "claude-flag", "severity": "owner"},
    {"metric": "too_long", "level": "high", "presence": "owner-s7", "severity": "owner"},
    {"metric": "no_personal_reason", "level": "low", "presence": "owner", "severity": "owner"},
@@ -68,7 +68,7 @@
   ]},
   "seek-95158567": {"gut": 7.1, "untrue": [], "issues": [
    {"metric": "generic", "level": "low", "presence": "owner-s7", "severity": "owner"},
-   {"metric": "weak_example", "level": "low", "presence": "owner-s7", "severity": "owner"},
+   {"metric": "weak_example", "level": "high", "presence": "claude-flag", "severity": "owner"},
    {"metric": "stock_phrasing", "level": "high", "presence": "code", "severity": "code", "hits": 12}
   ]},
   "seek-95100426": {"gut": 8.4, "untrue": [], "issues": [
@@ -89,7 +89,7 @@
    {"metric": "stock_phrasing", "level": "high", "presence": "code", "severity": "code", "hits": 13}
   ]},
   "seek-95191929": {"gut": 7.3, "untrue": [], "issues": [
-   {"metric": "weak_example", "level": "low", "presence": "owner-s7", "severity": "owner"},
+   {"metric": "weak_example", "level": "high", "presence": "claude-flag", "severity": "owner"},
    {"metric": "generic", "level": "high", "presence": "owner-s7", "severity": "owner"},
    {"metric": "no_personal_reason", "level": "low", "presence": "owner-s7", "severity": "owner"},
    {"metric": "stock_phrasing", "level": "low", "presence": "code", "severity": "code", "hits": 11}
