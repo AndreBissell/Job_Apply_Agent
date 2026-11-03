@@ -653,6 +653,52 @@ stage 3.
       leave-one-out a pass would only show the answer was written in. That reading lives in the
       95191929 worked example only. (a) stays in the standard: it defines the tick. Both worked
       examples updated.
+- 2026-10-29: **stage 8 step 7: the check half, measured once (panel `check-v1`): FAIL.** Full
+  panel (A + B + 8 adjudicators), judge claude-cli `claude-opus-5-5`, effort high, CLI 2.1.312,
+  standard `375a2d5b`, instructions `fa815f03`, examples `eb8db6c2` (the final v1 text: §7.3's
+  thin-line rule is in). Every answer valid first time; A/B agree on 8/9 grades.
+
+  | Measure (9 letters) | Result | Bar | |
+  |---|---|---|---|
+  | Exact | 3/9 | more than always-2 (6/9) | fail |
+  | Ready / not ready | 3/9 | at least 7 | fail |
+  | Within ±1 | 9/9 | at least 8 | pass |
+  | Untrue TPR | 0/0 (owner flagged none) | all | - |
+  | D4b | 8/9 | at least 7 | pass |
+  | Missed rows | 4/10 | 80% | fail |
+  | Untrue TNR | 6/9 (3 judge-only flags to review) | reviewed | |
+
+  Grades (owner vs judge): 2 vs 3 on `seek-94890841`, `seek-94932262`, `seek-95084704`,
+  `seek-95220951`; 3 vs 2 on `seek-95256463`, `seek-95364016`; the other 3 agree. Ticks agree:
+  generic 2/9, weak_example 4/9 (the judge ticked it on none; the owner on 5), too_long 6/9,
+  sounds_ai 2/9 (alarm). Causes, from the answers (nothing changed):
+  - **The judge's grades count only `must_cover` misses** ("every must-cover row is addressed, so
+    only tier 3"), although §7.3 defines missed_important as a must-cover OR an essential or
+    important backed row. On `seek-94890841` and `seek-95084704` its own rows say an important
+    row is missed (the derived tick is Y), yet it grades 3.
+  - **Partial rows are addressed too easily**: 6 of the owner's 10 missed rows (all but one
+    important + partial) were counted addressed on a loosely related quote (cloud databases for a
+    named-database row, a cross-functional team for international teams, failure testing for
+    resilient integrations, delegating for investigating independently).
+  - **The owner's three 3s each carry a tier-2 tick** (missed or weak), which §7.2's additive rule
+    makes a 2. On `seek-95364016` the weak tick may be the thin add-on line §7.3 now calls tier 3;
+    on `seek-95219353` (a missed listing-only row) and `seek-95256463` (a missed must-cover row
+    plus a thin add-on) the rule gives 2. So a judge applying the rule perfectly to the owner's
+    own ticks gets at most 7/9 exact here.
+  - `seek-95364016`'s 2 comes from a stretch only the judge flagged (owner to review).
+  - 14 checklist doubts (panels/check-v1/checklist-doubts.md); none change a score.
+  - Not tuned on. Waiting on the owner: the judge-only untrue flags, and what to do about the fail.
+- 2026-10-30: **idea, not decided: a points score replaces the 1-4 grade** (owner). A continuous
+  0-10 score to one decimal: start at 10, deduct per problem found, each kind of problem with a
+  min-max deduction and a severity; the judge only identifies problems and their severity, code
+  does the sum. Why: the check half failed on the judge turning problems into a grade (it ignored
+  its own missed important rows) as well as on spotting them; code-only scoring makes the first
+  part consistent, and calibration becomes item by item instead of 9 grades. A first draft
+  (fixed weights, from the owner's existing labels only, no LLM; gitignored
+  `evals/work/v2/points-draft/`): grade-3 letters 6.8-10.0 (mean 8.5), grade-2 5.7-8.1 (mean
+  6.9); a cut at 8.2 separates them on 16/17. Off: `seek-94904560` (10.0, owner 3: its regrade
+  reasons were never ticked) and `seek-95256463` (6.8, owner 3). Labels not yet given: mix-ups,
+  thin extra lines, wrong vs weaker examples. The design is to be worked through in a new session.
 
 ## Follow-ups (not for this eval)
 

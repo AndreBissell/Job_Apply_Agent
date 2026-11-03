@@ -652,8 +652,12 @@ v2-run` (claude-cli; set JUDGE_CLAUDE_BIN to a claude.exe >= 2.1.280, npm's 2.1.
 Steps 2-4 built (split, derived ticks + pass-bar report, D2d/D2e + relevance rule, draft worked
 examples in gitignored evals/work/v2/calibration/). Step 5 DONE 2026-10-29: runs cal-bare..cal-ex5, owner
 regrades and rules (additive tiers, floor 2, example rungs, thin extra line = tier 3); cal-ex5 PASS
-6/8 exact on the rescored owner grades (eval-set plan Decision log 2026-10-29). Next: step 7 (check
-half once, full panel) then step 6 (probes, graded by the same judge), step 8 freeze. Evidence behind it:
+6/8 exact on the rescored owner grades (eval-set plan Decision log 2026-10-29). Step 7 RUN 2026-10-29
+(panel `check-v1`, the final v1 text): FAIL on exact 3/9 (always-2 6), ready 3/9 and missed rows 4/10;
+±1 9/9 and D4b 8/9 pass; the judge grades 2s as 3s because its grade counts only must-cover misses
+and it credits partial rows on loose quotes (plan Decision log). Owner idea 2026-10-30, not decided:
+replace the 1-4 grade with a 0-10 points score (judge spots problems + severity, code deducts; draft in
+gitignored evals/work/v2/points-draft/). Untrue flags and probes (spec drafted) wait on that. Evidence behind it:
 docs/ai-recruitment-research.md (AI screeners' biases, rated by strength; lines we never cross).
 The real profile is frozen as of 2026-10-20. Strong fit = score 85+ and
 no must-have GAP (`Requirement.needs_user`); partials are allowed (owner, 2026-10-20). Main metric:
