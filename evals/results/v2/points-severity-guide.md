@@ -4,7 +4,7 @@ Scrubbed copy of the gitignored evals/work/v2/points-draft/guide.md (no employer
 letter quotes). It holds the rules behind evals/results/v2/points-labels-dev-agent-v1.json; with that file and the
 frozen eval set it is enough to rebuild the points judge. Letter numbers are sheet S1674 order.
 
-Each problem is low or high. Point values are set AFTER the labelling pass. Fit is a separate score.
+Each problem is low or high. Point values were set after the labelling pass (see the end). Fit is a separate score.
 
 | Metric | Who decides presence / severity | Low | High |
 |---|---|---|---|
@@ -39,3 +39,24 @@ Rules:
 - Gut score (out of 10) is given before the severities, from how the letter reads, fit left out.
 - Origins: `owner-s7` (stage 7 label), `owner` (set in this pass), `code`, `claude-flag` (owner changed
   after Claude's backup flag).
+
+## Point values (owner, 2026-11-03; set after the labels were frozen)
+
+Start at 10, deduct per problem, floor 0, no cap on the lows (a cap matched the gut scores worse). Fit is not deducted.
+
+| Metric | Low | High |
+|---|---|---|
+| Untrue | -1.0 | -2.5 |
+| Missed row | -0.75 | -1.5 |
+| Mix-up | -0.5 | -1.5 |
+| Weak example, no personal reason, too long | -0.5 | -1.0 |
+| Generic | -0.3 | -0.6 |
+| Stock phrasing (code) | -0.25 | -0.5 |
+
+Why (owner): missed rows matter most to a recruiter's screen; a bad mix-up is very disruptive and leads to
+stretches; generic is partly charged already by stock phrasing and no personal reason; stock phrasing is a
+find-and-replace fix.
+
+Check against the owner's gut scores (17 dev letters): mean gap 0.78, correlation 0.46, points 5.5-9.2 vs gut
+5.6-8.4. The equal -0.5 / -1.0 draft matched better (0.69, 0.52); the owner chose these from meaning. A gut read can't
+see a missed row without checking the ad, so the gut check underweights them. Untrue values are set from meaning only: one letter has an untrue label (low).

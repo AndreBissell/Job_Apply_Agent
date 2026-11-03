@@ -699,6 +699,34 @@ stage 3.
   6.9); a cut at 8.2 separates them on 16/17. Off: `seek-94904560` (10.0, owner 3: its regrade
   reasons were never ticked) and `seek-95256463` (6.8, owner 3). Labels not yet given: mix-ups,
   thin extra lines, wrong vs weaker examples. The design is to be worked through in a new session.
+- 2026-11-03: **points scheme decided; labels frozen** (owner). Replaces the 1-4 grade from the 2026-10-30
+  idea. The owner relabelled the 17 dev letters (`dev-agent-v1`): a gut score out of 10 (fit left out), then every
+  problem as low or high under 8 metrics, then four reviews across all letters (generic, no personal reason,
+  Claude's backup flags, the five check-v1 judge-only untrue flags: all rejected). Labels:
+  evals/results/v2/points-labels-dev-agent-v1.json; rules: evals/results/v2/points-severity-guide.md (scrubbed
+  copies of the gitignored evals/work/v2/points-draft/). Rules worth knowing: a wrong example is a missed row or
+  untrue, never a weak example; the swap test (the weaker example carrying a point alone) is high even when it
+  uses the ad's words; a listed skill named as a skill beside an experience is clean, worded as used there it is
+  untrue; structure alone (order, repetition, a missing greeting) costs nothing; missed-row severity is code
+  (must-cover = high); stock phrasing is code (9-11 hits low, 12+ high). Fit is a separate score from the
+  answer key, not deducted. Values (low / high): start 10, floor 0, no cap; untrue -1.0 / -2.5; missed row
+  -0.75 / -1.5 (matters most to a recruiter's screen); mix-up -0.5 / -1.5 (disruptive, leads to stretches); weak
+  example, no personal reason, too long -0.5 / -1.0; generic -0.3 / -0.6 (partly charged by stock phrasing and no
+  personal reason); stock phrasing -0.25 / -0.5 (a find-and-replace fix). Set by the owner from meaning; against
+  the gut scores: mean gap 0.78, correlation 0.46 (an equal -0.5 / -1.0 draft gave 0.69, 0.52; a gut read can't see
+  a missed row without the ad). Off by more than 1: `seek-94904560` (9.2 vs 6.9: uncharged structure, and a job
+  the owner doesn't want), `seek-95260505` (6.2 vs 8.0), `seek-95219353` (8.9 vs 7.5), `seek-95205206` (7.7 vs
+  6.5), `seek-94890841` (6.8 vs 7.9), `seek-95158567` (8.2 vs 7.1). Pass-bar idea: untrue high = not ready
+  whatever the points (at -2.5 it alone leaves 7.5).
+  Does fit explain the gap (owner's idea: the gut read was swayed by how well the profile fits the ad)? Only a
+  little: gut vs fit r=0.16, gut vs match score 0.19, (gut - points) vs fit 0.28, points vs fit -0.14. A blend of
+  90% points + 10% fit gives r=0.50 (from 0.46), within chance at 17 letters; `seek-95191929` (every row a gap)
+  got gut 7.3. Jobs the owner wouldn't apply to: gut 0.5 under the points (0.1 for the others). Decision: fit
+  stays a separate number beside the letter score, not blended (the letter score judges the writer, fit the
+  matcher and the profile); the gut comparison is a sanity check, not a target to tune to. Untrue values come from meaning only (one
+  untrue label in 17). The check half has been seen, so a re-measure there is weak evidence. Next: rewrite
+  grading-standard-v2 §7/§9 as an issue list with low/high anchors (plus a stricter partial-row rule in §4.1),
+  then code, then the pass bar on points before any judge run.
 
 ## Follow-ups (not for this eval)
 

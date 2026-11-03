@@ -1,6 +1,6 @@
 {
  "run": "dev-agent-v1",
- "status": "all 17 labelled; after-pass reviews done (generic, no personal reason, backup flags, parked untrue flags); not frozen yet",
+ "status": "FROZEN 2026-11-03: all 17 labelled, after-pass reviews done; point values not set yet",
  "scheme": "points draft: each problem is low or high; values not set yet. Fit is a separate score. Scrubbed copy of the gitignored evals/work/v2/points-draft/labels.json: no notes, no quotes.",
  "order": "sheet S1674",
  "letters": {
