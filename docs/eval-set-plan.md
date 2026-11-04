@@ -727,6 +727,23 @@ stage 3.
   untrue label in 17). The check half has been seen, so a re-measure there is weak evidence. Next: rewrite
   grading-standard-v2 §7/§9 as an issue list with low/high anchors (plus a stricter partial-row rule in §4.1),
   then code, then the pass bar on points before any judge run.
+- 2026-11-04: **grading-standard-v2 §4.1 and §7 rewritten for the points scheme** (owner approved six decisions;
+  §9's JSON, §8, §10, the header and §6's wording still to do). §7 is now an issue list: the judge finds problems and
+  sets low / high by anchors, code sets missed-row and too-long levels and never shows the judge a point value.
+  Decisions: (1) §4.1, every row: each word that narrows a requirement (named tool, scope, quality) must be answered
+  by the quote, and a row asking for two things needs both. A partial row is addressed only when the quote names what
+  the ad asks for and relates the evidence to it. Written from the six loose-quote rows of check-v1 (the judge noticed
+  the missing part every time but counted "didn't overclaim" as addressed), so check-half results on it are weak
+  evidence. (2) Mix-up low also covers a paragraph whose experiences don't serve its point, and an experience left and
+  returned to within one paragraph (the guide's anchor matches). (3) Too long: the greeting, sign-off and ONE closing
+  ask are not filler. (4) Untrue claims, missed rows, weak examples and mix-ups count per instance; weak examples and
+  mix-ups charge only the two highest instances per letter (two highs = high + high). **Parked:** revisit the
+  weak-example / mix-up low and high values and the cap for the best penalty formula, later. (5) Untrue high =
+  fabricated, or a stretch / employer fact that is the ONLY support for a must-cover row's answer, the opening's claim
+  of fit, or (employer fact) the reason for applying; anything else is low. (6) D3b is the "employer swap test", the
+  weak-example rule the "example swap test". Also in §5: the listed-skill wording rule. Labels amended for per-instance
+  counting (letters 3, 13, 16 split into instances, presence `owner`): points check mean gap 0.78 -> 0.81, r 0.46 ->
+  0.45.
 
 ## Follow-ups (not for this eval)
 

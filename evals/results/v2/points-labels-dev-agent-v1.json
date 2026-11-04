@@ -1,6 +1,6 @@
 {
  "run": "dev-agent-v1",
- "status": "FROZEN 2026-11-03: all 17 labelled, after-pass reviews done; point values set (see the severity guide)",
+ "status": "FROZEN 2026-11-03, amended 2026-11-04: per-instance counting (weak examples and mix-ups, two highest charged) split three letters' labels; point values in the severity guide",
  "scheme": "points scheme: each problem is low or high; values in evals/results/v2/points-severity-guide.md. Fit is a separate score. Scrubbed copy of the gitignored evals/work/v2/points-draft/labels.json: no notes, no quotes.",
  "order": "sheet S1674",
  "letters": {
@@ -21,7 +21,8 @@
   "seek-95110025": {"gut": 7.75, "untrue": [], "issues": [
    {"metric": "missed_row", "row": "R5", "level": "low", "presence": "owner-s7", "severity": "code"},
    {"metric": "weak_example", "level": "low", "presence": "owner-s7", "severity": "owner"},
-   {"metric": "mix_up", "level": "low", "presence": "owner-s7", "severity": "owner"},
+   {"metric": "mix_up", "level": "low", "presence": "owner", "severity": "owner"},
+   {"metric": "mix_up", "level": "low", "presence": "owner", "severity": "owner"},
    {"metric": "stock_phrasing", "level": "high", "presence": "code", "severity": "code", "hits": 12}
   ]},
   "seek-95219353": {"gut": 7.5, "untrue": [], "issues": [
@@ -79,7 +80,8 @@
   "seek-95084704": {"gut": 8.0, "untrue": [], "issues": [
    {"metric": "missed_row", "row": "R5", "level": "low", "presence": "owner-s7", "severity": "code"},
    {"metric": "missed_row", "row": "R8", "level": "low", "presence": "owner-s7", "severity": "code"},
-   {"metric": "weak_example", "level": "low", "presence": "owner-s7", "severity": "owner"},
+   {"metric": "weak_example", "level": "low", "presence": "owner", "severity": "owner"},
+   {"metric": "mix_up", "level": "low", "presence": "owner", "severity": "owner"},
    {"metric": "stock_phrasing", "level": "low", "presence": "code", "severity": "code", "hits": 10}
   ]},
   "seek-94932262": {"gut": 8.1, "untrue": [], "issues": [
@@ -95,6 +97,7 @@
    {"metric": "stock_phrasing", "level": "low", "presence": "code", "severity": "code", "hits": 11}
   ]},
   "seek-94904560": {"gut": 6.9, "untrue": [], "issues": [
+   {"metric": "weak_example", "level": "low", "presence": "owner", "severity": "owner"},
    {"metric": "weak_example", "level": "low", "presence": "owner", "severity": "owner"},
    {"metric": "generic", "level": "low", "presence": "owner", "severity": "owner"}
   ]},
