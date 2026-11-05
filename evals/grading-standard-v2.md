@@ -1,11 +1,12 @@
 # Grading standard v2 (the letter judge)
 
-**Status:** approved by the owner (2026-10-26). Not yet used on any letter. Calibration examples
-(§10) are added in stage 8, then it is frozen as judge v1.
+**Status:** approved by the owner (2026-10-26); rewritten for the points scheme (2026-11-04: §4.1,
+§5, §7, §8, §9, §10). The points version has not been run on any letter yet. It is frozen as
+judge v1 (points) once stage 8's calibration is done.
 **Applies to:** letters on the frozen v2 set (`letter_lab.py --set v2`). Runs graded before v2
 keep `grading-standard.md` (v1).
-**Metrics it serves:** docs/letter-metrics-plan.md §3, Layers 1 and 2, and the predicted
-send-readiness. Code computes every score from your answers; you never add anything up.
+**Metrics it serves:** docs/letter-metrics-plan.md §3, Layers 1 and 2, and the letter's points
+score. Code computes every score from your answers; you never add anything up.
 
 You are grading cover letters the way the candidate would. You answer questions; you do not
 give marks. Read this whole file before the packet.
@@ -58,7 +59,7 @@ for this job and others, but you never see them, and the standard doesn't ask yo
 4. Answer in this order: requirements (§4), claims (§5), the checklist (§6), then the problems
    (§7). The later answers depend on the earlier ones.
 5. **Length is not quality.** A longer letter earns nothing for being longer. Extra words that
-   add no fact about the candidate or the job count against it (D6, too_long).
+   add no fact about the candidate or the job count against it (filler, §7.8).
 
 ## 4. Requirements: is each one addressed? (M1–M3)
 
@@ -94,12 +95,24 @@ letter, and a quote it can't find counts as not addressed.
   reliability, passion, drive) must be named, or shown through an example that demonstrates it.
   Describing an activity alone doesn't show a trait: "I sat between the build and the end users"
   does not address "curiosity about both building technology and helping clients use it".
+  A row that lists several traits or soft skills ("initiative, adaptability and a willingness to
+  learn") is addressed when the letter names or shows at least one of them with evidence (owner,
+  2026-11-04); an interest can be shown by the work and the reason the letter gives. The two-part
+  rule below is for hard skills and activities.
+- **A neighbouring activity is not the one asked for.** Delivering code through a team's
+  deployment pipeline does not address "building automations"; using a reporting tool does not
+  address "building the reports". The candidate must have done the thing the row names.
 - **Partial rows** count as addressed only when the quote names what the ad asks for (the rule
   above) AND states the related evidence honestly against it ("I built the reporting in Tableau,
   and the same modelling applies to Power BI"). The related evidence told on its own, without
   naming what the ad asks for, is NOT addressed, however close it is: "I built reporting
   dashboards" does not address a Power BI row. A partial row claimed as fully had is still
   addressed, but it is also a **stretch** claim (§5).
+  When the profile backs one part of a partial row and not the other (the row's note says which),
+  naming the backed part in the ad's own words, with its evidence, addresses the row; the
+  unbacked part needn't be named, and claiming it would be a stretch (owner, 2026-11-04). "I
+  built the booking service in Java" addresses "Java and Spring Boot" when the profile has Java and no
+  Spring Boot. The two-part rule above is for rows the profile backs in full.
 - **Listing-only rows** (`listing_only` = yes) count as addressed only when the letter presents
   the item as a skill ("my skills include SQL"). Presented as experience ("I have hands-on
   experience with SQL"), it is NOT addressed, and it is a stretch claim (§5).
@@ -210,7 +223,7 @@ words; for an N, give the reason in one line (and quote the failing words if the
 | D2b | Does every body paragraph tie its evidence to a duty or requirement named in the ad? (Evidence listed without saying how it applies to this job's work is a N.) |
 | D2c | Are the sentences that connect evidence to the job specific to it, rather than a formula that could join any experience to any job? |
 | D2d | Do the experiences in each body paragraph connect? Two or three experiences in one paragraph are fine when they are well aligned to the same point: they answer the same requirement, or one builds on the other. **Test:** state the paragraph's point in one sentence; every experience in the paragraph must support that sentence. Unrelated experiences put side by side, or experiences that don't serve one point, is a N. Name the paragraph and its experiences. |
-| D2e | Is each experience told in one place? Going back to an experience in a later paragraph, after a different one, is a N (the reader has to piece it together). Name the experience and the paragraphs it is split across. |
+| D2e | Is each part of an experience told in one place? A letter whose paragraphs each answer one requirement may use the same experience again, for a different requirement, telling a different part of it (owner, 2026-11-04): that is a Y. Telling the same part (the same work, skill or result) in two paragraphs, so the reader has to piece it together, is a N. Name the experience and the paragraphs it is split across. |
 | **D3 Employer-specific** | |
 | D3a | Is at least one fact from the ad about this employer, team, product, project, program or platform used meaningfully, tied to why the candidate wants the role or how their experience applies? The role title, the company name, the contract length, generic industry phrases ("a leader in the field") and a restated requirement don't count. |
 | D3b | **Employer swap test:** pick the most employer-specific sentence. If you swap in another employer advertising the same title and change only the name, does the sentence stop fitting? (Y = it stops fitting.) |
@@ -237,7 +250,7 @@ words; for an N, give the reason in one line (and quote the failing words if the
 
 ### 7.1 How it works
 
-You don't grade the letter. You find its problems and give each one a level, **low** or
+You don't give the letter a score. You find its problems and give each one a level, **low** or
 **high**, using the anchors below. Code turns them into the letter's score; you never see or
 weigh what a problem costs, and you never add anything up.
 
@@ -270,6 +283,11 @@ Every `stretch`, `fabricated` or `employer_fact_not_in_ad` claim from §5 gets a
   - for an employer fact, the reason for applying (take it out and the reason has nothing left).
 - **Low:** every other `stretch` or `employer_fact_not_in_ad`: in a side sentence, beside true
   evidence for the same point, or on a row that isn't `must_cover`.
+- **Real work in the wrong place is low** (owner, 2026-11-04): a stretch that only puts work the
+  candidate really did into the wrong experience (a uni project's testing told as part of the
+  internship) is low, even on a `must_cover` row, because the row still rests on work the
+  candidate did. The "only support" test above is for stretches that inflate what was done (led
+  for helped, used for listed, a bigger scale or result).
 
 ### 7.3 Missed requirements
 
@@ -305,10 +323,13 @@ example are two weak examples.
 
 Use your D2d and D2e answers (§6).
 
-- **Low:** one experience split across two paragraphs (D2e N); one paragraph holding
-  experiences that don't serve its point (D2d N); or an experience told, left for another and
-  returned to within one paragraph. In each case the reader can still follow which experience
+- **Low:** the same part of an experience split across two paragraphs (D2e N); one paragraph
+  holding experiences that don't serve its point (D2d N); or an experience told, left for another
+  and returned to within one paragraph. In each case the reader can still follow which experience
   shows what.
+- **Not a mix-up:** using an experience again in a later paragraph for a different requirement,
+  telling a different part of it (the internship's team in one paragraph, its stakeholder work in
+  the next); or naming an experience again only to give the reason for applying.
 - **High:** the reader can't follow which experience shows what: experiences merged or
   interleaved so that a skill, result or duty can't be placed.
 
@@ -341,14 +362,32 @@ Use your D4a and D4b answers (§6).
 - **High:** the reason would fit any letter (D4a N); or it doesn't hold up when read: the ad fact
   it rests on isn't something a candidate could want, or the "because" doesn't follow.
 
+When the letter gives more than one reason (an opener and a close, say), the best one sets the
+level (owner, 2026-11-03): an opener that doesn't hold up is low, not high, when the close gives
+a real reason specific to the ad. Experience offered as a skill to apply ("drawing on my capstone
+project, I want to use data to ...") is fit, not a reason (D4b).
+
 Quote the reason-for-applying sentence (or say there is none).
 
 ### 7.8 Too long
 
-A **filler sentence** adds no evidence, no employer fact and no reason for applying. Not filler:
-the greeting, the sign-off, ONE closing sentence asking for an interview or a conversation (a
-second one is filler), and a thin add-on example (that is §7.4's low). Quote every filler sentence. Code counts them, and also flags a
-letter over 340 words; you don't judge the length.
+A **filler sentence** adds no evidence, no employer fact, no reason for applying and no link
+between the evidence and the job. Not filler:
+- the greeting, the sign-off, and ONE closing sentence asking for an interview or a conversation
+  (a second one is filler);
+- a thin add-on example (that is §7.4's low);
+- a **link**: a sentence that ties the evidence to the ad's work ("This background prepares me to
+  maintain your stock reporting tools"), or one that names the requirement a
+  paragraph answers ("You need someone who can work with SQL databases"), however thin
+  or formulaic (owner, 2026-11-04). A thin or vague link is §7.6's problem, and its wording is
+  checked by code, so it is never also filler;
+- a closing sentence that restates the reason for applying.
+
+Filler is, for example, a self-description with nothing behind it ("I am a hard-working and
+motivated person"), a sentence that only repeats a point already made, or a remark about the
+application itself ("I am sending this application through your careers page"). Long sentences are not filler.
+Quote every filler sentence. Code counts them, and also flags a letter over 340 words; you don't
+judge the length.
 
 ### 7.9 What is not a problem
 
@@ -372,9 +411,11 @@ which letter came first counts as a tie. You only ever see one order.
 
 Pick the letter the candidate would rather send: `first`, `second` or `same`. Decide in this
 order, and stop at the first step that separates them:
-1. untrue claims: the letter with fewer `fabricated`, then fewer `stretch` claims;
-2. predicted send-readiness (§7);
-3. the `must_cover` rows addressed, then the other supported and partial rows by importance;
+1. untrue claims (§7.2): the letter with fewer high ones, then fewer low ones;
+2. missed requirements (§4, §7.3): the letter that addresses more `must_cover` rows, then more of
+   the other essential and important backed rows;
+3. the other problems (§7.4 to §7.8): the letter with fewer and less serious weak examples,
+   mix-ups, generic body, missing personal reason and filler, weighed as the candidate would;
 4. the recruiter checklist (§6).
 
 Choose `same` only if none of these separates them. Length is not a reason. Give a one-line
@@ -387,7 +428,7 @@ later collects every letter's file into one):
 
 ```json
 {
-  "standard": "v2",
+  "standard": "v2-points",
   "letters": {
     "L1234": {
       "job": "J01",
@@ -396,30 +437,47 @@ later collects every letter's file into one):
          "presented_as": "experience", "evidence_used": ["experience:12#s2"], "reason": ""},
         {"id": "R4", "addressed": "N", "quote": "", "presented_as": "none",
          "evidence_used": [], "reason": "not mentioned"},
+        {"id": "R5", "addressed": "N", "quote": "I wrote unit tests in JUnit",
+         "presented_as": "experience", "evidence_used": ["experience:12#s3"],
+         "reason": "two-part row: the user-interface part is not answered"},
         {"id": "R6", "addressed": "N", "quote": "my thesis used similar models",
          "presented_as": "related", "evidence_used": ["qualification:3"],
          "reason": "gap row, framed honestly as related"}
       ],
       "claims": [
         {"quote": "led a team of five analysts", "about": "candidate", "label": "stretch",
-         "source": ["experience:12#s4"], "requirement": null,
-         "why": "the entry says contributed to a team of five, not led"},
+         "level": "low", "source": ["experience:12#s4"], "requirement": null,
+         "why": "the entry says contributed to a team of five, not led; the paragraph's point also rests on the dashboards"},
         {"quote": "Acme's new Sydney office", "about": "employer",
-         "label": "employer_fact_not_in_ad", "source": [], "requirement": null,
-         "why": "the ad doesn't mention an office opening"}
+         "label": "employer_fact_not_in_ad", "level": "high", "source": [], "requirement": null,
+         "why": "the ad doesn't mention an office opening, and it is the only reason given for applying"},
+        {"quote": "I built the stock dashboards in Power BI", "about": "candidate",
+         "label": "supported", "level": null, "source": ["experience:12#s2"], "requirement": "R1",
+         "why": ""}
       ],
       "checklist": {
         "D2a": {"answer": "Y", "quote": "...", "reason": ""},
         "D2b": {"answer": "N", "quote": "", "reason": "the second paragraph lists tools without tying them to the ad"}
       },
-      "send_readiness": {
-        "grade": 3,
-        "edits": [{"what": "fix the 'led' stretch", "sentences": 1},
-                  {"what": "remove the office fact", "sentences": 1}],
-        "reason": "two one-sentence fixes; otherwise ready"
+      "problems": {
+        "weak_examples": [
+          {"point": "adapting to changing priorities", "quote": "At the cafe, priorities changed hourly",
+           "used": ["experience:7"], "stronger": ["experience:12#s5"], "level": "high",
+           "why": "example swap test: the internship shows the same point at a higher rung"}
+        ],
+        "mix_ups": [
+          {"quote": "At Acme I ... On my uni project I ... Back at Acme I ...",
+           "experiences": ["experience:12", "qualification:3"], "paragraphs": [2],
+           "level": "low", "why": "the internship is left for the project and returned to in one paragraph"}
+        ],
+        "generic": {"level": "low", "quote": "which will help me support your team",
+                    "why": "the first two body paragraphs tie to the ad's reporting work; the third links only vaguely"},
+        "no_personal_reason": {"level": "none", "quote": "my thesis on forecasting made me want to work on demand planning",
+                               "why": "tied to the candidate's study"},
+        "filler": [
+          {"quote": "I am a hard-working and motivated person.", "why": "no evidence, employer fact or reason"}
+        ]
       },
-      "ticks": {"generic": false, "missed_important": false, "weak_example": false,
-                "sounds_ai": false, "no_personal_reason": false, "too_long": false},
       "note": "",
       "checklist_doubts": []
     }
@@ -428,38 +486,58 @@ later collects every letter's file into one):
 ```
 
 Field rules:
+- `standard` is `"v2-points"`.
 - `requirements`: one entry per checklist row except `not_for_letter`, in checklist order.
-  `addressed` is Y or N. `presented_as` is one of `experience`, `skill`, `related`, `claimed`
-  (a gap row claimed as had) or `none`. Leave `quote` empty when nothing addresses it, except for
-  `related` and `claimed`, which quote the words.
+  `addressed` is Y or N, by §4.1. `presented_as` is one of `experience`, `skill`, `related`,
+  `claimed` (a gap row claimed as had) or `none`. Leave `quote` empty when nothing in the letter
+  touches the row; otherwise quote the closest words, even when they don't address it, and say in
+  `reason` what is missing.
 - `claims`: every claim, in letter order. `about` is `candidate` or `employer`. `source` holds
   profile pointers, or for employer facts the ad's words. `requirement` is a row id or null.
+  `level` is `low` or `high` for a `stretch`, `fabricated` or `employer_fact_not_in_ad` claim
+  (§7.2; a `fabricated` claim is always `high`) and null for a `supported` one. When the level is
+  high, `why` names what the claim is the only support for.
 - `checklist`: all 21 ids, D2a to D7a.
-- `send_readiness.grade` is 1, 2, 3 or 4.
-- `ticks`: all six keys, true or false; all false when the grade is 4.
+- `problems` holds §7.4 to §7.8. Every key is always present: an empty list, or a level of
+  `none`, when the letter doesn't have the problem.
+  - `weak_examples` (§7.4): one entry per weak example. `used` and `stronger` are profile
+    pointers; `level` is `low` or `high`; `why` names the test (delete or example swap).
+  - `mix_ups` (§7.5): one entry per instance. `paragraphs` are numbered from 1, counting from the
+    first paragraph after the greeting; `level` is `low` or `high`.
+  - `generic` (§7.6) and `no_personal_reason` (§7.7): one answer each, `level` `none`, `low` or
+    `high`. `quote` is the sentence that best shows the level (for `no_personal_reason`, the
+    reason-for-applying sentence, or empty when there is none).
+  - `filler` (§7.8): every filler sentence, quoted whole. No level: code counts them.
+- Every `quote` must be the letter's exact words, and code checks each one. A row whose quote
+  code can't find counts as not addressed; a claim, weak example, mix-up or filler sentence whose
+  quote it can't find is dropped. In `mix_ups` only, `...` may join the pieces of a passage, and
+  each piece is checked.
 - `checklist_doubts`: rows you think the answer key got wrong, as `{"id", "why"}`, where `why`
   names the profile pointers or ad words behind the doubt. The answer key stays the truth: you
   still grade by it, and a doubt never changes a score. Code collects every doubt into one list
   for the owner to recheck later.
 
-The owner's "anything untrue or stretched?" answer is worked out from `claims` by code: Y when
-any claim is `stretch`, `fabricated` or `employer_fact_not_in_ad`.
+You never give a score. Code works out the letter's score from your answers: missed rows from
+`requirements`, untrue claims from `claims`, the rest from `problems`, plus its own checks on
+wording and length.
 
-A pairwise answer file holds the one pair you judged: `{"standard": "v2", "pairs": {"P01":
-{"pick": "first|second|same", "reason": "..."}}}`.
+A pairwise answer file holds the one pair you judged: `{"standard": "v2-points", "pairs":
+{"P01": {"pick": "first|second|same", "reason": "..."}}}`.
 
 ## 10. Calibration examples
 
-The worked examples are the candidate's own grades on other letters for other jobs: the letter,
-the job's checklist rows, their send-readiness, untrue answer, reason ticks and note, and a worked
-reading of why, in this standard's terms. They come after this standard in your message. They
+The worked examples are the candidate's own answers on other letters for other jobs: the letter,
+the job's checklist rows that matter, the rows they count as missed, and every problem they found
+(§7) with its level and the words it rests on, then a worked reading of why, in this standard's
+terms (which anchor, which test). They come after this standard in your message. They
 quote real letters, so they live in a separate file that is never committed
 (`evals/work/v2/calibration/examples.md`); only letters from the calibration half are ever used,
 and a letter is never shown its own example.
 
-Use them to learn how strictly the candidate reads the scale (§7.1) and the reasons (§7.3): what a
-2 looks like next to a 3, which example choices they call weak, which paragraphs they call
-confused. Never compare your letter with them, and never let one raise or lower your grade
-because your letter resembles it: grade your letter by this standard, as §3 says.
+Use them to learn how strictly the candidate reads the anchors: when a row counts as missed,
+what a low looks like next to a high, which example choices they call weak, which paragraphs
+they call mixed up, and which problems they don't count at all. Never compare your letter with
+them, and never report a problem because your letter resembles an example: judge your letter by
+this standard, as §3 says. An example teaches a rule; the rule decides.
 
-This standard is frozen as judge v1 once stage 8's calibration is done.
+This standard is frozen as judge v1 (points) once stage 8's calibration is done.

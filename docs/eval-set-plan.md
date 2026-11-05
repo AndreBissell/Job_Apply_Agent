@@ -744,6 +744,177 @@ stage 3.
   weak-example rule the "example swap test". Also in §5: the listed-skill wording rule. Labels amended for per-instance
   counting (letters 3, 13, 16 split into instances, presence `owner`): points check mean gap 0.78 -> 0.81, r 0.46 ->
   0.45.
+  - Same day, the rest of the standard: §9 is the new answer shape (`standard` "v2-points"; untrue claims carry a
+    `level`; `problems` holds weak_examples / mix_ups lists, generic and no_personal_reason levels, and filler quotes;
+    no grade, edits or ticks; an unaddressed row quotes the closest words with what's missing). §8's pairwise order is
+    untrue, then missed rows, then the other problems, then the checklist. §10's examples are the owner's issue labels
+    with a worked reading (which anchor, which test). §6 keeps all 21 items for now (D2d/D2e and D4a/D4b feed §7; the
+    rest are report-only; cutting any is a later decision).
+  - **Stage 8 restarts for points on the same split** (owner): calibrate on the 8, measure the 9 once, freeze judge v1
+    (points), judge all 17. The check half isn't clean (check-v1 was read; §4.1 came from its rows; the calibration
+    half has only 3-4 missed rows, all caught before, so it can't test §4.1), so its missed-row result is logged as
+    weak and §4.1 is confirmed later by a rows-only owner spot-check on 5-6 letters from the first run after the
+    freeze. Untrue has 1 low label in 17, so the planted-claim probes are its test. Next: code (answer schema +
+    validation, scorer, A/B merge of issue lists, agreement per metric against labels.json, NOT grades-owner.csv,
+    which misses `seek-95260505` R4), then the pass bar on points, then the worked examples.
+  - **Code built (no LLM).** `scripts/letter_points.py` is the one scorer (the guide's values, cap 2 on weak examples
+    and mix-ups, the code-set levels: stock 9-11 low / 12+ high, filler 1-2 low / 3+ high, over 340 words high). Both
+    the owner's labels and the judge's answers go through it. `grading_panel.py` checks the §9 shape (an answer
+    file without `"standard": "v2-points"` is refused). It checks quotes: a missing quote turns a Y row into N, and
+    drops a claim, weak example, mix-up piece or filler sentence. It builds `letter_issues` (the judge's problems,
+    plus missed rows with the answer key's level, too long from the filler count, and stock from
+    `letter_metrics.stock_phrases` counted over the whole run, matching the labels' 17 hit counts exactly). The merged
+    `judge-<tag>.json` holds `points`, `issues` and `by_metric`. `v2-agreement` reads labels.json.
+    **A/B merge (Claude's design):** problem cells compare on what they cost, not their wording: untrue levels,
+    weak-example and mix-up levels of the two charged instances, the generic and no-personal-reason levels, and the
+    filler count's level. The adjudicator replaces a split list whole. Probes: a pad passes when the copy scores no
+    more points than its original; a plant passes when it is labelled untrue. The worked examples are in a new file,
+    `calibration/examples-points.md` (the 1-4 `examples.md` is kept). 2014 tests.
+  - **Pass bar on points, fixed before any judge run (owner, 2026-11-04).** Written for 9 letters and scaled:
+    1. points within ±1 of the owner's on at least n-1;
+    2. a mean gap below the constant guess's (always the calibration half's mean owner points, 7.46, which gets a
+       0.72 gap and ±1 on 7/9 on the check half, so (1) alone proves nothing);
+    3. at least 80% of the owner's missed rows caught;
+    4. every owner untrue flag caught, plus every planted claim in the probes.
+
+    Weak example, mix-up, generic, no personal reason and too long are reported per letter, not gated (8-9 letters
+    is too few). The correlation is reported only.
+  - **Rules from the worked readings (owner, 2026-11-04):**
+    - A link or signpost is never filler, however thin (a thin link is generic's problem): §7.8. Too long relabelled
+      to none on `seek-95085104` (was low) and `seek-95140202` (was high): no filler sentence under the rule; points
+      check 0.82, r 0.40.
+    - In a partial row, naming the backed part in the ad's own words with its evidence addresses it; the two-part
+      rule is for fully backed rows: §4.1. This matches the labels on `seek-95110025` R3 and `seek-95220494` R3.
+    - When a letter gives more than one reason, the best one sets the no-personal-reason level: §7.7. This matches
+      the `seek-95260505` label.
+  - **Run `pts-cal-1`** (grader A, calibration half, examples leave-one-out, CLI 2.1.317, about 2 min per judge):
+    **FAIL**. Within ±1 5/8 (bar 7), mean gap 1.39 (the guess 0.87), missed rows 3/4, untrue 1/1, r 0.60. Two letters
+    held most of the gap (`seek-95085104` -3.3, `seek-95140202` -4.0). The causes:
+    - mix-ups: every return of an experience was read as a split (D2e as written);
+    - trait-list rows: every trait was asked for;
+    - the "only support" untrue anchor was applied to real work in the wrong place;
+    - one stretch the owner hadn't labelled;
+    - `seek-95260505` R4: CI/CD was taken as automation.
+
+    (A first start was stopped before any answer was saved, because the standard was edited mid-run; each judge
+    reads the standard when its prompt is built.) **Owner decisions:**
+    - Mix-up: using an experience again for a different requirement, telling a different part of it, is fine; D2e
+      and §7.5 reworded. `seek-95110025`'s second mix-up and `seek-94932262`'s mix-up relabelled to none.
+    - A trait-list row is addressed when one trait is named or shown (§4.1).
+    - Real work in the wrong place is untrue low (§7.2).
+    - The `seek-95140202` flag is accepted (untrue low, presence `judge-accepted`).
+
+    Claude added §4.1's neighbouring-activity bullet from the owner's R4 label. Points check after the relabels:
+    0.79, r 0.44.
+  - **Run `pts-cal-2`** (same setup; standard `a1b0d9de`, examples `f78725e7`): **PASS** on the calibration half.
+    | Measure | Result | Bar |
+    |---|---|---|
+    | Within ±1 | 7/8 | 7 |
+    | Mean gap | 0.60 | the guess's 0.96 |
+    | Missed rows | 4/4, no judge-only | 80% |
+    | Untrue | 2/2, TNR 6/6 | all |
+    | r | 0.90 | reported |
+
+    Still apart, and only on ungated problems:
+    - `seek-95085104` (-1.8): the judge adds a weak-example high (the student team, not the internship, for R4's MVP)
+      and a second mix-up;
+    - `seek-95191929` (+1.0): the judge misses the owner's weak-example high (the retail job alone for changing priorities);
+    - `seek-95260505`: the judge finds no filler where the owner has one sentence.
+
+    In-sample, so expected. The instructions are frozen here: the probes and the check half run on this exact judge
+    version.
+  - **Probes `probe-pts-1`** (copies of calibration letters; spec in gitignored `calibration/probes-pts-1.json`):
+    - six plants: a gap claimed as had on a must-cover row, a gap claimed in a procurement ad, an inflated role
+      (intern -> team lead), an invented result (3,500 users), an employer fact not in the ad (an award), and an
+      invented certification;
+    - two pads: two filler sentences each, staying under 340 words.
+
+    A pad must score no more than its `pts-cal-2` original; a plant must be labelled untrue.
+    **Result: all 8 pass** (panel `pts-probe-1`, the same judge version):
+    - the five fabrications were all rated high;
+    - the award was rated employer fact, low (an add-on to an existing reason, so §7.2's low is right);
+    - both padded copies scored 0.5 below their originals, with the padding listed as filler.
+  - **Check half, once: panel `pts-check-1`** (9 letters, graders A + B, then the adjudicator, then
+    `v2-agreement --half check`; the same judge version as `pts-cal-2` and the probes). The run paused at the 5-hour
+    subscription limit and was resumed after the reset with the version unchanged. A/B agreed on untrue, weak
+    examples, mix-ups and no personal reason 9/9, rows 103/105, generic 7/9 and filler 8/9; 8 letters went to the
+    adjudicator, mostly over checklist items. **Result: FAIL.**
+    | Measure | Result | Bar |
+    |---|---|---|
+    | Within ±1 | 6/9 | 8; the guess gets 7/9 |
+    | Mean gap | 0.84 | the guess's 0.76 |
+    | Missed rows | 8/9, +2 judge-only | 80%: **pass** (check-v1 had 4/10) |
+    | Untrue | no owner flags | the probes passed |
+    | r | 0.62 | reported |
+
+    The judge is harsher than the owner (mean 7.17 vs 7.74). The gap comes from:
+    - judge-only generic lows on 3 letters;
+    - judge-only untrue lows on 3 letters, two of them the `seek-95205206` flags the owner already rejected on
+      2026-11-03;
+    - 2 judge-only missed rows;
+    - `seek-95364016` (-2.0: a stretch plus a weak example rated high where the owner has low).
+
+    Not frozen. The owner reviews the judge-only flags and rows (label corrections are allowed; rule changes on the
+    check half are not) and decides what comes next.
+  - **Owner review of `pts-check-1`** (2026-11-04/05; working doc gitignored `calibration/review-pts-check-1.md`).
+    It covered 20 items: every point where the owner's labels and the judge differed. Each item was decided from the
+    frozen standard `a1b0d9de` as Change (take the judge's reading), Keep (the judge counts as wrong) or Rule question
+    (the label stays, the judge counts as wrong, the rule goes on the next-version list). A reason accepted on one
+    letter applies to every letter, calibration included. Each change is in gitignored `labels.json` with the owner's
+    reason and its item number; the 2026-11-03 notes it overturns are marked superseded.
+    - **Change (15):**
+      - Untrue, stretch low, on `seek-95158567`, `seek-95205206` and `seek-95364016`. A summary or process line that
+        the profile entry doesn't show is a stretch, even when it's true (§1, §5). This overturns the 2026-11-03
+        rejections. The profile fix for `seek-95364016` (the thesis entry) waits until the profile is unfrozen.
+      - Missed rows:
+        - `seek-94890841` R10 is now missed: a neighbouring activity doesn't answer a row.
+        - `seek-95084704` R2 is now missed: a partial row needs its evidence pointed at it.
+        - `seek-94932262` R5 is now addressed, by the 2026-11-04 partial-row rule.
+      - Weak examples:
+        - `seek-95084704` loses its low: the second line shows a different part, so the delete test fails.
+        - `seek-95364016` is split per point, high plus low: one sentence was an add-on for one point and the only
+          example for another.
+      - Mix-ups:
+        - `seek-94890841` gains a low: a repeat that adds nothing.
+        - `seek-95219353` gains a low: a return to an experience with new evidence.
+        - `seek-95256463` loses its low: each line serves the paragraph's point.
+      - Generic, low, on `seek-94932262` and `seek-95084704`: the links copy the ad's duty lines.
+      - No personal reason, low, on `seek-95084704`: the ad restated, which is D4b's named N case.
+      - Too long: `seek-95205206` loses its low; waffly isn't filler under §7.8.
+    - **Keep (4):**
+      - `seek-95205206` untrue: a loose paraphrase of the ad's role names, so clean.
+      - `seek-95205206` weak example, high: the retail job alone carries customer needs, while the internship's
+        client work never appears. The judge doesn't run the swap test when the stronger example is absent from the
+        letter. It missed this the same way on `seek-95191929` in calibration.
+      - `seek-95084704` mix-up, low.
+      - `seek-94890841` generic, none: the links name work only this employer has.
+    - **Rule question (1):** on `seek-95084704`, a sentence that answers an instruction in the ad isn't filler.
+    - **Calibration consistency (2026-11-05):**
+      - `seek-95085104` generic goes from none to low: item 17's pattern, duty-line links.
+      - `seek-95110025` stays none: item 15's pattern, two links name this employer's own product.
+      - Everything else already matched.
+      - `pts-cal-2` re-scored: still PASS, within ±1 7/8, mean gap 0.60 -> 0.56 (the guess's 1.01).
+    - **Result, re-scored with no judge runs: `pts-check-1` PASS.**
+      | Measure | Before | After | Bar |
+      |---|---|---|---|
+      | Within ±1 | 6/9 | 9/9 | 8 |
+      | Mean gap | 0.84 | 0.03 | the guess's (0.76 before, 0.79 after) |
+      | Missed rows | 8/9 | 10/10, no judge-only | 80% |
+      | Untrue | no owner flags | 3/3, TNR 6/6 | all |
+    - **What this pass means.** 15 of the 20 items moved the owner's label to the judge's reading once the rule was
+      pointed at. So the pass shows that the judge applies the written standard the way the owner reads it. It
+      doesn't show that the judge matches the owner's first labels: that was 6/9. Fresh letters from the test split
+      are the real test.
+    - **Same points, different problems:** on two letters the totals match only because two different problems
+      cost the same.
+      - `seek-95084704`: the owner charges a mix-up low, the judge a filler low.
+      - `seek-95205206`: the owner charges a weak-example high, the judge a second untrue low.
+
+      Four Keeps and the rule question also stay as real disagreements under matching points.
+    - **Reporting gap:** `v2-agreement` checks untrue per letter. A judge-only flag on a letter the owner also
+      flagged doesn't show (`seek-95205206`). A per-flag check would catch it.
+    - **Next-version list:** the rule questions are in `future_work/grading-standard-next-version.md`. They can
+      only be tested on fresh letters. Next step (owner decision): freeze judge v1 and judge all 17.
 
 ## Follow-ups (not for this eval)
 

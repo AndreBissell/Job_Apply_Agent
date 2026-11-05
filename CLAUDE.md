@@ -655,9 +655,23 @@ regrades and rules (additive tiers, floor 2, example rungs, thin extra line = ti
 6/8 exact on the rescored owner grades (eval-set plan Decision log 2026-10-29). Step 7 RUN 2026-10-29
 (panel `check-v1`, the final v1 text): FAIL on exact 3/9 (always-2 6), ready 3/9 and missed rows 4/10;
 ±1 9/9 and D4b 8/9 pass; the judge grades 2s as 3s because its grade counts only must-cover misses
-and it credits partial rows on loose quotes (plan Decision log). Owner idea 2026-10-30, not decided:
-replace the 1-4 grade with a 0-10 points score (judge spots problems + severity, code deducts; draft in
-gitignored evals/work/v2/points-draft/). Untrue flags and probes (spec drafted) wait on that. Evidence behind it:
+and it credits partial rows on loose quotes (plan Decision log). POINTS SCHEME DECIDED 2026-11-03 (replaces
+the 1-4 grade): 0-10, the judge finds problems and sets low / high, code deducts (values, cap and rules in
+evals/results/v2/points-severity-guide.md; owner labels evals/results/v2/points-labels-dev-agent-v1.json, the
+scrubbed copy of gitignored evals/work/v2/points-draft/labels.json, which is the truth for agreement). The
+standard was rewritten for it 2026-11-04 (§4.1, §5, §7 issue list, §8, §9 "v2-points", §10). Stage 8 restarts on
+the same 8 / 9 split. Built 2026-11-04 (plan Decision log): `scripts/letter_points.py` (the one scorer, owner labels
+and judge alike), grading_panel.py's points answer / checks / A/B cells / merge (`judge-<tag>.json` has `points`,
+`issues`, `by_metric`) / `v2-agreement` vs labels.json; pass bar on points FIXED (±1 on n-1, mean gap below the
+constant guess, 80% of missed rows, all untrue + probes); worked examples in gitignored
+evals/work/v2/calibration/examples-points.md. `pts-cal-1` FAIL -> owner rules -> `pts-cal-2` PASS (7/8, gap 0.60);
+probes `probe-pts-1` 8/8 pass; check half `pts-check-1` FAIL (±1 6/9 vs 8, gap 0.84 vs the guess's 0.76), then the
+owner's two-way review (2026-11-05: 20 items, 15 Change / 4 Keep / 1 rule question; plus one calibration label by the
+same reasons) -> re-scored with no judge runs: PASS (±1 9/9, gap 0.03; cal half still PASS 7/8, gap 0.56). The pass means
+"the judge applies the standard as the owner reads it", not agreement with the first labels; fresh test-split letters are
+the real test. Rule questions for the next version: future_work/grading-standard-next-version.md. NOT frozen yet: next
+is the owner's go-ahead to freeze judge v1 and judge all 17. NEVER edit the
+standard or the examples while a judge run is going: each judge reads them when its prompt is built. Evidence behind it:
 docs/ai-recruitment-research.md (AI screeners' biases, rated by strength; lines we never cross).
 The real profile is frozen as of 2026-10-20. Strong fit = score 85+ and
 no must-have GAP (`Requirement.needs_user`); partials are allowed (owner, 2026-10-20). Main metric:
