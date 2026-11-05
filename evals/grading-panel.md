@@ -129,12 +129,14 @@ the real ads and the letters.
    aren't in the letter. Code doesn't credit those (step 7).
 5. **Disagreements.** `python scripts/grading_panel.py v2-disagreements <tag>` writes
    `disagreements/<lid>.json` for each letter where A and B split, and prints A/B agreement
-   per group. A cell is one answer that can split:
-   - send-readiness;
-   - the claim counts;
+   per group. A cell is one answer that can split, and problems compare on what they cost,
+   not their wording (two judges who quote different filler sentences at the same level agree):
+   - `claims`: the levels of the untrue claims;
    - each D question;
    - each requirement row;
-   - each tick.
+   - `weak_examples` and `mix_ups`: the levels of the two charged instances;
+   - `generic` and `no_personal_reason`: the level;
+   - `filler`: the level the filler count gives.
 6. **Adjudicate.** `python scripts/grading_panel.py v2-run <tag> --stage adjudicate` gives each
    disagreements file a fresh adjudicator, which writes `adjudication/<lid>.json` with a ruling
    for every split cell.
@@ -143,19 +145,25 @@ the real ads and the letters.
    every cell has one, it:
    - takes agreed cells from A and split cells from the rulings;
    - checks every quote again: an addressed row whose quote isn't in the letter becomes N, and
-     a claim whose quote isn't there is dropped;
-   - writes `evals/work/v2/runs/<run>/judge-<tag>.json`, one record per ad: send-readiness,
-     untrue Y/N, claim counts, gap fabrications, ticks, checklist and requirement rows;
+     a claim, weak example, mix-up piece or filler sentence whose quote isn't there is dropped;
+   - adds code's problems: missed rows (from the row answers, with the answer key's level),
+     too long (from the filler count and the word count) and stock phrasing
+     (`letter_metrics.stock_phrases`, counted over the whole run);
+   - writes `evals/work/v2/runs/<run>/judge-<tag>.json`, one record per ad: `points`
+     (`scripts/letter_points.py`), `issues`, `by_metric`, untrue Y/N, claim counts, gap
+     fabrications, missed rows, the problems, checklist and requirement rows;
    - writes `evals/panels/<tag>/checklist-doubts.md`: the answer-key rows a judge doubted,
      for the owner to recheck. A doubt never changes a score.
 8. **Against the owner (stage 8).**
    `python scripts/grading_panel.py v2-agreement <tag> <run> [--only KEY ...] [--accept KEY ...]`
-   reads the owner's `grades-owner.csv` in the run folder and writes
+   reads the owner's points labels (`evals/work/v2/points-draft/labels.json`; `--labels` for
+   another file), scores them with the same `letter_points.score`, and writes
    `evals/panels/<tag>/agreement-<run>.md`. The results are counts, not percentages:
-   - send-readiness, exact and within ±1;
-   - weighted kappa, with its small-sample warning;
-   - untrue TPR/TNR;
-   - each reason tick.
+   - the pass bar (eval-set plan Decision log 2026-11-04): points within ±1 on n-1 letters, a
+     mean gap below the constant guess's, missed rows row by row, untrue TPR;
+   - points per letter, with each problem's levels side by side;
+   - each problem's presence and level agreement (reported, not gated);
+   - the judge-only untrue flags and missed rows, to review.
 
    `--only` limits it to the check half. Read every flag the judge raised and the owner
    didn't. If it was a real miss by the owner, re-run with `--accept KEY`.
@@ -178,9 +186,11 @@ the real ads and the letters.
    other letter has (a grade given once, the only untrue Y) goes to calibration; the rest are
    stratified by grade, then relevance, 9 to the check half. It is never redrawn.
    `v2-pack`, `v2-run` and `v2-agreement` take `--half calibration|check`.
-2. **Worked examples.** `v2-examples` drafts `calibration/examples.md` from the calibration half
-   (each letter, its checklist rows, the owner's grade, ticks and note; never sounds_ai, the
-   owner's count rule). The worked readings are written by hand and confirmed by the owner.
+2. **Worked examples.** `v2-examples` drafts `calibration/examples-points.md` from the
+   calibration half: each letter, its checklist rows, and the owner's problems with their levels
+   and notes. It never includes stock phrasing (the owner's count rule) or what a problem costs.
+   The worked readings are written by hand and confirmed by the owner. The 1-4 grade's
+   `examples.md` is kept as a record.
    `v2-run` adds the examples to every prompt (after the standard, before the packet), leaves out
    the letter's own (leave-one-out), refuses the file while a reading is unwritten or if it holds
    a check-half letter, and records its hash in the judge version. `--no-examples` runs the
@@ -190,24 +200,21 @@ the real ads and the letters.
    `v2-agreement <tag> <run> --half calibration`. Change the prompt only from what the
    calibration half shows.
 4. **Measure the check half once** with the full panel (A + B + adjudicator), `--half check`.
-   `v2-agreement` scores the pass bar (exact against always-2, ready / not ready, within ±1,
-   untrue, missed rows row by row, D4b) and marks the ticks: missed_important and
-   no_personal_reason are derived by code from the rows and D4b, sounds_ai is an alarm (the
-   judge's ear against the owner's count rule), the rest are reported, not gated. A judge-only
+   `v2-agreement` scores the pass bar on points (step 8 above). A judge-only
    untrue flag the owner accepts goes in `calibration/accepted-untrue.json` (`{key: claim}`),
    which every later `v2-agreement` reads.
 5. **Probes.** `v2-probe <name> <run> --spec probes.json` writes a probe run (a run folder) of
    copies of the run's letters, each with text inserted after an exact anchor sentence:
    `pad` (filler; refused if the copy goes over the word cap, which would test the cap instead)
    or `plant` (an untrue claim). Pack and judge it like any run, then
-   `v2-probe-report <tag> <name> --original <tag of the originals>`: a padded copy must grade no
-   higher than its original, and every plant must be labelled untrue. Both panels must be the
+   `v2-probe-report <tag> <name> --original <tag of the originals>`: a padded copy must score no
+   more points than its original, and every plant must be labelled untrue. Both panels must be the
    same judge version.
 
 `v2-run` stops when the subscription's usage limit is hit; run the same command after the reset
 and it carries on from the answers already saved.
 
-## v2 grader and adjudicator prompts (superseded 2026-10-29)
+## v2 grader and adjudicator prompts (superseded 2026-10-29; the 1-4 grade's shape)
 
 The prompts the judges get now live in `scripts/grading_panel.py` (`JUDGE_SYSTEM`,
 `JUDGE_TASKS`), worded for a judge that has no files. The two below are the subagent versions,

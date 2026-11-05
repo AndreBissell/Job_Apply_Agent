@@ -472,7 +472,8 @@ def judged(letter: str, ref: dict, judge: dict, flags: dict[str, tuple[bool, boo
     counts = judge["counts"]
     fabricated = counts["fabricated"]
     return {
-        "judge_grade": judge["send_readiness"],
+        "judge_grade": judge.get("send_readiness"),  # a 1-4 judge file (before the points scheme)
+        "judge_points": judge.get("points"),  # a points judge file (standard v2-points)
         "m1": sum(rid in hit for rid in musts) / len(musts) if musts else None,
         "m2": m2,
         "honest": None if m2 is None else (m2 if fabricated == 0 else 0.0),
@@ -507,6 +508,8 @@ def scorecard(rows: list[dict]) -> dict:
         "letters": len(rows),
         "send_readiness": _mean(r["grade"] for r in graded),
         "send_ready": sum(r["grade"] >= 3 for r in graded) / len(graded) if graded else None,
+        "points": _mean(r.get("judge_points") for r in rows),
+        "points_judged": sum(r.get("judge_points") is not None for r in rows),
         "by_owner": sum(r["grade_by"] == "owner" for r in graded),
         "by_judge": sum(r["grade_by"] == "judge" for r in graded),
         "judged": len(by_judge),

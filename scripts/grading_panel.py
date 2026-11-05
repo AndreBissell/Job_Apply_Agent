@@ -51,6 +51,9 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import letter_points as lp  # noqa: E402  the points scorer: stdlib only
+
 ROOT = Path(__file__).resolve().parent.parent
 EVALS = ROOT / "evals"
 PANELS = EVALS / "panels"
@@ -239,7 +242,7 @@ V2_SET_SPLIT = EVALS / "sets" / "v2" / "split.json"
 CANDIDATES = EVALS / "candidates" / "candidates.csv"
 CALIBRATION_DIR = V2_WORK / "calibration"  # gitignored: the halves and the worked examples quote real letters
 CALIBRATION_SPLIT = CALIBRATION_DIR / "split.json"
-CALIBRATION_EXAMPLES = CALIBRATION_DIR / "examples.md"
+CALIBRATION_EXAMPLES = CALIBRATION_DIR / "examples-points.md"  # examples.md: the 1-4 grade's, kept
 ACCEPTED_UNTRUE = CALIBRATION_DIR / "accepted-untrue.json"  # {key: the claim}: judge flags the owner accepted
 GRADERS = ("A", "B")
 CHECKLIST = ("D2a", "D2b", "D2c", "D2d", "D2e", "D3a", "D3b", "D4a", "D4b", "D5a", "D5b", "D5c",
@@ -248,10 +251,17 @@ TICKS = ("generic", "missed_important", "weak_example", "sounds_ai", "no_persona
 LABELS = ("supported", "stretch", "fabricated", "employer_fact_not_in_ad")
 UNTRUE = LABELS[1:]
 PRESENTED = ("experience", "skill", "related", "claimed", "none")
+STANDARD_TAG = "v2-points"  # §9's `standard`: an answer file in the old 1-4 shape is never read as a points one
+LISTED = ("weak_examples", "mix_ups", "filler")  # standard §9 `problems`: lists, one entry per instance
+RATED = ("generic", "no_personal_reason")  # one level per letter
+PROBLEMS = (*LISTED, *RATED)
+RATED_LEVELS = ("none", *lp.LEVELS)
+# The owner's points labels (gitignored; the truth for agreement). Its scrubbed copy is committed as
+# evals/results/v2/points-labels-dev-agent-v1.json.
+POINTS_LABELS = V2_WORK / "points-draft" / "labels.json"
 # The owner's grades for a v2 run (evals/work/v2/runs/<run>/grades-owner.csv; letter_lab.py
 # grade-sheet writes the blank form). untrue = Y/N, a tick = any of Y / x / 1, blank = not ticked.
 OWNER_FIELDS = ("key", "send_readiness", "untrue", "untrue_text", *TICKS, "note")
-KAPPA_WARNING = "on fewer than ~30 letters one disagreement moves kappa a lot: read the counts first"
 
 
 def _profile_block_v2() -> str:
@@ -411,6 +421,8 @@ def validate(ans: dict, ref: dict) -> list[str]:
     for i, c in enumerate(ans.get("claims", [])):
         if c.get("label") not in LABELS:
             errs.append(f"claim {i + 1}: label must be one of {', '.join(LABELS)}")
+        elif c["label"] in UNTRUE and c.get("level") not in lp.LEVELS:
+            errs.append(f"claim {i + 1}: an untrue claim's level must be low or high")
         if c.get("about") not in ("candidate", "employer"):
             errs.append(f"claim {i + 1}: about must be candidate or employer")
     checklist = ans.get("checklist", {})
@@ -418,21 +430,32 @@ def validate(ans: dict, ref: dict) -> list[str]:
         errs.append(f"checklist: want all of {CHECKLIST[0]}..{CHECKLIST[-1]}, missing "
                     f"{sorted(set(CHECKLIST) - set(checklist))}, extra {sorted(set(checklist) - set(CHECKLIST))}")
     errs += [f"{d}: answer must be Y or N" for d, v in checklist.items() if _yn(v.get("answer")) not in ("Y", "N")]
-    grade = ans.get("send_readiness", {}).get("grade")
-    if grade not in (1, 2, 3, 4):
-        errs.append("send_readiness.grade must be 1, 2, 3 or 4")
-    ticks = ans.get("ticks", {})
-    if sorted(ticks) != sorted(TICKS) or not all(isinstance(v, bool) for v in ticks.values()):
-        errs.append(f"ticks: want all six of {', '.join(TICKS)} as true/false")
-    elif grade == 4 and any(ticks.values()):
-        errs.append("ticks: a 4 has no reasons ticked")
+    probs = ans.get("problems")
+    if not isinstance(probs, dict) or sorted(probs) != sorted(PROBLEMS):
+        return errs + [f"problems: want all of {', '.join(PROBLEMS)}"]
+    for name in LISTED:
+        if not isinstance(probs[name], list):
+            errs.append(f"problems.{name} must be a list")
+        elif name != "filler":
+            errs += [f"problems.{name} {i + 1}: level must be low or high"
+                     for i, p in enumerate(probs[name]) if p.get("level") not in lp.LEVELS]
+    for name in RATED:
+        if not isinstance(probs[name], dict) or probs[name].get("level") not in RATED_LEVELS:
+            errs.append(f"problems.{name}.level must be one of {', '.join(RATED_LEVELS)}")
     return errs
+
+
+def quote_pieces(quote: str) -> list[str]:
+    """A mix-up's quote may join the pieces of a passage with `...` (standard §9): each piece is checked."""
+    return [p.strip() for p in re.split(r"\.\.\.|…", quote or "") if p.strip()]
 
 
 def check_quotes(ans: dict, letter: str) -> tuple[dict, list[str]]:
     """The answer with its quotes checked against the letter (check_requirements.quote_in_letter),
     so a judge can't credit words it imagined: an addressed row whose quote isn't there counts as
-    not addressed, and a claim whose quote isn't there is dropped. Returns (answer, problems)."""
+    not addressed, and a claim, weak example, mix-up or filler sentence whose quote isn't there is
+    dropped. Generic and no personal reason are about the whole body, so a missing quote there is
+    only listed. Returns (answer, problems)."""
     import copy
 
     from app.llm.letter.tools.check_requirements import quote_in_letter
@@ -442,14 +465,40 @@ def check_quotes(ans: dict, letter: str) -> tuple[dict, list[str]]:
         if _yn(r["addressed"]) == "Y" and not quote_in_letter(r.get("quote", ""), letter):
             r["addressed"] = "N"
             problems.append(f"{r['id']}: quote not in the letter, counted as not addressed")
-    kept = []
-    for c in ans["claims"]:
-        if quote_in_letter(c.get("quote", ""), letter):
-            kept.append(c)
-        else:
-            problems.append(f"claim dropped, quote not in the letter: {c.get('quote', '')[:80]!r}")
-    ans["claims"] = kept
+
+    def keep(items: list[dict], what: str, pieces=lambda q: [q]) -> list[dict]:
+        kept = []
+        for item in items:
+            parts = pieces(item.get("quote", ""))
+            if parts and all(quote_in_letter(p, letter) for p in parts):
+                kept.append(item)
+            else:
+                problems.append(f"{what} dropped, quote not in the letter: {item.get('quote', '')[:80]!r}")
+        return kept
+
+    ans["claims"] = keep(ans["claims"], "claim")
+    probs = ans["problems"]
+    probs["weak_examples"] = keep(probs["weak_examples"], "weak example")
+    probs["mix_ups"] = keep(probs["mix_ups"], "mix-up", quote_pieces)
+    probs["filler"] = keep(probs["filler"], "filler sentence")
+    for name in RATED:
+        q = probs[name].get("quote", "")
+        if q and not quote_in_letter(q, letter):
+            problems.append(f"{name}: its quote is not in the letter (level kept)")
     return ans, problems
+
+
+def claim_level(c: dict) -> str | None:
+    """An untrue claim's level (a fabricated claim is always high, standard §7.2); None if supported."""
+    if c["label"] not in UNTRUE:
+        return None
+    return "high" if c["label"] == "fabricated" else c.get("level")
+
+
+def _levels(levels) -> str:
+    """Levels as one comparable string, high first: 'high, low', or 'none'."""
+    got = sorted((l for l in levels if l), key=lambda l: l != "high")
+    return ", ".join(got) or "none"
 
 
 def claim_counts(claims: list[dict]) -> str:
@@ -457,23 +506,27 @@ def claim_counts(claims: list[dict]) -> str:
 
 
 def cells(ans: dict) -> dict[str, str]:
-    """Every answer two graders can agree or disagree on, as a comparable string."""
-    out = {"send_readiness": str(ans["send_readiness"]["grade"]), "claims": claim_counts(ans["claims"])}
+    """Every answer two graders can agree or disagree on, as a comparable string. Problems compare on
+    what they cost, not their wording: two judges who quote different filler sentences but reach the
+    same level agree, and the capped lists compare only the instances that are charged."""
+    probs = ans["problems"]
+    out = {"claims": _levels(claim_level(c) for c in ans["claims"])}
     out |= {d: _yn(ans["checklist"][d]["answer"]) for d in CHECKLIST}
     out |= {f"req:{r['id']}": _yn(r["addressed"]) for r in ans["requirements"]}
-    out |= {f"tick:{t}": "Y" if ans["ticks"][t] else "N" for t in TICKS if t not in DERIVED_TICKS}
+    out |= {name: _levels(sorted((p["level"] for p in probs[name]), key=lambda l: l != "high")[:lp.CAP])
+            for name in ("weak_examples", "mix_ups")}
+    out |= {name: probs[name]["level"] for name in RATED}
+    out["filler"] = lp.too_long_level(len(probs["filler"]), 0) or "none"
     return out
 
 
 def _detail(ans: dict, item: str):
-    if item == "send_readiness":
-        return ans["send_readiness"]
     if item == "claims":
         return ans["claims"]
     if item.startswith("req:"):
         return next(r for r in ans["requirements"] if r["id"] == item[4:])
-    if item.startswith("tick:"):
-        return ans["ticks"][item[5:]]
+    if item in PROBLEMS:
+        return ans["problems"][item]
     return ans["checklist"][item]
 
 
@@ -488,7 +541,10 @@ def _raw_answer(tag: str, grader: str, lid: str) -> dict | None:
     path = PANELS / tag / "answers" / grader / f"{lid}.json"
     if not path.exists():
         return None
-    return json.loads(path.read_text(encoding="utf-8"))["letters"][lid]
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if data.get("standard") != STANDARD_TAG:  # an answer in the old 1-4 shape, or a stray file
+        raise KeyError(f"standard is {data.get('standard')!r}, not {STANDARD_TAG!r}")
+    return data["letters"][lid]
 
 
 def _answers(tag: str, graders: tuple[str, ...] = GRADERS) -> tuple[dict, dict[str, dict[str, dict]], dict[str, list[str]]]:
@@ -559,32 +615,27 @@ def cmd_v2_disagreements(args) -> int:
 
 
 def _apply(final: dict, ruling: dict, by: dict[str, dict]) -> None:
+    """One adjudicator ruling into the final answer. A list cell (claims, weak examples, mix-ups,
+    filler) is replaced whole by the ruling's corrected list."""
     item, value = ruling["item"], str(ruling.get("value", "")).strip()
     sided = by.get(ruling.get("sided_with"), by["A"])
-    if item == "send_readiness":
-        final["send_readiness"] = {"grade": int(value), "reason": ruling.get("reason", ""),
-                                   "edits": sided["send_readiness"].get("edits", [])}
-    elif item == "claims":
+    if item == "claims":
         final["claims"] = ruling["claims"]
+    elif item in LISTED:
+        final["problems"][item] = ruling[item]
+    elif item in RATED:
+        final["problems"][item] = {"level": value.lower(), "quote": ruling.get("quote", ""),
+                                   "why": ruling.get("reason", "")}
     elif item.startswith("req:"):
         row = next(r for r in final["requirements"] if r["id"] == item[4:])
         theirs = next(r for r in sided["requirements"] if r["id"] == item[4:])
         row.update(addressed=_yn(value), quote=ruling.get("quote", theirs.get("quote", "")),
                    evidence_used=ruling.get("evidence_used", theirs.get("evidence_used", [])),
-                   presented_as=ruling.get("presented_as", theirs.get("presented_as", "none")))
-    elif item.startswith("tick:"):
-        final["ticks"][item[5:]] = _yn(value) == "Y"
+                   presented_as=ruling.get("presented_as", theirs.get("presented_as", "none")),
+                   reason=ruling.get("reason", theirs.get("reason", "")))
     else:
         final["checklist"][item] = {"answer": _yn(value), "quote": ruling.get("quote", ""),
                                     "reason": ruling.get("reason", "")}
-
-
-# Ticks code works out from the judge's own answers (eval-set plan Decision log 2026-10-29), so a
-# tick can't contradict them; the judge still answers all six (`judge_ticks`), and two judges
-# splitting on a derived tick isn't a cell to adjudicate. The owner's sounds_ai is a count rule
-# (letter_metrics C5b): the judge's own sounds_ai is kept as an alarm and never calibrated on.
-DERIVED_TICKS = ("missed_important", "no_personal_reason")
-ALARM_TICKS = ("sounds_ai",)
 
 
 def missable_rows(ref: dict) -> list[str]:
@@ -599,9 +650,68 @@ def missed_rows(ref: dict, requirements: list[dict]) -> list[str]:
     return [rid for rid in missable_rows(ref) if rid not in said]
 
 
-def derived_ticks(ref: dict, answer: dict) -> dict[str, bool]:
-    return {"missed_important": bool(missed_rows(ref, answer["requirements"])),
-            "no_personal_reason": _yn(answer["checklist"]["D4b"]["answer"]) == "N"}
+def letter_issues(ref: dict, answer: dict, words: int, stock_hits: int) -> list[dict]:
+    """Every problem in one letter (standard §7), as letter_points issues: the judge's (untrue claims,
+    weak examples, mix-ups, generic, no personal reason) with the judge's levels, and code's (missed
+    rows from the judge's row answers with the answer key's level, too long from the filler list and
+    the word count, stock phrasing from letter_metrics' count)."""
+    flags, probs = _flags(ref), answer["problems"]
+    out = [{"metric": "untrue", "level": claim_level(c), "quote": c.get("quote", ""), "label": c["label"]}
+           for c in answer["claims"] if c["label"] in UNTRUE]
+    out += [{"metric": "missed_row", "level": lp.missed_level(flags[rid][0]), "row": rid}
+            for rid in missed_rows(ref, answer["requirements"])]
+    out += [{"metric": "weak_example", "level": p["level"], "quote": p.get("quote", "")} for p in probs["weak_examples"]]
+    out += [{"metric": "mix_up", "level": p["level"], "quote": p.get("quote", "")} for p in probs["mix_ups"]]
+    out += [{"metric": name, "level": probs[name]["level"], "quote": probs[name].get("quote", "")}
+            for name in RATED if probs[name]["level"] != "none"]
+    too_long = lp.too_long_level(len(probs["filler"]), words)
+    if too_long:
+        out.append({"metric": "too_long", "level": too_long, "filler": len(probs["filler"]), "words": words})
+    stock = lp.stock_level(stock_hits)
+    if stock:
+        out.append({"metric": "stock_phrasing", "level": stock, "hits": stock_hits})
+    return out
+
+
+def _profile_evidence() -> list[str]:
+    """The profile texts letter_metrics' profile-copy check runs against (as letter_lab._v2_profile_inputs)."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+
+    from app.llm.letter.runner import load_profile
+
+    engine = create_engine(f"sqlite:///{V2_DB.as_posix()}")
+    try:
+        with Session(engine) as db:
+            p = load_profile(db, PROFILE_ID)
+            quals = [", ".join(x for x in (q.title, q.institution, q.field_of_study) if x) for q in p.qualifications]
+            return [t for t in (p.summary, *(e.description for e in p.experiences), *quals,
+                                *(s.name for s in p.skills)) if t]
+    finally:
+        engine.dispose()
+
+
+def _run_letters(run: str) -> dict[str, str]:
+    """key -> letter text for every letter in a run. A probe run's letters replace their originals
+    in the run they copy, so a probe is counted among the same letters as the original."""
+    def read(r: str) -> dict[str, str]:
+        return {p.stem: p.read_text(encoding="utf-8") for p in sorted((V2_RUNS / r / "letters").glob("*.txt"))}
+
+    meta_path = V2_RUNS / run / "run.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
+    return {**read(meta["probe_of"]), **read(run)} if meta.get("probe_of") else read(run)
+
+
+def stock_hits(run: str) -> dict[str, int]:
+    """key -> letter_metrics' stock-phrase hits (C5b) for every letter in a run. The count includes
+    profile lines reused across the run's letters, so it is counted over the whole run."""
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import letter_metrics as lm
+
+    bodies = {k: lm.body(t) for k, t in _run_letters(run).items()}
+    evidence = _profile_evidence()
+    recycled = lm.recycled_runs({k: lm.profile_copy(b, evidence)["runs"] for k, b in bodies.items()}, bodies)
+    return {k: lm.stock_phrases(b, recycled[k])["total"] for k, b in bodies.items()}
 
 
 def _versions(tag: str, lid: str) -> list[dict]:
@@ -621,7 +731,10 @@ def final_v2(tag: str, graders: tuple[str, ...] = GRADERS) -> dict[str, dict]:
     """lid -> the final answer: agreed cells from grader A, split cells from the adjudicator."""
     import copy
 
+    from app.llm.letter.rubric import word_count
+
     mapping, answers, problems = _answers(tag, graders)
+    hits = {run: stock_hits(run) for run in sorted({m["run"] for m in mapping.values()})}
     finals = {}
     for lid, by in answers.items():
         first = by[graders[0]]  # one grader (a calibration run): its answers are final, nothing splits
@@ -639,22 +752,29 @@ def final_v2(tag: str, graders: tuple[str, ...] = GRADERS) -> dict[str, dict]:
         for item in split:
             _apply(final, rulings[item], by)
         m = mapping[lid]
-        final, found = check_quotes(final, _letter(m["run"], m["key"], V2_RUNS))
+        letter = _letter(m["run"], m["key"], V2_RUNS)
+        final, found = check_quotes(final, letter)
         claims, ref = final["claims"], _reference(m["key"])
         gap_rows = {r["id"] for r in ref["requirements"] if r["status"] == "gap"}
+        words = word_count(letter)
+        issues = letter_issues(ref, final, words, hits[m["run"]].get(m["key"], 0))
         finals[lid] = {
             **m, "letter": lid,
-            "send_readiness": final["send_readiness"]["grade"],
+            "points": lp.score(issues),
+            "by_metric": lp.by_metric(issues),
+            "issues": issues,
             "untrue": "Y" if any(c["label"] in UNTRUE for c in claims) else "N",
             "counts": {label: sum(c["label"] == label for c in claims) for label in LABELS}
             | {"gap_fabrications": sum(c["label"] == "fabricated" and c.get("requirement") in gap_rows
                                        for c in claims)},
-            "ticks": {**final["ticks"], **derived_ticks(ref, final)},
-            "judge_ticks": final["ticks"],
             "missed_rows": missed_rows(ref, final["requirements"]),
+            "words": words,
+            "stock_hits": hits[m["run"]].get(m["key"], 0),
             "checklist": {d: _yn(final["checklist"][d]["answer"]) for d in CHECKLIST},
             "requirements": final["requirements"],
             "claims": claims,
+            "problems": final["problems"],
+            "note": final.get("note", ""),
             "checklist_doubts": [{**d, "grader": g} for g in graders for d in by[g].get("checklist_doubts", [])],
             "quote_problems": problems.get(lid, []) + [f"final: {p}" for p in found],
             "adjudicated": split,
@@ -699,9 +819,9 @@ def cmd_v2_merge(args) -> int:
         rows = {f["key"]: f for f in finals.values() if f["run"] == run}
         path = V2_RUNS / run / f"judge-{args.tag}.json"
         path.write_text(json.dumps(rows, indent=2, ensure_ascii=False), encoding="utf-8")
-        grades = [f["send_readiness"] for f in rows.values()]
-        print(f"{run}: {len(rows)} letters, send-readiness mean {sum(grades) / len(grades):.2f}, "
-              f"send-ready (3+) {sum(g >= 3 for g in grades)}/{len(rows)}, "
+        points = [f["points"] for f in rows.values()]
+        print(f"{run}: {len(rows)} letters, points mean {sum(points) / len(points):.2f} "
+              f"(range {min(points):.2f}-{max(points):.2f}), "
               f"untrue {sum(f['untrue'] == 'Y' for f in rows.values())}/{len(rows)} -> {_rel(path)}")
     doubts = PANELS / args.tag / "checklist-doubts.md"
     doubts.write_text(_doubts_md(args.tag, finals), encoding="utf-8")
@@ -824,10 +944,12 @@ JUDGE_TASKS = {
         "You are one fresh judge for ONE cover letter, letter {lid} of job {job}. Accuracy and consistency "
         "matter more than speed.\n\n"
         "Work in the standard's order (§3): the profile, then the ad, then the reference checklist, and only "
-        "then the letter. Answer §4, §5, §6, §7 in turn. Quote the letter's exact words for every addressed "
-        "row and every claim. Code checks each quote against the letter, and an addressed row whose quote "
-        "isn't there counts as not addressed. Grade by the reference checklist even where you doubt it, and "
-        "put the doubt in `checklist_doubts`. Length is not quality.\n\n"
+        "then the letter. Answer §4, §5, §6 and §7 in turn. Quote the letter's exact words for every addressed "
+        "row, every claim and every problem. Code checks each quote against the letter: an addressed row "
+        "whose quote isn't there counts as not addressed, and a claim or problem whose quote isn't there is "
+        "dropped. Grade by the reference checklist even where you doubt it, and put the doubt in "
+        "`checklist_doubts`. You find problems and set their levels; you never score the letter. Length is "
+        "not quality.\n\n"
         "Answer with the §9 JSON for letter {lid}."),
     "adjudicate": (
         "You are the adjudicator for ONE cover letter, letter {lid} of job {job}. Two judges (A and B) applied "
@@ -836,12 +958,15 @@ JUDGE_TASKS = {
         "rule by the standard's text, not by which judge argued better. Where the standard is silent, say so "
         "and follow its stated tests.\n\n"
         "Answer with one ruling per cell, its `item` copied from the disagreements. What goes in `value`:\n"
-        "- `send_readiness`: 1-4. `sided_with` picks whose edit list is kept.\n"
         "- a `D..` question: Y or N, with the `quote` it rests on.\n"
-        "- `req:<id>`: Y or N. Add `quote`, `presented_as` and `evidence_used` when your answer differs from "
-        "the judge you side with; otherwise theirs are kept.\n"
-        "- `tick:<name>`: Y or N.\n"
-        "- `claims`: the word `claims`, plus a `claims` field holding the full corrected list in the §9 shape."),
+        "- `req:<id>`: Y or N, by §4.1. Add `quote`, `presented_as`, `evidence_used` and `reason` when your "
+        "answer differs from the judge you side with; otherwise theirs are kept.\n"
+        "- `claims`: the word `claims`, plus a `claims` field holding the full corrected list in the §9 shape, "
+        "each untrue claim with its level (§7.2).\n"
+        "- `weak_examples`, `mix_ups` or `filler`: the item's name, plus a field of that name holding the full "
+        "corrected list in the §9 shape (an empty list if the letter doesn't have the problem).\n"
+        "- `generic` or `no_personal_reason`: none, low or high (§7.6, §7.7), with the `quote` that best "
+        "shows it."),
 }
 
 
@@ -868,9 +993,16 @@ def _list(item: dict) -> dict:
 _STR = {"type": "string"}
 _YN = {"type": "string", "enum": ["Y", "N"]}
 _PRESENTED = {"type": "string", "enum": list(PRESENTED)}
+_LEVEL = {"type": "string", "enum": list(lp.LEVELS)}
 _CLAIM = _obj({"quote": _STR, "about": {"type": "string", "enum": ["candidate", "employer"]},
-               "label": {"type": "string", "enum": list(LABELS)}, "source": _list(_STR),
+               "label": {"type": "string", "enum": list(LABELS)},
+               "level": {"type": ["string", "null"]}, "source": _list(_STR),  # low / high, checked in validate
                "requirement": {"type": ["string", "null"]}, "why": _STR})
+_WEAK = _obj({"point": _STR, "quote": _STR, "used": _list(_STR), "stronger": _list(_STR), "level": _LEVEL, "why": _STR})
+_MIX = _obj({"quote": _STR, "experiences": _list(_STR), "paragraphs": _list({"type": "integer"}), "level": _LEVEL,
+             "why": _STR})
+_FILLER = _obj({"quote": _STR, "why": _STR})
+_RATED = _obj({"level": {"type": "string", "enum": list(RATED_LEVELS)}, "quote": _STR, "why": _STR})
 
 
 def grade_schema(lid: str) -> dict:
@@ -881,20 +1013,19 @@ def grade_schema(lid: str) -> dict:
                                     "evidence_used": _list(_STR), "reason": _STR})),
         "claims": _list(_CLAIM),
         "checklist": _obj({d: _obj({"answer": _YN, "quote": _STR, "reason": _STR}) for d in CHECKLIST}),
-        "send_readiness": _obj({"grade": {"type": "integer", "enum": [1, 2, 3, 4]},
-                                "edits": _list(_obj({"what": _STR, "sentences": {"type": "integer"}})),
-                                "reason": _STR}),
-        "ticks": _obj({t: {"type": "boolean"} for t in TICKS}),
+        "problems": _obj({"weak_examples": _list(_WEAK), "mix_ups": _list(_MIX), "generic": _RATED,
+                          "no_personal_reason": _RATED, "filler": _list(_FILLER)}),
         "note": _STR,
         "checklist_doubts": _list(_obj({"id": _STR, "why": _STR})),
     })
-    return _obj({"standard": {"type": "string", "enum": ["v2"]}, "letters": _obj({lid: letter})})
+    return _obj({"standard": {"type": "string", "enum": [STANDARD_TAG]}, "letters": _obj({lid: letter})})
 
 
 ADJUDICATION_SCHEMA = _obj({"rulings": _list(_obj(
     {"item": _STR, "value": _STR, "reason": _STR, "sided_with": {"type": "string", "enum": ["A", "B", "neither"]},
-     "quote": _STR, "presented_as": _PRESENTED, "evidence_used": _list(_STR), "claims": _list(_CLAIM)},
-    optional=("quote", "presented_as", "evidence_used", "claims")))})
+     "quote": _STR, "presented_as": _PRESENTED, "evidence_used": _list(_STR), "claims": _list(_CLAIM),
+     "weak_examples": _list(_WEAK), "mix_ups": _list(_MIX), "filler": _list(_FILLER)},
+    optional=("quote", "presented_as", "evidence_used", "claims", "weak_examples", "mix_ups", "filler")))})
 
 
 def _packet_body(packet: str) -> str:
@@ -1044,15 +1175,26 @@ def _check_judge_dir() -> None:
 def _answer_errors(stage: str, answer: dict, lid: str, key: str, disagreements: dict | None) -> list[str]:
     if stage == "grade":
         letters = answer.get("letters", {})
+        if answer.get("standard") != STANDARD_TAG:
+            return [f"standard must be {STANDARD_TAG!r}"]
         if list(letters) != [lid]:
             return [f"answer is for {list(letters)}, not {lid}"]
         return validate(letters[lid], _reference(key))
     rulings = {r.get("item"): r for r in answer.get("rulings", [])}
     errs = [f"no ruling for {c['item']}" for c in disagreements["cells"] if c["item"] not in rulings]
-    if "send_readiness" in rulings and str(rulings["send_readiness"].get("value", "")).strip() not in ("1", "2", "3", "4"):
-        errs.append("send_readiness ruling must be 1-4")
-    if "claims" in rulings and not isinstance(rulings["claims"].get("claims"), list):
-        errs.append("the claims ruling has no claims list")
+    for item in ("claims", *LISTED):
+        if item in rulings and not isinstance(rulings[item].get(item), list):
+            errs.append(f"the {item} ruling has no {item} list")
+    if "claims" in rulings and isinstance(rulings["claims"].get("claims"), list):
+        errs += [f"claims ruling: claim {i + 1}'s level must be low or high"
+                 for i, c in enumerate(rulings["claims"]["claims"]) if c.get("label") in UNTRUE and c.get("level") not in lp.LEVELS]
+    for item in ("weak_examples", "mix_ups"):
+        if item in rulings and isinstance(rulings[item].get(item), list):
+            errs += [f"{item} ruling: entry {i + 1}'s level must be low or high"
+                     for i, p in enumerate(rulings[item][item]) if p.get("level") not in lp.LEVELS]
+    for item in RATED:
+        if item in rulings and str(rulings[item].get("value", "")).strip().lower() not in RATED_LEVELS:
+            errs.append(f"{item} ruling must be none, low or high")
     return errs
 
 
@@ -1089,7 +1231,11 @@ def _judge_one(backend, version: dict, stage: str, panel: Path, m: dict, lid: st
         rejected.unlink(missing_ok=True)
         if stage == "grade":
             ans = answer["letters"][lid]
-            return True, f"grade {ans['send_readiness']['grade']}, {claim_counts(ans['claims'])} ({facts['seconds']} s)"
+            probs = ans["problems"]
+            return True, (f"{claim_counts(ans['claims'])}; weak {_levels(p['level'] for p in probs['weak_examples'])}, "
+                          f"mix-ups {_levels(p['level'] for p in probs['mix_ups'])}, generic {probs['generic']['level']}, "
+                          f"reason {probs['no_personal_reason']['level']}, filler {len(probs['filler'])} "
+                          f"({facts['seconds']} s)")
         return True, f"{len(answer['rulings'])} ruling(s) ({facts['seconds']} s)"
     return False, "; ".join(errs)
 
@@ -1222,46 +1368,73 @@ def cmd_v2_split(args) -> int:
     return 0
 
 
-def example_draft(key: str, run: str, o: dict) -> str:
-    """One worked example (standard §10), drafted from the owner's grade with its reading left to
-    write. sounds_ai is left out: the owner's tick is the phrase-count rule, which a judge must not
-    learn (it would learn the count instead of hearing the letter)."""
+PROBLEM_NAMES = {"untrue": "Untrue", "missed_row": "Missed row", "weak_example": "Weak example",
+                 "mix_up": "Mixed-up experiences", "generic": "Generic body", "no_personal_reason": "No personal reason",
+                 "too_long": "Too long"}
+
+
+def example_draft(key: str, run: str, labels: dict) -> str:
+    """One worked example (standard §10), drafted from the owner's points labels with its reading
+    left to write: every problem with its level and the owner's note, and "none" for a problem the
+    letter doesn't have. Stock phrasing is left out: it is the owner's phrase count, which a judge
+    must not learn (it would learn the count instead of hearing the letter). No points are shown:
+    the judge never sees what a problem costs."""
     from app.llm.letter.rubric import word_count
 
     ad = json.loads((V2_ADS / f"{key}.json").read_text(encoding="utf-8"))
-    rows = "\n".join(f"- {r['id']} [{r['importance']} · {r['letter_role']} · {r['status']}] {r['text']}"
-                     for r in _reference(key)["requirements"] if r["letter_role"] != "not_for_letter")
+    ref = _reference(key)
+    must = {rid for rid, (m, _) in _flags(ref).items() if m}
+    rows = "\n".join(f"- {r['id']} [{r['importance']} · {r['letter_role']} · {r['status']}] "
+                     f"must_cover={'yes' if r['id'] in must else 'no'} {r['text']}"
+                     for r in ref["requirements"] if r["letter_role"] != "not_for_letter")
     letter = _letter(run, key, V2_RUNS)
-    ticks = ", ".join(t for t in TICKS if t not in ALARM_TICKS and _ticked(o.get(t))) or "none"
-    untrue = "Y: " + (o.get("untrue_text") or "") if _yn(o["untrue"]) == "Y" else "N"
+    issues = lp.label_issues(labels)
+    lines = []
+    for metric, name in PROBLEM_NAMES.items():
+        mine = [i for i in issues if i["metric"] == metric]
+        if not mine:
+            lines.append(f"- {name}: none")
+        for i in mine:
+            what = f" {i['row']}" if i.get("row") else (f" {i['quote']!r}" if i.get("quote") else "")
+            note = i.get("note") or i.get("why") or ""
+            lines.append(f"- {name}{what}: **{i['level']}**" + (f". The candidate's note: {note}" if note else ""))
     return (f"{EXAMPLE_HEAD}{key}\n\n"
             f"Job: {ad['title']}, {ad.get('company') or '(recruiter)'}\n\nChecklist rows:\n{rows}\n\n"
             f"The letter ({word_count(letter)} words):\n\n```\n{letter}\n```\n\n"
-            f"The candidate's grade: send-readiness **{o['send_readiness']}**. Untrue: {untrue}. "
-            f"Reasons ticked: {ticks}.\n\nThe candidate's note: {o.get('note') or '(none)'}\n\n"
+            "The candidate's problems, with their levels:\n" + "\n".join(lines) + "\n\n"
             f"Worked reading: {READING_TODO}\n")
 
 
+def read_labels(path: Path | None = None) -> dict[str, dict]:
+    """key -> the owner's points labels for one letter (labels.json `letters`)."""
+    path = path or POINTS_LABELS
+    if not path.exists():
+        raise SystemExit(f"No {_rel(path)}: the owner's points labels")
+    return json.loads(path.read_text(encoding="utf-8"))["letters"]
+
+
 def cmd_v2_examples(args) -> int:
-    """Draft evals/work/v2/calibration/examples.md from the calibration half, once. The worked
-    readings are then written by hand and confirmed by the owner; v2-run refuses the file until
-    every one is written."""
+    """Draft the worked examples file from the calibration half, once. The worked readings are then
+    written by hand and confirmed by the owner; v2-run refuses the file until every one is written."""
     if CALIBRATION_EXAMPLES.exists():
         raise SystemExit(f"{_rel(CALIBRATION_EXAMPLES)} exists: edit it by hand")
     split = json.loads(CALIBRATION_SPLIT.read_text(encoding="utf-8")) if CALIBRATION_SPLIT.exists() else None
     if split is None:
         raise SystemExit(f"No {_rel(CALIBRATION_SPLIT)}: run `v2-split <run>` first")
-    owner = read_owner(V2_RUNS / split["run"] / "grades-owner.csv")
+    labels = read_labels()
+    missing = [k for k in split["calibration"] if k not in labels]
+    if missing:
+        raise SystemExit(f"No points labels for {', '.join(missing)}")
     head = (f"# Worked examples (standard §10): the calibration half of `{split['run']}`\n\n"
             "Gitignored: real letters. Only calibration-half letters; v2-run never shows a letter its own.\n")
-    blocks = [example_draft(k, split["run"], owner[k]) for k in split["calibration"]]
+    blocks = [example_draft(k, split["run"], labels[k]) for k in split["calibration"]]
     CALIBRATION_EXAMPLES.write_text(head + "\n" + "\n".join(blocks), encoding="utf-8")
     print(f"{len(blocks)} examples drafted -> {_rel(CALIBRATION_EXAMPLES)} (write each worked reading)")
     return 0
 
 
 # Probes (stage 8 step 6; metrics plan §6.6 as changed 2026-10-29): copies of letters with filler
-# added (`pad`: no padded copy may grade higher than its original) or an untrue claim planted
+# added (`pad`: no padded copy may score more points than its original) or an untrue claim planted
 # (`plant`: the judge must flag it). A probe run is a run folder like any other, so v2-pack packs
 # it blind; its run.json says which run it copies and holds the spec.
 
@@ -1303,7 +1476,7 @@ def cmd_v2_probe(args) -> int:
 
 
 def probe_results(meta: dict, probe_judge: dict, original_judge: dict) -> list[dict]:
-    """One result per probe: pad passes when the copy grades no higher than its original; plant
+    """One result per probe: pad passes when the copy scores no more points than its original; plant
     passes when the judge labels a claim in the planted text untrue."""
     from app.llm.letter.tools.check_requirements import quote_in_letter
 
@@ -1313,13 +1486,18 @@ def probe_results(meta: dict, probe_judge: dict, original_judge: dict) -> list[d
         if rec is None:
             out.append({**p, "passed": None, "result": "not judged"})
         elif p["kind"] == "pad":
-            orig = original_judge.get(p["key"], {}).get("send_readiness")
-            passed = None if orig is None else rec["send_readiness"] <= orig
-            out.append({**p, "passed": passed, "result": f"copy {rec['send_readiness']}, original {orig or 'not judged'}"})
+            orig = original_judge.get(p["key"], {}).get("points")
+            passed = None if orig is None else rec["points"] <= orig
+            caught = [f["quote"] for f in rec.get("problems", {}).get("filler", [])
+                      if quote_in_letter(f["quote"], p["text"])]
+            out.append({**p, "passed": passed,
+                        "result": f"copy {rec['points']}, original {'not judged' if orig is None else orig}; "
+                                  f"padding listed as filler {len(caught)}x"})
         else:
             hits = [c for c in rec["claims"] if c["label"] in UNTRUE and quote_in_letter(c["quote"], p["text"])]
             out.append({**p, "passed": bool(hits),
-                        "result": "; ".join(f"{c['label']}: {c['quote']!r}" for c in hits) or "not flagged"})
+                        "result": "; ".join(f"{c['label']} ({claim_level(c)}): {c['quote']!r}" for c in hits)
+                                  or "not flagged"})
     return out
 
 
@@ -1345,30 +1523,16 @@ def cmd_v2_probe_report(args) -> int:
     return 1 if failed else 0
 
 
-# Agreement with the owner (metrics plan §6.4): counts, because the check half is 8-9 letters
-
-def weighted_kappa(a: list[int], b: list[int], levels: int = 4) -> float | None:
-    """Cohen's kappa with quadratic weights on a 1..levels scale: 1 = perfect, 0 = chance, and
-    a near miss costs less than a far one. None when it is undefined (every grade the same)."""
-    n = len(a)
-    if n == 0:
-        return None
-
-    def w(i: int, j: int) -> float:
-        return (i - j) ** 2 / (levels - 1) ** 2
-
-    observed = sum(w(x, y) for x, y in zip(a, b)) / n
-    pa = [a.count(i) / n for i in range(1, levels + 1)]
-    pb = [b.count(i) / n for i in range(1, levels + 1)]
-    expected = sum(w(i, j) * pa[i - 1] * pb[j - 1] for i in range(1, levels + 1) for j in range(1, levels + 1))
-    return None if expected == 0 else 1 - observed / expected
-
+# Agreement with the owner (metrics plan §6.4): counts, because the check half is 8-9 letters. The
+# owner's side is the points labels (POINTS_LABELS), scored by the same letter_points.score as the judge.
 
 def _ticked(v: str | None) -> bool:
     return (v or "").strip().lower() in ("y", "yes", "x", "1", "true")
 
 
 def read_owner(path: Path) -> dict[str, dict]:
+    """The owner's stage-7 1-4 grades (grades-owner.csv). Kept for the report and the halves (v2-split);
+    the points judge is checked against the points labels instead."""
     with path.open(encoding="utf-8-sig") as fh:  # -sig: Excel saves CSVs with a BOM
         rows = {r["key"]: r for r in csv.DictReader(fh) if (r.get("send_readiness") or "").strip()}
     for key, r in rows.items():
@@ -1379,30 +1543,30 @@ def read_owner(path: Path) -> dict[str, dict]:
     return rows
 
 
-# The pass bar (eval-set plan Decision log 2026-10-29), fixed before any check-half run. Written for
-# 9 letters and scaled: ready / not ready and D4b at least n - 2, within ±1 at least n - 1.
-BASELINE_GRADE = 2  # the owner's most common grade at stage 7: a judge must beat answering it every time
+# The pass bar on points (eval-set plan Decision log 2026-11-04), fixed before any judge run. Written
+# for 9 letters and scaled: within ±POINTS_WITHIN on at least n - WITHIN_SLACK letters.
+POINTS_WITHIN = 1.0
+WITHIN_SLACK = 1
 MISSED_RECALL_BAR = 0.8
-UNGATED_TICKS = ("generic", "weak_example", "too_long")  # base rates ~60%: 9 letters can't tell a judge from chance
+UNGATED = ("weak_example", "mix_up", "generic", "no_personal_reason", "too_long")  # reported: too few letters to gate
+COMPARED = ("untrue", "missed_row", *UNGATED)  # stock phrasing is code's on both sides
 
 
-def owner_missed_rows(note: str | None) -> list[str]:
-    """The row ids in the owner's "Missed R5 (...) and R8 (...)" note (stage 7's convention)."""
-    m = re.match(r"\s*Missed\s+([^;]*)", re.sub(r"\([^()]*\)", "", note or ""))
-    return re.findall(r"\bR\d+[a-z]?\b", m.group(1)) if m else []
+def guess_points(labels: dict[str, dict]) -> float:
+    """The constant guess a judge must beat: the mean of the owner's points on the calibration half
+    (known before the check half is graded)."""
+    keys = [k for k in calibration_half("calibration") if k in labels]
+    return round(sum(lp.score(lp.label_issues(labels[k])) for k in keys) / len(keys), 2)
 
 
-def _missed_agreement(keys: list[str], owner: dict, judge: dict, refs: dict[str, dict]) -> dict:
-    """Row by row: the owner's missed rows (from the notes) against the rows the judge didn't see
-    addressed. An owner row outside the missable set is listed as `stray` (a note to recheck)."""
+def _missed_agreement(keys: list[str], owner_issues: dict, judge: dict, refs: dict[str, dict]) -> dict:
+    """Row by row: the owner's missed rows (labels) against the rows the judge didn't see addressed.
+    An owner row outside the missable set is listed as `stray` (a label to recheck)."""
     out = {"owner": 0, "caught": 0, "owner_only": [], "judge_only": [], "stray": [], "rows": 0}
     for k in keys:
-        if k not in refs:
-            continue
-        can = set(missable_rows(refs[k]))
-        own = set(owner_missed_rows(owner[k].get("note")))
-        theirs = set(judge[k]["missed_rows"] if "missed_rows" in judge[k]
-                     else missed_rows(refs[k], judge[k]["requirements"]))
+        can = set(missable_rows(refs[k])) if k in refs else set()
+        own = {i["row"] for i in owner_issues[k] if i["metric"] == "missed_row"}
+        theirs = set(judge[k]["missed_rows"])
         out["rows"] += len(can)
         out["owner"] += len(own & can)
         out["caught"] += len(own & can & theirs)
@@ -1412,106 +1576,147 @@ def _missed_agreement(keys: list[str], owner: dict, judge: dict, refs: dict[str,
     return out
 
 
-def agreement(owner: dict[str, dict], judge: dict[str, dict], accepted: set[str] = frozenset(),
-              refs: dict[str, dict] | None = None) -> dict:
-    """The judge against the owner on the letters both graded. A judge "untrue" flag the owner
-    accepted (`accepted`) was a real miss by the owner, so it counts as the owner's Y. With the
-    reference checklists (`refs`), missed rows are compared row by row too."""
-    keys = sorted(set(owner) & set(judge))
-    o = [int(owner[k]["send_readiness"]) for k in keys]
-    j = [judge[k]["send_readiness"] for k in keys]
-    own_untrue = {k for k in keys if _yn(owner[k]["untrue"]) == "Y" or k in accepted}
+def agreement(labels: dict[str, dict], judge: dict[str, dict], refs: dict[str, dict],
+              guess: float | None = None, accepted: set[str] = frozenset()) -> dict:
+    """The judge against the owner's points labels on the letters both have. A judge "untrue" flag
+    the owner accepted (`accepted`) was a real miss by the owner, so it counts as the owner's."""
+    import statistics
+
+    keys = sorted(set(labels) & set(judge))
+    owner_issues = {k: lp.label_issues(labels[k]) for k in keys}
+    own = {k: lp.score(owner_issues[k]) for k in keys}
+    jud = {k: judge[k]["points"] for k in keys}
+    gaps = [abs(own[k] - jud[k]) for k in keys]
+    metrics = {}
+    for m in COMPARED:
+        o = {k: lp.by_metric(owner_issues[k])[m] for k in keys}
+        j = {k: judge[k]["by_metric"][m] for k in keys}
+        metrics[m] = {"owner": sum(bool(o[k]) for k in keys), "judge": sum(bool(j[k]) for k in keys),
+                      "presence": sum(bool(o[k]) == bool(j[k]) for k in keys),
+                      "same": sum(o[k] == j[k] for k in keys),
+                      "owner_only": [k for k in keys if o[k] and not j[k]],
+                      "judge_only": [k for k in keys if j[k] and not o[k]],
+                      "other_level": [k for k in keys if o[k] and j[k] and o[k] != j[k]],
+                      "pairs": {k: (o[k], j[k]) for k in keys}}
+    own_untrue = {k for k in keys if labels[k].get("untrue") or k in accepted}
     judge_untrue = {k for k in keys if judge[k]["untrue"] == "Y"}
-    ticks = {}
-    for t in TICKS:
-        ov = {k for k in keys if _ticked(owner[k].get(t))}
-        jv = {k for k in keys if judge[k]["ticks"][t]}
-        ticks[t] = {"agree": len(keys) - len(ov ^ jv), "owner_only": sorted(ov - jv), "judge_only": sorted(jv - ov)}
+    corr = None
+    if len(keys) > 2 and len(set(own.values())) > 1 and len(set(jud.values())) > 1:
+        corr = statistics.correlation([own[k] for k in keys], [jud[k] for k in keys])
     return {
         "n": len(keys),
-        "exact": sum(x == y for x, y in zip(o, j)),
-        "baseline_exact": sum(x == BASELINE_GRADE for x in o),
-        "ready": sum((x >= 3) == (y >= 3) for x, y in zip(o, j)),
-        "within_1": sum(abs(x - y) <= 1 for x, y in zip(o, j)),
-        "kappa": weighted_kappa(o, j),
-        "missed": None if refs is None else _missed_agreement(keys, owner, judge, refs),
-        "pairs": {k: (x, y) for k, x, y in zip(keys, o, j)},
+        "pairs": {k: (own[k], jud[k]) for k in keys},
+        "mean_gap": sum(gaps) / len(gaps) if keys else None,
+        "within": sum(g <= POINTS_WITHIN + 1e-9 for g in gaps),
+        "correlation": corr,
+        "guess": guess,
+        "guess_gap": None if guess is None or not keys else sum(abs(own[k] - guess) for k in keys) / len(keys),
+        "guess_within": None if guess is None else sum(abs(own[k] - guess) <= POINTS_WITHIN + 1e-9 for k in keys),
+        "metrics": metrics,
+        "missed": _missed_agreement(keys, owner_issues, judge, refs),
         "untrue": {"tp": len(own_untrue & judge_untrue), "fn": sorted(own_untrue - judge_untrue),
                    "tn": len(set(keys) - own_untrue - judge_untrue), "fp": sorted(judge_untrue - own_untrue)},
-        "ticks": ticks,
     }
 
 
 def pass_bar(ag: dict) -> list[tuple[str, str, str, bool | None]]:
     """(measure, result, bar, passed) per gated measure; passed is None when nothing tests it."""
-    n, u, mi, d4b = ag["n"], ag["untrue"], ag["missed"], ag["ticks"]["no_personal_reason"]
+    n, u, mi = ag["n"], ag["untrue"], ag["missed"]
     pos = u["tp"] + len(u["fn"])
-    rows = [
-        ("Send-readiness, exact", f"{ag['exact']}/{n}", f"more than always-{BASELINE_GRADE} ({ag['baseline_exact']}/{n})",
-         ag["exact"] > ag["baseline_exact"]),
-        ("Ready / not ready (3+ vs ≤ 2)", f"{ag['ready']}/{n}", f"at least {n - 2}", ag["ready"] >= n - 2),
-        ("Send-readiness, within ±1", f"{ag['within_1']}/{n}", f"at least {n - 1}", ag["within_1"] >= n - 1),
+    want = max(0, n - WITHIN_SLACK)
+    guess_within = "" if ag["guess_within"] is None else f" (the constant guess: {ag['guess_within']}/{n})"
+    guess_gap = "" if ag["guess_gap"] is None else f" ({ag['guess_gap']:.2f}, always {ag['guess']:g})"
+    return [
+        (f"Points within ±{POINTS_WITHIN:g} of the owner's", f"{ag['within']}/{n}", f"at least {want}{guess_within}",
+         ag["within"] >= want),
+        ("Mean points gap", f"{ag['mean_gap']:.2f}", f"below the constant guess's{guess_gap}",
+         None if ag["guess_gap"] is None else ag["mean_gap"] < ag["guess_gap"]),
+        ("Missed rows: the owner's, also missed by the judge", f"{mi['caught']}/{mi['owner']}",
+         f"at least {MISSED_RECALL_BAR:.0%}", mi["caught"] >= MISSED_RECALL_BAR * mi["owner"] if mi["owner"] else None),
         ("Untrue: caught the owner's flags (TPR)", f"{u['tp']}/{pos}", "all (planted claims test it too)",
          u["tp"] == pos if pos else None),
-        ("No personal reason (D4b)", f"{d4b['agree']}/{n}", f"at least {n - 2}", d4b["agree"] >= n - 2),
     ]
-    if mi is not None:
-        rows.append(("Missed rows: the owner's, also missed by the judge", f"{mi['caught']}/{mi['owner']}",
-                     f"at least {MISSED_RECALL_BAR:.0%}", mi["caught"] >= MISSED_RECALL_BAR * mi["owner"] if mi["owner"] else None))
-    return rows
 
 
-def _tick_use(t: str) -> str:
-    if t in DERIVED_TICKS:
-        return "derived (rows)" if t == "missed_important" else "derived (D4b)"
-    return "alarm: the judge's ear vs the owner's count rule" if t in ALARM_TICKS else "reported, not gated"
+def _show(levels: list[str]) -> str:
+    return ", ".join(levels) or "-"
 
 
-def _agreement_md(run: str, tag: str, ag: dict, judge: dict[str, dict], owner: dict[str, dict]) -> str:
+def _row_quote(rec: dict, rid: str) -> str:
+    return next((r.get("quote", "") for r in rec["requirements"] if r["id"] == rid), "")
+
+
+def _row_reason(rec: dict, rid: str) -> str:
+    return next((r.get("reason", "") for r in rec["requirements"] if r["id"] == rid), "")
+
+
+def _agreement_md(run: str, tag: str, ag: dict, judge: dict[str, dict], labels: dict[str, dict]) -> str:
     n, u = ag["n"], ag["untrue"]
     neg = u["tn"] + len(u["fp"])
-    kappa = "undefined" if ag["kappa"] is None else f"{ag['kappa']:.2f}"
     bar = pass_bar(ag)
     verdict = "PASS" if all(p is not False for *_, p in bar) else "FAIL"
+    corr = "undefined" if ag["correlation"] is None else f"{ag['correlation']:.2f}"
     lines = [
-        f"# Judge `{tag}` vs the owner, run `{run}` ({n} letters)\n",
+        f"# Judge `{tag}` vs the owner's points labels, run `{run}` ({n} letters)\n",
         f"Judge: {panel_judge(judge)}.\n",
-        "Counts, not percentages: the check half is only 8-9 letters (metrics plan §6.4). The bar is the "
-        "eval-set plan's (Decision log 2026-10-29), written for 9 letters and scaled to these.\n",
+        "Counts, not percentages: a half is only 8-9 letters (metrics plan §6.4). Both sides are scored by "
+        "scripts/letter_points.py from their problem lists. The bar is the eval-set plan's (Decision log "
+        "2026-11-04), written for 9 letters and scaled.\n",
         f"**Pass bar: {verdict}**\n",
         "| Measure | Result | Bar | |", "|---|---|---|---|",
         *[f"| {m} | {r} | {b} | {'-' if p is None else ('pass' if p else '**fail**')} |" for m, r, b, p in bar],
         f"| Untrue: agreed it was clean (TNR) | {u['tn']}/{neg} | each judge-only flag reviewed below | |",
-        f"| Weighted kappa (quadratic) | {kappa} | {KAPPA_WARNING} | |",
-        "", "## Send-readiness per letter (owner, judge)\n",
-        *[f"- {k}: {o} vs {j}" + ("" if o == j else "  ←") for k, (o, j) in ag["pairs"].items()],
-        "", "## Untrue\n",
-        "Missed by the judge (must be fixed: it has to catch every flag the owner made):",
-        *([f"- {k}: owner said {owner[k].get('untrue_text') or '(no text)'!r}" for k in u["fn"]] or ["- none"]),
-        "", "Flagged by the judge only. Accept (it was a real miss) or reject each, then re-run with "
-            "`--accept KEY ...` for the accepted ones:",
+        f"| Correlation of points | {corr} | reported: on 8-9 letters one letter moves it a lot | |",
+        "", "## Points per letter\n",
+        "| Letter | Owner | Judge | Gap | " + " | ".join(COMPARED) + " |",
+        "|---|---|---|---|" + "---|" * len(COMPARED),
     ]
+    for k, (o, j) in ag["pairs"].items():
+        row = []
+        for m in COMPARED:
+            ov, jv = ag["metrics"][m]["pairs"][k]
+            row.append(_show(ov) if ov == jv else f"**{_show(ov)} / {_show(jv)}**")
+        lines.append(f"| {k} | {o:.2f} | {j:.2f} | {j - o:+.2f} | " + " | ".join(row) + " |")
+    lines += ["", "A problem cell shows the owner's charged levels; **owner / judge** where they differ.", "",
+              "## Each problem\n",
+              "| Problem | Owner has it | Judge has it | Presence agrees | Same levels | Owner only | Judge only | Other level |",
+              "|---|---|---|---|---|---|---|---|"]
+    for m, v in ag["metrics"].items():
+        gate = " (reported)" if m in UNGATED else ""
+        lines.append(f"| {m}{gate} | {v['owner']} | {v['judge']} | {v['presence']}/{n} | {v['same']}/{n} | "
+                     f"{', '.join(v['owner_only']) or '-'} | {', '.join(v['judge_only']) or '-'} | "
+                     f"{', '.join(v['other_level']) or '-'} |")
+    lines += ["", "## Untrue\n",
+              "Missed by the judge (must be fixed: it has to catch every flag the owner made):",
+              *([f"- {k}: owner said " + "; ".join(repr(x.get("quote", "")) for x in labels[k].get("untrue", []))
+                 for k in u["fn"]] or ["- none"]),
+              "", "Flagged by the judge only. Accept (it was a real miss) or reject each, then re-run with "
+                  "`--accept KEY ...` for the accepted ones:"]
     for k in u["fp"]:
         lines.append(f"- {k}:")
-        lines += [f"  - {c['label']}: {c['quote']!r} ({c.get('why', '')})"
+        lines += [f"  - {c['label']} ({claim_level(c)}): {c['quote']!r} ({c.get('why', '')})"
                   for c in judge[k]["claims"] if c["label"] in UNTRUE]
     if not u["fp"]:
         lines.append("- none")
     mi = ag["missed"]
-    if mi is not None:
-        lines += ["", "## Missed rows\n",
-                  f"Of {mi['rows']} missable rows (backed, essential or important, headline or mention), the owner's "
-                  f"notes name {mi['owner']} as missed; the judge also missed {mi['caught']}.",
-                  "", "The owner's, which the judge counted as addressed:",
-                  *([f"- {k} {r}" for k, r in mi["owner_only"]] or ["- none"]),
-                  "", "The judge's only (it found no quote addressing them):",
-                  *([f"- {k} {r}" for k, r in mi["judge_only"]] or ["- none"])]
-        if mi["stray"]:
-            lines += ["", "In the owner's notes but not missable (recheck the note):",
-                      *[f"- {k} {r}" for k, r in mi["stray"]]]
-    lines += ["", "## Reason ticks\n", "| Tick | Agree | Owner only | Judge only | Use |", "|---|---|---|---|---|"]
-    lines += [f"| {t} | {v['agree']}/{n} | {', '.join(v['owner_only']) or '-'} | {', '.join(v['judge_only']) or '-'} "
-              f"| {_tick_use(t)} |" for t, v in ag["ticks"].items()]
+    lines += ["", "## Missed rows\n",
+              f"Of {mi['rows']} missable rows (backed, essential or important, headline or mention), the owner's "
+              f"labels name {mi['owner']} as missed; the judge also missed {mi['caught']}.",
+              "", "The owner's, which the judge counted as addressed:",
+              *([f"- {k} {r}: judge quoted {_row_quote(judge[k], r)!r}" for k, r in mi["owner_only"]] or ["- none"]),
+              "", "The judge's only (it found no quote addressing them):",
+              *([f"- {k} {r}: {_row_reason(judge[k], r)}" for k, r in mi["judge_only"]] or ["- none"])]
+    if mi["stray"]:
+        lines += ["", "In the owner's labels but not missable (recheck the label):",
+                  *[f"- {k} {r}" for k, r in mi["stray"]]]
+    lines += ["", "## The judge's problems, letter by letter (for the review)\n"]
+    for k in ag["pairs"]:
+        lines.append(f"### {k}\n")
+        for i in judge[k]["issues"]:
+            what = i.get("row") or i.get("quote") or (f"{i['filler']} filler, {i['words']} words" if "filler" in i
+                                                      else f"{i.get('hits', '')} hits")
+            lines.append(f"- {i['metric']} **{i['level']}**: {what}"[:400])
+        lines.append("")
     return "\n".join(lines) + "\n"
 
 
@@ -1520,25 +1725,29 @@ def cmd_v2_agreement(args) -> int:
     if not judge_path.exists():
         raise SystemExit(f"No {_rel(judge_path)}: run `v2-merge {args.tag}` first")
     judge = json.loads(judge_path.read_text(encoding="utf-8"))
-    owner = read_owner(V2_RUNS / args.run / args.owner)
+    if any("points" not in r for r in judge.values()):
+        raise SystemExit(f"{_rel(judge_path)} is a 1-4 grade judge file, not a points one")
+    labels = read_labels(Path(args.labels) if args.labels else None)
+    guess = guess_points(labels)
     if args.half:
-        owner = {k: v for k, v in owner.items() if k in set(calibration_half(args.half))}
+        labels = {k: v for k, v in labels.items() if k in set(calibration_half(args.half))}
     if args.only:
-        owner = {k: v for k, v in owner.items() if k in set(args.only)}
+        labels = {k: v for k, v in labels.items() if k in set(args.only)}
     refs = {k: _reference(k) for k in judge if (V2_REF / f"{k}.json").exists()}
     accepted = set(args.accept or [])  # plus every flag the owner accepted earlier, so none is forgotten
     if ACCEPTED_UNTRUE.exists():
         accepted |= set(json.loads(ACCEPTED_UNTRUE.read_text(encoding="utf-8")))
-    ag = agreement(owner, judge, accepted, refs)
+    ag = agreement(labels, judge, refs, guess, accepted)
     if not ag["n"]:
-        raise SystemExit("No letter graded by both the owner and the judge")
+        raise SystemExit("No letter labelled by the owner and graded by the judge")
     out = PANELS / args.tag / f"agreement-{args.run}{'-' + args.half if args.half else ''}.md"
-    out.write_text(_agreement_md(args.run, args.tag, ag, judge, owner), encoding="utf-8")
-    u = ag["untrue"]
+    out.write_text(_agreement_md(args.run, args.tag, ag, judge, labels), encoding="utf-8")
+    u, mi = ag["untrue"], ag["missed"]
     failed = [m for m, _, _, p in pass_bar(ag) if p is False]
-    print(f"{ag['n']} letters: send-readiness exact {ag['exact']}/{ag['n']} (always-{BASELINE_GRADE} "
-          f"{ag['baseline_exact']}), ready {ag['ready']}/{ag['n']}, within ±1 {ag['within_1']}/{ag['n']}; "
-          f"untrue TPR {u['tp']}/{u['tp'] + len(u['fn'])}, TNR {u['tn']}/{u['tn'] + len(u['fp'])} -> {_rel(out)}")
+    print(f"{ag['n']} letters: points within ±{POINTS_WITHIN:g} {ag['within']}/{ag['n']}, mean gap {ag['mean_gap']:.2f} "
+          f"(constant guess {ag['guess_gap']:.2f}); missed rows {mi['caught']}/{mi['owner']} "
+          f"(+{len(mi['judge_only'])} judge-only); untrue TPR {u['tp']}/{u['tp'] + len(u['fn'])}, "
+          f"TNR {u['tn']}/{u['tn'] + len(u['fp'])} -> {_rel(out)}")
     print("Pass bar: " + ("PASS" if not failed else "FAIL on " + "; ".join(failed)))
     return 0
 
@@ -1619,10 +1828,10 @@ def main() -> int:
     p = sub.add_parser("v2-picks", help="v2: win rate of the new run (order-dependent picks = ties)")
     p.add_argument("tag")
     p.set_defaults(fn=cmd_v2_picks)
-    p = sub.add_parser("v2-agreement", help="v2: the merged judge vs the owner's grades (counts)")
+    p = sub.add_parser("v2-agreement", help="v2: the merged judge vs the owner's points labels (counts)")
     p.add_argument("tag")
     p.add_argument("run")
-    p.add_argument("--owner", default="grades-owner.csv", help="owner grades file in the run folder")
+    p.add_argument("--labels", help="the owner's points labels (default: evals/work/v2/points-draft/labels.json)")
     p.add_argument("--only", nargs="+", metavar="KEY", help="just these letters")
     p.add_argument("--half", choices=HALVES, help="just one half of the calibration split")
     p.add_argument("--accept", nargs="+", metavar="KEY",

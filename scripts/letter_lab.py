@@ -1800,6 +1800,7 @@ def _scorecard_rows(groups: list[tuple[str, dict]], picks: dict | None) -> tuple
         row("1. Send-readiness, mean 1-4", lambda s: f"{_num(s['send_readiness'])} (owner {s['by_owner']}, "
                                                     f"judge {s['by_judge']})"),
         row("&nbsp;&nbsp;&nbsp;send-ready rate (3 or 4)", lambda s: _pct(s["send_ready"])),
+        row("&nbsp;&nbsp;&nbsp;judge points, mean 0-10", lambda s: f"{_num(s['points'])} ({s['points_judged']} judged)"),
         row("2. Fabrication-free rate", lambda s: f"{_pct(s['fabrication_free'])} of {s['judged']} judged"
                                                   + (f"; owner: {s['owner_true']} of {s['owner_checked']} with nothing "
                                                      "untrue" if s["owner_checked"] else "")),
