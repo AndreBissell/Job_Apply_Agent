@@ -677,7 +677,8 @@ by one (matched by quote; reported, not gated). ALL 17 JUDGED 2026-11-05 (panel 
 on ±1 only (14/17; gap 0.53 vs 0.90, missed rows 13/14, untrue 6/6 after one accepted flag); the cause is the
 judge's own run-to-run noise (up to 1.5 points on one letter), and the owner kept v1 as is (Option A: trust split
 means, never one letter). Answer key: supported = every part backed, partial = some; 7 rows corrected, corrections
-may now set `note`. Next: the test split, the real test of the judge. NEVER edit the
+may now set `note`. Next (owner's choice): improve the writer on dev scored by judge v1, the test set graded once
+at the end (plan order), or test the judge on the test split first. NEVER edit the
 standard or the examples while a judge run is going: each judge reads them when its prompt is built. Evidence behind it:
 docs/ai-recruitment-research.md (AI screeners' biases, rated by strength; lines we never cross).
 The real profile is frozen as of 2026-10-20. Strong fit = score 85+ and

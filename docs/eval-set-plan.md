@@ -984,8 +984,11 @@ stage 3.
       says a partial row's note names the backed part. The four status changes rewrote their notes.
     - No agreement number moved (status changes don't change which rows are missable; the letter
       already addressed `seek-94932262` R7). Panel `v1-dev`'s packets hold the old rows.
-  - **Next:** the test split. The owner grades fresh letters and judge v1 grades them; that is the real
-    test of the judge.
+  - **Next (owner's choice):** improve the letter writer on the dev split, scored by judge v1 (the plan's
+    order: the owner hand-grades about 5 letters of each new version to catch drift, and the test set is
+    graded once, at the end, by the owner and the frozen judge: letter-metrics plan §6.8); or test the judge
+    on the test split first, which spends the test set early. Each judged dev round costs about $4 of Gemini
+    and $15-18 notional on the full panel (grader A alone is about half).
 
 ## Follow-ups (not for this eval)
 
