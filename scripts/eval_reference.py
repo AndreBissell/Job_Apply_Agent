@@ -80,7 +80,8 @@ MANIFEST = REF_DIR / "MANIFEST.json"
 ANALYZE_ENGINE = "eval-analyze"  # letter_lab.py analyze (scripts/eval_tag.py reads the same run)
 # What a correction may change. related_evidence: what the analysis cited for an item that is
 # now a gap; not backing (guardrails read `evidence` as backing), only context for the judge.
-FIELDS = ("importance", "letter_role", "status", "evidence", "related_evidence")
+# note: the judge reads it, so a status change rewrites it to say which part is backed (owner, 2026-11-05).
+FIELDS = ("importance", "letter_role", "status", "evidence", "related_evidence", "note")
 SPLIT_FIELDS = FIELDS + ("text",)  # a split rewrites the parent's text to the part it keeps
 ROW_FIELDS = ("id", "text", "importance", "letter_role", "status", "evidence")  # an added row needs these
 M2_WEIGHTS = {"essential": 4, "important": 2, "nice_to_have": 1}  # metrics plan, M2

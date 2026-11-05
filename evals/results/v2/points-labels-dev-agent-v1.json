@@ -1,10 +1,10 @@
 {
  "run": "dev-agent-v1",
- "status": "FROZEN 2026-11-03, amended 2026-11-04: per-instance counting split three letters' labels; too long relabelled to the filler count on two letters (bridge rule); two mix-ups relabelled by the different-part rule; one judge untrue flag accepted; point values in the severity guide. Amended 2026-11-05: the owner's two-way review of the check half (pts-check-1) changed 15 labels on 8 check letters (3 untrue stretches, 2 missed rows and 1 unmissed, 2 weak examples, 2 mix-ups added and 1 removed, 2 generic, 1 no personal reason, 1 too long removed); 4 kept, 1 rule question; calibration consistency: 1 generic added (seek-95085104)",
+ "status": "FROZEN 2026-11-03, amended 2026-11-04: per-instance counting split three letters' labels; too long relabelled to the filler count on two letters (bridge rule); two mix-ups relabelled by the different-part rule; one judge untrue flag accepted; point values in the severity guide. Amended 2026-11-05: the owner's two-way review of the check half (pts-check-1) changed 15 labels on 8 check letters (3 untrue stretches, 2 missed rows and 1 unmissed, 2 weak examples, 2 mix-ups added and 1 removed, 2 generic, 1 no personal reason, 1 too long removed); 4 kept, 1 rule question; calibration consistency: 1 generic added (seek-95085104). Amended 2026-11-05 after panel v1-dev (judge v1, all 17): one judge-only untrue flag accepted (seek-95260505, stretch low, charged as well as its missed row, per the standard's wrong-example rule)",
  "scheme": "points scheme: each problem is low or high; values in evals/results/v2/points-severity-guide.md. Fit is a separate score. Scrubbed copy of the gitignored evals/work/v2/points-draft/labels.json: no notes, no quotes.",
  "order": "sheet S1674",
  "letters": {
-  "seek-95260505": {"gut": 8, "untrue": [], "issues": [
+  "seek-95260505": {"gut": 8, "untrue": [{"label": "stretch", "level": "low", "presence": "judge-accepted", "severity": "owner"}], "issues": [
    {"metric": "missed_row", "row": "R3", "level": "low", "presence": "owner-s7", "severity": "code"},
    {"metric": "missed_row", "row": "R4", "level": "high", "presence": "owner", "severity": "code"},
    {"metric": "generic", "level": "low", "presence": "owner-s7", "severity": "owner"},

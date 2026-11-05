@@ -939,6 +939,53 @@ stage 3.
 
       The judge-only flag is the second one on `seek-95205206` (`employer_fact_not_in_ad`, low), which the
       owner's review kept as clean (Keep). The per-letter count had hidden it.
+- 2026-11-05: **stage 8 step 10 done: judge v1 graded all 17 dev letters** (panel `v1-dev`, `--judge v1`, CLI
+  2.1.317 pinned copy). Run in batches to fit the owner's subscription usage (4, 6, 2, then 5 one judge at a
+  time). 34 graders and 14 adjudicators, every one first time; notional $18.58 (judges $13.98, adjudicators
+  $4.60). A/B agreement before adjudication: checklist 345/357, requirement rows 180/185, claims 15/17, generic
+  and no personal reason 17/17.
+  - **Result vs the owner's points labels: FAIL on one measure.**
+    | Measure | All 17 | Calibration 8 | Check 9 | Bar (all 17) |
+    |---|---|---|---|---|
+    | Points within ±1 | 14 | 7 | 7 | 16 |
+    | Mean points gap | 0.53 | 0.67 | 0.41 | below the constant guess (0.90) |
+    | Missed rows caught | 13/14 | 4/4 | 9/10 | 80% |
+    | Untrue TPR / TNR | 5/5, 11/12 | | | all owner flags |
+
+    Correlation 0.87. The letters outside ±1: `seek-94890841` (+1.20), `seek-95084704` (-1.50), `seek-95085104`
+    (-1.50).
+  - **Why: the judge's own run-to-run noise.** The same judge v1 on the same letters in `pts-cal-2` /
+    `pts-check-1`: 12 of 17 letters scored exactly the same, 2 moved 1.0 and 2 moved 1.5 (mean shift 0.37).
+    Both check-half letters now outside ±1 are the ones that moved 1.5, each on whether a missed row is high
+    or low. The earlier check-half pass was partly a lucky run; two graders plus an adjudicator don't remove
+    the noise.
+  - **Owner decision (Option A): keep judge v1 as is.** Its known noise is about ±1.5 points on one letter.
+    Trust differences in the mean over a split, never on one letter. Tightening the missed-row high / low
+    line is a candidate for the next standard version; widening the ±1 bar after seeing a fail was
+    rejected (moving the goalposts).
+  - **Judge-only untrue flag accepted** (`seek-95260505`, stretch low): the internship's CI/CD work offered as
+    the automation evidence. Charged as well as the missed R4: the standard (§7.3) already says a wrong
+    example leaves the row N, and presenting it as if it showed the point is also a stretch. The severity
+    guide said "missed row or untrue"; both copies now say "and also". Labels amended (`judge-accepted`).
+    Re-scored with no judge calls: untrue TPR 6/6, TNR 11/11; points within ±1 still 14/17.
+  - **Answer key corrected from the judges' 19 checklist doubts** (14 rows; owner, same day). Rule
+    restated: **supported = every part of the row is backed; partial = some parts** (as `match_profile`'s
+    prompt defines it). A supported row with an unbacked part can't be addressed honestly: the letter must
+    name the part it can't claim. Accepted (7): `seek-94890841` R7 (issue tracking only listed),
+    `seek-95084704` R4 (no beta testing) and `seek-95219353` R10 (no code reviews) supported -> partial;
+    `seek-95140202` R2 and R6 lose a pointer that doesn't show the point; `seek-94932262` R7 implied ->
+    mention (an explicit ask); `seek-95260505` R4 stays supported, its outdated note rewritten. Kept as they
+    are (7): `seek-95158567` R5, `seek-95100426` R8, `seek-95220951` R1 and R8, `seek-95364016` R2 and R3
+    (the thesis was individual work), `seek-94890841` R5.
+    - Recorded the usual way (`inputs.json`, `propose`, `decide`); the key's freeze lifted on purpose to
+      rebuild (backup `evals/work/v2/reference.bak-20261105/`), `build` and `verify` re-run. Only those
+      7 rows changed: supported 156 -> 153, partial 122 -> 125, M2 weight base 633 -> 635.
+    - `eval_reference.py` corrections may now set `note`: the judge reads the row's note, and the standard
+      says a partial row's note names the backed part. The four status changes rewrote their notes.
+    - No agreement number moved (status changes don't change which rows are missable; the letter
+      already addressed `seek-94932262` R7). Panel `v1-dev`'s packets hold the old rows.
+  - **Next:** the test split. The owner grades fresh letters and judge v1 grades them; that is the real
+    test of the judge.
 
 ## Follow-ups (not for this eval)
 

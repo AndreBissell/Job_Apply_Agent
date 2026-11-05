@@ -20,7 +20,8 @@ Each problem is low or high. Point values were set after the labelling pass (see
 
 Rules:
 - A wrong example (doesn't show the point) is not a weak example: it is a missed row (the profile backs the
-  row elsewhere) or untrue (the letter presents it as if it showed the point).
+  row elsewhere), and also untrue when the letter presents it as if it showed the point; both are charged
+  (owner, 2026-11-05, matching the standard's §7.3 wording; seek-95260505 R4).
 - A thin extra example line counts under weak example only, never also as filler.
 - Weak example, example swap test (owner, backup-flag review 2026-11-03): the weaker example alone carrying a point is high
   even when its wording matches the ad (the retail job named for the ad's 'changing priorities') and even when the
