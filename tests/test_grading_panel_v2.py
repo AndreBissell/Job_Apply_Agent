@@ -6,6 +6,7 @@ import csv
 import importlib.util
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -119,6 +120,7 @@ def lab(tmp_path, monkeypatch):
     monkeypatch.setattr(gp, "CALIBRATION_EXAMPLES", tmp_path / "calibration" / "examples-points.md")
     monkeypatch.setattr(gp, "ACCEPTED_UNTRUE", tmp_path / "calibration" / "accepted-untrue.json")
     monkeypatch.setattr(gp, "POINTS_LABELS", tmp_path / "labels.json")  # never the owner's real labels
+    monkeypatch.setattr(gp, "JUDGE_PINS", tmp_path / "pins")  # never the committed frozen judges
     return tmp_path
 
 
@@ -564,9 +566,9 @@ def graded(ans_for):
     return reply
 
 
-def run_args(stage="grade", graders=("A", "B"), redo=False):
+def run_args(stage="grade", graders=("A", "B"), redo=False, judge=None, no_examples=False):
     return argparse.Namespace(tag="t1", backend="claude-cli", stage=stage, graders=list(graders), only=None,
-                              half=None, jobs=1, redo=redo, no_examples=False)
+                              half=None, jobs=1, redo=redo, no_examples=no_examples, judge=judge)
 
 
 def test_the_judge_gets_the_standard_and_its_packet_but_no_file_paths(lab):
@@ -905,3 +907,129 @@ def test_a_usage_limit_stops_the_run_without_retrying(runner, monkeypatch, capsy
     monkeypatch.setattr(gp.subprocess, "run", lambda cmd, **kw: gp.subprocess.CompletedProcess(cmd, 1, json.dumps(out), ""))
     with pytest.raises(gp.UsageLimit):
         gp.run_claude_cli("p", {})
+
+
+# --- a frozen judge: v2-run --judge NAME (evals/results/v2/judge-NAME.json) ----------------------
+
+def pin(name="v9", **changes):
+    """Freeze the judge the runner fixture runs (the fake CLI, the lab's examples if any) as NAME, with `changes`."""
+    examples = gp.CALIBRATION_EXAMPLES.read_text(encoding="utf-8") if gp.CALIBRATION_EXAMPLES.exists() else None
+    version = {**gp.judge_version("claude-cli", CLI, examples), **changes}
+    gp.JUDGE_PINS.mkdir(parents=True, exist_ok=True)
+    (gp.JUDGE_PINS / f"judge-{name}.json").write_text(json.dumps({"name": name, "version": version}), encoding="utf-8")
+
+
+def test_a_frozen_judge_runs_when_every_field_matches(runner, monkeypatch, capsys):
+    pack(only=["acme-dev"])
+    pin()
+    backend = fake_backend(graded(lambda lid: answer()))
+    monkeypatch.setitem(gp.BACKENDS, "claude-cli", backend)
+    assert gp.cmd_v2_run(run_args(graders=("A",), judge="v9")) == 0 and len(backend.calls) == 2
+    assert "Judge v9: every field matches the frozen version" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("field, value", [
+    ("backend", "vertex"), ("model", "claude-opus-9"), ("effort", "max"), ("cli_version", "2.1.318"),
+    ("standard_sha256", "0" * 64), ("instructions_sha256", "1" * 64)])
+def test_a_frozen_judge_refuses_to_start_and_names_the_field_that_differs(runner, monkeypatch, field, value):
+    pack(only=["acme-dev"])
+    pin(**{field: value})
+    backend = fake_backend(graded(lambda lid: answer()))
+    monkeypatch.setitem(gp.BACKENDS, "claude-cli", backend)
+    with pytest.raises(SystemExit, match=rf"not judge v9; nothing was started.*\n  {field}: frozen '{re.escape(value)}'") as e:
+        gp.cmd_v2_run(run_args(judge="v9"))
+    assert str(e.value).count("frozen") == 1  # only the field that differs
+    assert backend.calls == [] and not (gp.PANELS / "t1" / "answers").exists()
+
+
+def test_a_frozen_judge_refuses_other_examples_or_none(runner, monkeypatch):
+    pack(only=["acme-dev"])
+    write_split(["acme-dev", "acme-other"], [])
+    gp.CALIBRATION_EXAMPLES.write_text(example("acme-dev") + example("acme-other", "A clean letter."), encoding="utf-8")
+    pin()
+    backend = fake_backend(graded(lambda lid: answer()))
+    monkeypatch.setitem(gp.BACKENDS, "claude-cli", backend)
+    with pytest.raises(SystemExit, match="examples_sha256: frozen '[0-9a-f]{64}', now None"):
+        gp.cmd_v2_run(run_args(judge="v9", no_examples=True))
+    gp.CALIBRATION_EXAMPLES.write_text(example("acme-dev") + example("acme-other", "An edited reading."), encoding="utf-8")
+    with pytest.raises(SystemExit, match="examples_sha256: frozen '[0-9a-f]{64}', now '[0-9a-f]{64}'"):
+        gp.cmd_v2_run(run_args(judge="v9"))
+    assert backend.calls == []
+
+
+def test_an_unknown_frozen_judge_is_refused(runner):
+    pack(only=["acme-dev"])
+    with pytest.raises(SystemExit, match="no judge 'v7' has been frozen"):
+        gp.cmd_v2_run(run_args(judge="v7"))
+
+
+def test_judge_v1_still_matches_the_committed_standard_and_instructions():
+    """Judge v1 is frozen (2026-11-05). Editing evals/grading-standard-v2.md or the judge's instructions in
+    grading_panel.py makes a NEW judge: freeze it as judge-v2.json and point this test at it on purpose.
+    The examples are gitignored and the CLI is local, so `v2-run --judge v1` checks those two."""
+    v1 = json.loads((ROOT / "evals" / "results" / "v2" / "judge-v1.json").read_text(encoding="utf-8"))["version"]
+    now = gp.judge_version(v1["backend"], v1["cli_version"])
+    fields = ("backend", "model", "effort", "standard_sha256", "instructions_sha256")
+    assert {f: now[f] for f in fields} == {f: v1[f] for f in fields}
+    assert set(v1) == set(gp.JUDGE_VERSION)
+
+
+# --- untrue flag by flag (v2-agreement; reported, not gated) --------------------------------------
+
+def test_quotes_match_on_containment_or_most_of_the_shorter_one_s_words():
+    assert gp.quote_match("I ran Kubernetes", "At LogiCo, I ran KUBERNETES clusters.") == 1.0  # contained
+    assert gp.quote_match("ran Kubernetes clusters", "I ran the Kubernetes clusters") == pytest.approx(1.0)  # every word
+    assert gp.quote_match("At LogiCo I ran the clusters ... for everyone", "I ran the clusters for everyone") == 1.0
+    assert gp.quote_match("I ran", "I ranked") == 0.5  # whole words, never part of one
+    assert gp.quote_match("Acme leads the logistics market", "I ran the Kubernetes clusters") == pytest.approx(0.2)
+    assert gp.quote_match("", "I ran the clusters") == 0.0
+
+
+def test_each_flag_pairs_with_its_best_match_and_at_most_once():
+    owner = [{"quote": "I ran the Kubernetes clusters", "level": "low"},
+             {"quote": "I led the data team", "level": "high"}]
+    judge = [{"quote": "led the data team at LogiCo", "label": "fabricated"},
+             {"quote": "I ran the Kubernetes clusters for the whole company", "label": "stretch", "level": "low"},
+             {"quote": "the Kubernetes clusters", "label": "stretch", "level": "low"}]
+    pairs, owner_only, judge_only = gp.match_flags(owner, judge)
+    assert [(o["quote"], j["quote"]) for o, j in pairs] == [
+        ("I ran the Kubernetes clusters", "I ran the Kubernetes clusters for the whole company"),
+        ("I led the data team", "led the data team at LogiCo")]
+    assert owner_only == [] and judge_only == [judge[2]]  # a second flag on the same claim is the judge's own
+    assert gp.match_flags(owner, []) == ([], owner, [])
+
+
+FLAG_LABELS = {"k1": label(untrue=[("At LogiCo I ran the Kubernetes clusters", "low")]),
+               "k2": label(untrue=[("I led the data team", "low"), ("I hold a PhD", "high")])}
+FLAG_JUDGE = {"k1": judged(7.5, untrue_claims=("I ran the Kubernetes clusters for the whole company",
+                                               "Acme leads the logistics market")),
+              "k2": judged(9.0, untrue_claims=("I led the data team",))}
+FLAG_JUDGE["k1"]["claims"][1].update(label="employer_fact_not_in_ad", why="not in the ad")
+FLAG_JUDGE["k2"]["claims"][0]["level"] = "high"
+
+
+def test_a_judge_only_flag_on_a_letter_both_flagged_is_listed():
+    ag = gp.agreement(FLAG_LABELS, FLAG_JUDGE, {k: REFERENCE for k in FLAG_JUDGE})
+    assert ag["untrue"] == {"tp": 2, "fn": [], "tn": 0, "fp": []}  # per letter, both agree on both letters
+    uf = ag["untrue_flags"]
+    assert (uf["owner"], uf["judge"], uf["matched"]) == (3, 3, 2)
+    assert uf["judge_only"] == [("k1", FLAG_JUDGE["k1"]["claims"][1])]
+    assert [(k, o["quote"]) for k, o in uf["owner_only"]] == [("k2", "I hold a PhD")]
+    assert [(k, o["level"], c["level"]) for k, o, c in uf["other_level"]] == [("k2", "low", "high")]
+    bar = {m: r for m, r, _, _ in gp.pass_bar(ag)}
+    assert bar["Untrue: caught the owner's flags (TPR)"] == "2/2"  # the pass bar stays per letter
+
+
+def test_the_report_lists_flags_one_side_only(lab):
+    (gp.V2_RUNS / RUN_A / "judge-t1.json").write_text(json.dumps(FLAG_JUDGE), encoding="utf-8")
+    write_labels(FLAG_LABELS)
+    write_split(["k1"], ["k2"])
+    (gp.PANELS / "t1").mkdir()
+    gp.cmd_v2_agreement(agreement_args())
+    md = (gp.PANELS / "t1" / f"agreement-{RUN_A}.md").read_text(encoding="utf-8")
+    flags = md.split("### Flag by flag")[1].split("## Missed rows")[0]
+    assert "Matched 2 (the owner's flags: 3, the judge's: 3)." in flags
+    assert "- k2, other level: owner low, judge high: 'I led the data team'" in flags
+    assert "- k1: employer_fact_not_in_ad (low): 'Acme leads the logistics market' (not in the ad)" in flags
+    assert "- k2: high: 'I hold a PhD'" in flags
+    assert "| Untrue: caught the owner's flags (TPR) | 2/2 |" in md

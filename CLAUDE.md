@@ -669,8 +669,11 @@ probes `probe-pts-1` 8/8 pass; check half `pts-check-1` FAIL (±1 6/9 vs 8, gap 
 owner's two-way review (2026-11-05: 20 items, 15 Change / 4 Keep / 1 rule question; plus one calibration label by the
 same reasons) -> re-scored with no judge runs: PASS (±1 9/9, gap 0.03; cal half still PASS 7/8, gap 0.56). The pass means
 "the judge applies the standard as the owner reads it", not agreement with the first labels; fresh test-split letters are
-the real test. Rule questions for the next version: future_work/grading-standard-next-version.md. NOT frozen yet: next
-is the owner's go-ahead to freeze judge v1 and judge all 17. NEVER edit the
+the real test. Rule questions for the next version: future_work/grading-standard-next-version.md. JUDGE V1 FROZEN
+2026-11-05 (evals/results/v2/judge-v1.json: CLI 2.1.317, standard a1b0d9de, instructions 2ddb9aa8, examples f78725e7;
+Vertex skipped). Always run `v2-run <tag> --judge v1` (refuses on any difference) with JUDGE_CLAUDE_BIN set to the
+pinned copy evals/work/v2/judge-bin/2.1.317/claude.exe (gitignored). `v2-agreement` now also lists untrue flags one
+by one (matched by quote; reported, not gated). Next: the owner's go-ahead to judge all 17. NEVER edit the
 standard or the examples while a judge run is going: each judge reads them when its prompt is built. Evidence behind it:
 docs/ai-recruitment-research.md (AI screeners' biases, rated by strength; lines we never cross).
 The real profile is frozen as of 2026-10-20. Strong fit = score 85+ and

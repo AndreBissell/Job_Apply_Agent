@@ -915,6 +915,30 @@ stage 3.
       flagged doesn't show (`seek-95205206`). A per-flag check would catch it.
     - **Next-version list:** the rule questions are in `future_work/grading-standard-next-version.md`. They can
       only be tested on fresh letters. Next step (owner decision): freeze judge v1 and judge all 17.
+  - **Judge v1 frozen** (owner, 2026-11-05; no judge or LLM calls). Vertex (step 9) is skipped. The all-17 run
+    waits for the owner's go-ahead.
+    - **The record:** `evals/results/v2/judge-v1.json` (committed, hashes only). claude-cli, `claude-opus-5-5`,
+      effort high, CLI 2.1.317, standard `a1b0d9de`, instructions `2ddb9aa8`, examples `f78725e7`. It was
+      taken from the answer files of `pts-cal-2`, `pts-check-1` and `pts-probe-1`, which all used exactly this
+      version. Today's files hash to the same values.
+    - **Enforced in code:** `v2-run <tag> --judge v1` refuses to start, naming each field that differs, unless
+      the judge it would run is exactly v1. A test also checks that the committed standard and instructions
+      still hash to v1's values; the examples are gitignored, so only `--judge v1` checks those.
+    - **The CLI is pinned:** VS Code already installed 2.1.318 and will delete the 2.1.317 folder. A
+      byte-identical copy (same sha256, recorded in the JSON) is in gitignored
+      `evals/work/v2/judge-bin/2.1.317/claude.exe`; set `JUDGE_CLAUDE_BIN` to it (evals/grading-panel.md,
+      "Freeze").
+    - **Untrue flag by flag in `v2-agreement`** (reported, not gated; the pass bar is unchanged). Owner flags
+      and judge claims are paired by quote: the same claim when one quote contains the other, or they share at
+      least 60% of the shorter quote's words. On the dev labels the real matches score 1.0 and the nearest
+      non-match 0.22. Re-run with no judge calls, both halves still PASS with the same numbers:
+      | Half | Flags matched | Judge only | Owner only |
+      |---|---|---|---|
+      | Calibration (`pts-cal-2`) | 2 | 0 | 0 |
+      | Check (`pts-check-1`) | 3 | 1 | 0 |
+
+      The judge-only flag is the second one on `seek-95205206` (`employer_fact_not_in_ad`, low), which the
+      owner's review kept as clean (Keep). The per-letter count had hidden it.
 
 ## Follow-ups (not for this eval)
 

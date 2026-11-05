@@ -124,6 +124,9 @@ the real ads and the letters.
    `claude.cmd` shim is refused, because cmd.exe mangles the JSON schema's quotes). An answer in
    the wrong shape is kept as `<lid>.rejected.json` and a fresh judge tries again (2 in all);
    running the command again redoes only what is missing, and `--redo` replaces answers.
+   **With a frozen judge, always add `--judge <name>`** (e.g. `--judge v1`; see "Freezing the
+   judge" below): `v2-run` then refuses to start, naming each field that differs, unless the
+   judge it is about to run is exactly the frozen one.
 4. **Check.** `python scripts/grading_panel.py v2-check <tag>` names every answer that is
    missing or has the wrong shape; run `v2-run` again for them. It also lists quotes that
    aren't in the letter. Code doesn't credit those (step 7).
@@ -163,10 +166,17 @@ the real ads and the letters.
      mean gap below the constant guess's, missed rows row by row, untrue TPR;
    - points per letter, with each problem's levels side by side;
    - each problem's presence and level agreement (reported, not gated);
-   - the judge-only untrue flags and missed rows, to review.
+   - the judge-only untrue flags and missed rows, to review;
+   - untrue **flag by flag** (added 2026-11-05; reported, not gated): the TPR / TNR above are per
+     letter, so a judge-only flag on a letter the owner also flagged doesn't show there. Each
+     owner flag (its quote in labels.json) is paired with at most one judge claim on the same
+     letter: the same claim when one quote contains the other, or they share at least 60% of the
+     shorter quote's words (`QUOTE_MATCH`; case and punctuation ignored). Unpaired flags on
+     either side are listed, and pairs whose levels differ.
 
-   `--only` limits it to the check half. Read every flag the judge raised and the owner
-   didn't. If it was a real miss by the owner, re-run with `--accept KEY`.
+   `--half check` (or `--only`) limits it to the check half. Read every flag the judge raised and
+   the owner didn't, the flag-by-flag lists included. If it was a real miss by the owner, add it
+   to the owner's labels (or, for a letter with no owner flag, re-run with `--accept KEY`).
 9. **Pairwise (comparing two versions).**
    `python scripts/grading_panel.py v2-pairs <tag> <baseline_run> <new_run> [--only KEY ...]`
    writes two packets per ad, `pairs/P###.md`, one in each order. Each pair packet gets a
@@ -210,6 +220,25 @@ the real ads and the letters.
    `v2-probe-report <tag> <name> --original <tag of the originals>`: a padded copy must score no
    more points than its original, and every plant must be labelled untrue. Both panels must be the
    same judge version.
+
+6. **Freeze.** Once the judge passes both halves and the probes, the owner freezes it. Its
+   version (backend, model, effort, CLI version, and the hashes of the standard, the instructions
+   and the examples), taken from the passing runs' answer files, is committed as
+   `evals/results/v2/judge-<name>.json` with a note of the runs it passed. From then on:
+   - every run uses `v2-run <tag> --judge <name>`, which refuses to start if any field differs;
+   - the standard, the worked examples and `JUDGE_SYSTEM` / `JUDGE_TASKS` are never edited (a
+     change is a new judge, calibrated and frozen under a new name);
+   - the CLI binary is pinned: VS Code updates its bundled `claude.exe` and deletes the old
+     folder, so a copy is kept in gitignored `evals/work/v2/judge-bin/<version>/claude.exe` and
+     `JUDGE_CLAUDE_BIN` points at it.
+
+   **Judge v1** (frozen 2026-11-05: `evals/results/v2/judge-v1.json`) is claude-cli,
+   `claude-opus-5-5`, effort high, CLI 2.1.317, standard `a1b0d9de`, instructions `2ddb9aa8`,
+   examples `f78725e7`. Before a run, in PowerShell:
+   `$env:JUDGE_CLAUDE_BIN = "$PWD\evals\work\v2\judge-bin\2.1.317\claude.exe"`
+   (Git Bash: `export JUDGE_CLAUDE_BIN="$(pwd -W)/evals/work/v2/judge-bin/2.1.317/claude.exe"`).
+   `tests/test_grading_panel_v2.py` also checks that the committed standard and instructions
+   still hash to v1's values.
 
 `v2-run` stops when the subscription's usage limit is hit; run the same command after the reset
 and it carries on from the answers already saved.

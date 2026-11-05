@@ -20,7 +20,8 @@ v2 (evals/grading-standard-v2.md, eval set v2): one packet per letter, each grad
 fresh judge, twice (graders A and B), with one fresh adjudicator per letter they split on.
 
     python scripts/grading_panel.py v2-pack <tag> <run> [<run> ...] [--only KEY ...]
-    python scripts/grading_panel.py v2-run <tag>                   # one fresh judge per packet -> answers/<A|B>/
+    python scripts/grading_panel.py v2-run <tag> --judge v1        # one fresh judge per packet -> answers/<A|B>/
+    #   (--judge v1: refuse to start unless this is the frozen judge evals/results/v2/judge-v1.json)
     python scripts/grading_panel.py v2-check <tag>                 # missing / malformed answers
     python scripts/grading_panel.py v2-disagreements <tag>         # -> disagreements/<lid>.json
     python scripts/grading_panel.py v2-run <tag> --stage adjudicate  # one fresh adjudicator per file
@@ -936,6 +937,7 @@ JUDGE_DIR = Path(tempfile.gettempdir()) / "letter-judge"  # claude-cli's working
 STANDARD_V2 = EVALS / "grading-standard-v2.md"
 JUDGE_VERSION = ("backend", "model", "effort", "cli_version", "standard_sha256", "instructions_sha256",
                  "examples_sha256")
+JUDGE_PINS = EVALS / "results" / "v2"  # judge-<name>.json: a frozen judge (`v2-run --judge <name>` enforces it)
 JUDGE_SYSTEM = ("You are a judge in a blind cover-letter evaluation. You have no tools and no files: everything "
                 "you need is in the user's message. Apply the grading standard it contains exactly, and answer "
                 "only in the JSON shape it asks for.")
@@ -1090,6 +1092,20 @@ def judge_version(backend: str, cli: str, examples: str | None = None) -> dict:
             "standard_sha256": _sha(STANDARD_V2.read_text(encoding="utf-8")),
             "instructions_sha256": _sha(JUDGE_SYSTEM + "".join(JUDGE_TASKS[s] for s in sorted(JUDGE_TASKS))),
             "examples_sha256": _sha(examples) if examples else None}
+
+
+def pinned_judge(name: str) -> dict:
+    """A frozen judge's version (JUDGE_PINS/judge-<name>.json, committed: hashes only)."""
+    path = JUDGE_PINS / f"judge-{name}.json"
+    if not path.exists():
+        raise SystemExit(f"No {_rel(path)}: no judge {name!r} has been frozen")
+    return json.loads(path.read_text(encoding="utf-8"))["version"]
+
+
+def version_drift(pinned: dict, current: dict) -> list[str]:
+    """One line per field of JUDGE_VERSION where the current judge differs from the frozen one."""
+    return [f"{f}: frozen {pinned.get(f)!r}, now {current.get(f)!r}" for f in JUDGE_VERSION
+            if pinned.get(f) != current.get(f)]
 
 
 def judge_label(version: dict) -> str:
@@ -1261,6 +1277,11 @@ def cmd_v2_run(args) -> int:
     examples = load_examples(CALIBRATION_EXAMPLES) if use else None
     version = judge_version(args.backend, cli_version() if args.backend == "claude-cli" else "-",
                             CALIBRATION_EXAMPLES.read_text(encoding="utf-8") if use else None)
+    if args.judge:  # before any judge starts: a frozen judge's results only compare with the same judge's
+        drift = version_drift(pinned_judge(args.judge), version)
+        if drift:
+            raise SystemExit(f"This is not judge {args.judge}; nothing was started. Differs in:\n  " + "\n  ".join(drift))
+        print(f"Judge {args.judge}: every field matches the frozen version")
     print(f"{len(todo)} fresh judge(s), {args.jobs} at a time. Judge: {judge_label(version)}")
     failed, limit, stop = [], None, threading.Event()
     with ThreadPoolExecutor(max_workers=args.jobs) as pool:
@@ -1576,6 +1597,67 @@ def _missed_agreement(keys: list[str], owner_issues: dict, judge: dict, refs: di
     return out
 
 
+# Untrue flag by flag (reported, not gated): an owner flag and a judge flag on the same letter are the
+# same claim when one quote contains the other, or they share at least QUOTE_MATCH of the shorter
+# quote's distinct words. The two sides quote the same sentence a little differently (more or less of
+# it, a `...`), so exact text would miss real matches; on the dev labels real matches score 1.0 and the
+# nearest non-match 0.22.
+QUOTE_MATCH = 0.6
+
+
+def _quote_words(quote: str) -> list[str]:
+    return re.findall(r"[a-z0-9]+", (quote or "").lower())
+
+
+def quote_match(a: str, b: str) -> float:
+    """How alike two quotes from one letter are, ignoring case and punctuation: 1.0 when one holds the
+    other word for word, else the share of the shorter quote's distinct words found in the other; 0.0
+    when either is empty."""
+    wa, wb = _quote_words(a), _quote_words(b)
+    if not wa or not wb:
+        return 0.0
+    sa, sb = f" {' '.join(wa)} ", f" {' '.join(wb)} "
+    if sa in sb or sb in sa:
+        return 1.0
+    return len(set(wa) & set(wb)) / min(len(set(wa)), len(set(wb)))
+
+
+def match_flags(owner: list[dict], judge: list[dict]) -> tuple[list[tuple[dict, dict]], list[dict], list[dict]]:
+    """Pair one letter's owner flags with its judge flags by quote, best match first, each flag used at
+    most once. Returns (pairs, owner only, judge only)."""
+    scored = [(quote_match(o.get("quote", ""), j.get("quote", "")), i, x)
+              for i, o in enumerate(owner) for x, j in enumerate(judge)]
+    scored.sort(key=lambda t: -t[0])  # stable: equal scores keep the flags' own order
+    pairs, used_o, used_j = [], set(), set()
+    for s, i, x in scored:
+        if s < QUOTE_MATCH:
+            break
+        if i in used_o or x in used_j:
+            continue
+        used_o.add(i)
+        used_j.add(x)
+        pairs.append((owner[i], judge[x]))
+    return (pairs, [o for i, o in enumerate(owner) if i not in used_o],
+            [j for x, j in enumerate(judge) if x not in used_j])
+
+
+def untrue_flags(keys: list[str], owner_issues: dict[str, list[dict]], judge: dict[str, dict]) -> dict:
+    """Every letter's untrue flags matched one by one (match_flags). A judge-only flag on a letter the
+    owner also flagged shows here and nowhere else: the per-letter TPR / TNR count that letter as agreed."""
+    out = {"owner": 0, "judge": 0, "matched": 0, "other_level": [], "owner_only": [], "judge_only": []}
+    for k in keys:
+        own = [i for i in owner_issues[k] if i["metric"] == "untrue"]
+        theirs = [c for c in judge[k]["claims"] if c["label"] in UNTRUE]
+        pairs, o_only, j_only = match_flags(own, theirs)
+        out["owner"] += len(own)
+        out["judge"] += len(theirs)
+        out["matched"] += len(pairs)
+        out["other_level"] += [(k, o, c) for o, c in pairs if o["level"] != claim_level(c)]
+        out["owner_only"] += [(k, o) for o in o_only]
+        out["judge_only"] += [(k, c) for c in j_only]
+    return out
+
+
 def agreement(labels: dict[str, dict], judge: dict[str, dict], refs: dict[str, dict],
               guess: float | None = None, accepted: set[str] = frozenset()) -> dict:
     """The judge against the owner's points labels on the letters both have. A judge "untrue" flag
@@ -1616,6 +1698,7 @@ def agreement(labels: dict[str, dict], judge: dict[str, dict], refs: dict[str, d
         "missed": _missed_agreement(keys, owner_issues, judge, refs),
         "untrue": {"tp": len(own_untrue & judge_untrue), "fn": sorted(own_untrue - judge_untrue),
                    "tn": len(set(keys) - own_untrue - judge_untrue), "fp": sorted(judge_untrue - own_untrue)},
+        "untrue_flags": {**untrue_flags(keys, owner_issues, judge), "accepted": sorted(set(keys) & set(accepted))},
     }
 
 
@@ -1698,6 +1781,23 @@ def _agreement_md(run: str, tag: str, ag: dict, judge: dict[str, dict], labels: 
                   for c in judge[k]["claims"] if c["label"] in UNTRUE]
     if not u["fp"]:
         lines.append("- none")
+    uf = ag["untrue_flags"]
+    accepted = (f" The owner accepted the judge's flag on {', '.join(uf['accepted'])} letter by letter (`--accept`): "
+                "those letters' judge flags are listed below too." if uf["accepted"] else "")
+    lines += ["", "### Flag by flag\n",
+              "The counts above are per letter, so a judge-only flag on a letter the owner also flagged doesn't "
+              "show there. Here each owner flag is paired with at most one judge flag on the same letter, by quote: "
+              "the same claim when one quote contains the other, or they share at least "
+              f"{QUOTE_MATCH:.0%} of the shorter quote's words (case and punctuation ignored). Reported for "
+              "review; the pass bar is unchanged." + accepted, "",
+              f"Matched {uf['matched']} (the owner's flags: {uf['owner']}, the judge's: {uf['judge']}).",
+              *[f"- {k}, other level: owner {o['level']}, judge {claim_level(c)}: {c['quote']!r}"
+                for k, o, c in uf["other_level"]],
+              "", "The judge's only (review each: a real miss by the owner, or the judge is wrong):",
+              *([f"- {k}: {c['label']} ({claim_level(c)}): {c['quote']!r} ({c.get('why', '')})"
+                 for k, c in uf["judge_only"]] or ["- none"]),
+              "", "The owner's only (the judge missed this claim, even if it flagged another on the letter):",
+              *([f"- {k}: {o['level']}: {o.get('quote', '')!r}" for k, o in uf["owner_only"]] or ["- none"])]
     mi = ag["missed"]
     lines += ["", "## Missed rows\n",
               f"Of {mi['rows']} missable rows (backed, essential or important, headline or mention), the owner's "
@@ -1742,12 +1842,13 @@ def cmd_v2_agreement(args) -> int:
         raise SystemExit("No letter labelled by the owner and graded by the judge")
     out = PANELS / args.tag / f"agreement-{args.run}{'-' + args.half if args.half else ''}.md"
     out.write_text(_agreement_md(args.run, args.tag, ag, judge, labels), encoding="utf-8")
-    u, mi = ag["untrue"], ag["missed"]
+    u, mi, uf = ag["untrue"], ag["missed"], ag["untrue_flags"]
     failed = [m for m, _, _, p in pass_bar(ag) if p is False]
     print(f"{ag['n']} letters: points within ±{POINTS_WITHIN:g} {ag['within']}/{ag['n']}, mean gap {ag['mean_gap']:.2f} "
           f"(constant guess {ag['guess_gap']:.2f}); missed rows {mi['caught']}/{mi['owner']} "
           f"(+{len(mi['judge_only'])} judge-only); untrue TPR {u['tp']}/{u['tp'] + len(u['fn'])}, "
-          f"TNR {u['tn']}/{u['tn'] + len(u['fp'])} -> {_rel(out)}")
+          f"TNR {u['tn']}/{u['tn'] + len(u['fp'])}; untrue flags {uf['matched']} matched, "
+          f"{len(uf['judge_only'])} judge-only, {len(uf['owner_only'])} owner-only -> {_rel(out)}")
     print("Pass bar: " + ("PASS" if not failed else "FAIL on " + "; ".join(failed)))
     return 0
 
@@ -1793,6 +1894,8 @@ def main() -> int:
     p.add_argument("--jobs", type=int, default=3, help="judges at a time")
     p.add_argument("--redo", action="store_true", help="replace answers already there")
     p.add_argument("--no-examples", action="store_true", help="the standard alone, without the worked examples")
+    p.add_argument("--judge", metavar="NAME",
+                   help="refuse to start unless this is the frozen judge NAME (evals/results/v2/judge-NAME.json)")
     p.set_defaults(fn=cmd_v2_run)
     p = sub.add_parser("v2-examples", help="v2: draft the worked examples from the calibration half (once)")
     p.set_defaults(fn=cmd_v2_examples)
