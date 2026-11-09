@@ -72,3 +72,236 @@ user's.
 > `evals/panels/<tag>/adjudication.json`:
 > `{"rulings": [{"letter", "item", "grade": "Y|N", "reason", "sided_with": "A|B"}]}`,
 > one ruling per cell, valid JSON. Reply with a one-line ruling per cell.
+
+---
+
+# v2: one fresh judge per letter
+
+Standard: `grading-standard-v2.md`. Metrics: `docs/letter-metrics-plan.md` §6. Built
+2026-10-26 (build step 2). The v1 procedure above stays as it was, for v1 runs.
+
+**What changes from v1.** v1 had two graders reading every letter in one packet. In v2 each
+letter has its own packet, and every packet goes to a **new** Opus subagent that has seen
+nothing else. So no judge carries what it learned on one letter, or one employer, into the
+next one. That gives each letter the same judge, from the same starting point.
+- There are two graders, A and B, so a letter gets 2 fresh judges.
+- A letter where they split gets 1 fresh adjudicator.
+- Pairwise A/B picks get 1 fresh judge per pair, in each order.
+- The judges run through `v2-run` (2026-10-29), never as Claude Code subagents: a subagent has the
+  repo, and `scripts/letter_metrics.py` holds the owner's sounds_ai list, which a judge must not
+  see. Backend `claude-cli` (the default, the owner's subscription, no Vertex spend) runs one
+  headless `claude -p` per answer file with no tools, no setting sources (no CLAUDE.md, hooks or
+  memory), no MCP servers, no skills and no saved session, from an empty folder
+  (`%TEMP%\letter-judge`), with the prompt on stdin. The probe on 2026-10-29 showed only the
+  account's email and that folder's path still reach it. `vertex` is not built yet.
+- One prompt builder (`judge_prompt`) sends every backend the same text: the standard, the packet
+  from its profile block on, then the task (`JUDGE_SYSTEM` / `JUDGE_TASKS` in the script). Every
+  answer file records the judge version: backend, model, effort, CLI version, and hashes of the
+  standard and of the instructions.
+
+Everything under `evals/panels/` and `evals/work/` is gitignored. It holds the real profile,
+the real ads and the letters.
+
+## Procedure
+
+1. **Answer key.** The reference checklist (`evals/work/v2/reference/ads/`) must verify. Both
+   `v2-pack` and `v2-pairs` run `scripts/eval_reference.py`'s `verify()` themselves, and they
+   refuse to run if it fails.
+2. **Pack.**
+   `python scripts/grading_panel.py v2-pack <tag> <run> [<run> ...] [--only KEY ...]`
+   writes:
+   - `evals/panels/<tag>/packets/<lid>.md`: one per letter, holding the profile, the job
+     (ad + checklist) and the letter with its word count;
+   - `packets/index.txt`: the list of packets;
+   - the key in `key/letters.json`. Judges are never pointed at the key.
+
+   Letter ids and job numbers are shuffled, and no packet names its run. A used tag is refused.
+3. **Grade.**
+   `python scripts/grading_panel.py v2-run <tag> [--graders A B] [--jobs 3] [--only KEY ...]`
+   gives every packet in `index.txt` two fresh judges, grader A and grader B, and writes
+   `answers/<A|B>/<lid>.json`. A dev run of 17 letters takes 34 judges. Set `JUDGE_CLAUDE_BIN`
+   to a `claude.exe` new enough for the judge model (the VS Code extension bundles one; npm's
+   `claude.cmd` shim is refused, because cmd.exe mangles the JSON schema's quotes). An answer in
+   the wrong shape is kept as `<lid>.rejected.json` and a fresh judge tries again (2 in all);
+   running the command again redoes only what is missing, and `--redo` replaces answers.
+   **With a frozen judge, always add `--judge <name>`** (e.g. `--judge v1`; see "Freezing the
+   judge" below): `v2-run` then refuses to start, naming each field that differs, unless the
+   judge it is about to run is exactly the frozen one.
+4. **Check.** `python scripts/grading_panel.py v2-check <tag>` names every answer that is
+   missing or has the wrong shape; run `v2-run` again for them. It also lists quotes that
+   aren't in the letter. Code doesn't credit those (step 7).
+5. **Disagreements.** `python scripts/grading_panel.py v2-disagreements <tag>` writes
+   `disagreements/<lid>.json` for each letter where A and B split, and prints A/B agreement
+   per group. A cell is one answer that can split, and problems compare on what they cost,
+   not their wording (two judges who quote different filler sentences at the same level agree):
+   - `claims`: the levels of the untrue claims;
+   - each D question;
+   - each requirement row;
+   - `weak_examples` and `mix_ups`: the levels of the two charged instances;
+   - `generic` and `no_personal_reason`: the level;
+   - `filler`: the level the filler count gives.
+6. **Adjudicate.** `python scripts/grading_panel.py v2-run <tag> --stage adjudicate` gives each
+   disagreements file a fresh adjudicator, which writes `adjudication/<lid>.json` with a ruling
+   for every split cell.
+7. **Merge.** `python scripts/grading_panel.py v2-merge <tag>` refuses while any split cell
+   has no ruling, or while the panel's answers come from more than one judge version. When
+   every cell has one, it:
+   - takes agreed cells from A and split cells from the rulings;
+   - checks every quote again: an addressed row whose quote isn't in the letter becomes N, and
+     a claim, weak example, mix-up piece or filler sentence whose quote isn't there is dropped;
+   - adds code's problems: missed rows (from the row answers, with the answer key's level),
+     too long (from the filler count and the word count) and stock phrasing
+     (`letter_metrics.stock_phrases`, counted over the whole run);
+   - writes `evals/work/v2/runs/<run>/judge-<tag>.json`, one record per ad: `points`
+     (`scripts/letter_points.py`), `issues`, `by_metric`, untrue Y/N, claim counts, gap
+     fabrications, missed rows, the problems, checklist and requirement rows;
+   - writes `evals/panels/<tag>/checklist-doubts.md`: the answer-key rows a judge doubted,
+     for the owner to recheck. A doubt never changes a score.
+8. **Against the owner (stage 8).**
+   `python scripts/grading_panel.py v2-agreement <tag> <run> [--only KEY ...] [--accept KEY ...]`
+   reads the owner's points labels (`evals/work/v2/points-draft/labels.json`; `--labels` for
+   another file), scores them with the same `letter_points.score`, and writes
+   `evals/panels/<tag>/agreement-<run>.md`. The results are counts, not percentages:
+   - the pass bar (eval-set plan Decision log 2026-11-04): points within ±1 on n-1 letters, a
+     mean gap below the constant guess's, missed rows row by row, untrue TPR;
+   - points per letter, with each problem's levels side by side;
+   - each problem's presence and level agreement (reported, not gated);
+   - the judge-only untrue flags and missed rows, to review;
+   - untrue **flag by flag** (added 2026-11-05; reported, not gated): the TPR / TNR above are per
+     letter, so a judge-only flag on a letter the owner also flagged doesn't show there. Each
+     owner flag (its quote in labels.json) is paired with at most one judge claim on the same
+     letter: the same claim when one quote contains the other, or they share at least 60% of the
+     shorter quote's words (`QUOTE_MATCH`; case and punctuation ignored). Unpaired flags on
+     either side are listed, and pairs whose levels differ.
+
+   `--half check` (or `--only`) limits it to the check half. Read every flag the judge raised and
+   the owner didn't, the flag-by-flag lists included. If it was a real miss by the owner, add it
+   to the owner's labels (or, for a letter with no owner flag, re-run with `--accept KEY`).
+9. **Pairwise (comparing two versions).**
+   `python scripts/grading_panel.py v2-pairs <tag> <baseline_run> <new_run> [--only KEY ...]`
+   writes two packets per ad, `pairs/P###.md`, one in each order. Each pair packet gets a
+   fresh judge with the pair-judge prompt. Then
+   `python scripts/grading_panel.py v2-picks <tag>` writes `picks.json`:
+   - wins, losses and ties;
+   - the win rate, with a tie counted as half;
+   - an exact sign test.
+
+   An ad is won only when both orders pick the same letter. A pick that follows the position
+   is a tie.
+
+## Calibrating the judge (stage 8; eval-set plan Decision log 2026-10-29)
+
+1. **Halves, once.** `python scripts/grading_panel.py v2-split <run>` splits the owner's graded
+   letters into `evals/work/v2/calibration/split.json` (gitignored): a letter carrying a label no
+   other letter has (a grade given once, the only untrue Y) goes to calibration; the rest are
+   stratified by grade, then relevance, 9 to the check half. It is never redrawn.
+   `v2-pack`, `v2-run` and `v2-agreement` take `--half calibration|check`.
+2. **Worked examples.** `v2-examples` drafts `calibration/examples-points.md` from the
+   calibration half: each letter, its checklist rows, and the owner's problems with their levels
+   and notes. It never includes stock phrasing (the owner's count rule) or what a problem costs.
+   The worked readings are written by hand and confirmed by the owner. The 1-4 grade's
+   `examples.md` is kept as a record.
+   `v2-run` adds the examples to every prompt (after the standard, before the packet), leaves out
+   the letter's own (leave-one-out), refuses the file while a reading is unwritten or if it holds
+   a check-half letter, and records its hash in the judge version. `--no-examples` runs the
+   standard alone.
+3. **Iterate on the calibration half** with one grader: `v2-run <tag> --graders A`, then
+   `v2-merge <tag> --graders A` (nothing to adjudicate) and
+   `v2-agreement <tag> <run> --half calibration`. Change the prompt only from what the
+   calibration half shows.
+4. **Measure the check half once** with the full panel (A + B + adjudicator), `--half check`.
+   `v2-agreement` scores the pass bar on points (step 8 above). A judge-only
+   untrue flag the owner accepts goes in `calibration/accepted-untrue.json` (`{key: claim}`),
+   which every later `v2-agreement` reads.
+5. **Probes.** `v2-probe <name> <run> --spec probes.json` writes a probe run (a run folder) of
+   copies of the run's letters, each with text inserted after an exact anchor sentence:
+   `pad` (filler; refused if the copy goes over the word cap, which would test the cap instead)
+   or `plant` (an untrue claim). Pack and judge it like any run, then
+   `v2-probe-report <tag> <name> --original <tag of the originals>`: a padded copy must score no
+   more points than its original, and every plant must be labelled untrue. Both panels must be the
+   same judge version.
+
+6. **Freeze.** Once the judge passes both halves and the probes, the owner freezes it. Its
+   version (backend, model, effort, CLI version, and the hashes of the standard, the instructions
+   and the examples), taken from the passing runs' answer files, is committed as
+   `evals/results/v2/judge-<name>.json` with a note of the runs it passed. From then on:
+   - every run uses `v2-run <tag> --judge <name>`, which refuses to start if any field differs;
+   - the standard, the worked examples and `JUDGE_SYSTEM` / `JUDGE_TASKS` are never edited (a
+     change is a new judge, calibrated and frozen under a new name);
+   - the CLI binary is pinned: VS Code updates its bundled `claude.exe` and deletes the old
+     folder, so a copy is kept in gitignored `evals/work/v2/judge-bin/<version>/claude.exe` and
+     `JUDGE_CLAUDE_BIN` points at it.
+
+   **Judge v1** (frozen 2026-11-05: `evals/results/v2/judge-v1.json`) is claude-cli,
+   `claude-opus-5-5`, effort high, CLI 2.1.317, standard `a1b0d9de`, instructions `2ddb9aa8`,
+   examples `f78725e7`. Before a run, in PowerShell:
+   `$env:JUDGE_CLAUDE_BIN = "$PWD\evals\work\v2\judge-bin\2.1.317\claude.exe"`
+   (Git Bash: `export JUDGE_CLAUDE_BIN="$(pwd -W)/evals/work/v2/judge-bin/2.1.317/claude.exe"`).
+   `tests/test_grading_panel_v2.py` also checks that the committed standard and instructions
+   still hash to v1's values.
+
+`v2-run` stops when the subscription's usage limit is hit; run the same command after the reset
+and it carries on from the answers already saved.
+
+## v2 grader and adjudicator prompts (superseded 2026-10-29; the 1-4 grade's shape)
+
+The prompts the judges get now live in `scripts/grading_panel.py` (`JUDGE_SYSTEM`,
+`JUDGE_TASKS`), worded for a judge that has no files. The two below are the subagent versions,
+kept as a record. Pairs still use the pair-judge prompt below: add pairs to `v2-run` before the
+first comparison, so no pair judge gets the repo either.
+
+### v2 grader prompt (one packet; replace `<X>`, `<tag>`, `<lid>`)
+
+> You are grader `<X>`, one fresh judge for ONE cover letter. Accuracy and consistency matter
+> more than speed. Read `evals/grading-standard-v2.md` in full and apply it exactly. Then read
+> your packet `evals/panels/<tag>/packets/<lid>.md`. Read nothing else: no other packet, and
+> nothing under `evals/panels/<tag>/key/`, `evals/panels/<tag>/answers/`, `evals/work/`,
+> `evals/runs/` or `evals/results/`.
+>
+> Work in the standard's order (§3): the profile, then the ad, then the reference checklist,
+> and only then the letter. Answer §4, §5, §6, §7 in turn. Quote the letter's exact words for
+> every addressed row and every claim. Code checks each quote against the letter, and an
+> addressed row whose quote isn't there counts as not addressed. Grade by the reference
+> checklist even where you doubt it, and put the doubt in `checklist_doubts`. Length is not
+> quality.
+>
+> Write `evals/panels/<tag>/answers/<X>/<lid>.json` in the §9 shape with a tool, and check
+> that it parses. Reply with one line: the grade, the number of untrue claims and any doubt.
+
+### v2 adjudicator prompt (one letter; replace `<tag>`, `<lid>`)
+
+> You are the adjudicator for ONE cover letter. Two judges (A and B) applied
+> `evals/grading-standard-v2.md` to it and split on the cells in
+> `evals/panels/<tag>/disagreements/<lid>.json`, which shows both answers for each cell. Read
+> the standard in full, that file, and the letter's packet
+> `evals/panels/<tag>/packets/<lid>.md`. Read nothing else: not `key/`, other packets or
+> other answers.
+>
+> For each cell, re-read the letter, the ad, the checklist and the profile yourself, and rule
+> by the standard's text, not by which judge argued better. Where the standard is silent, say
+> so and follow its stated tests.
+>
+> Write `evals/panels/<tag>/adjudication/<lid>.json` as
+> `{"rulings": [{"item", "value", "reason", "sided_with": "A|B|neither"}]}`, with one ruling
+> per cell. The `item` is copied from the file. What goes in `value`:
+> - `send_readiness`: 1–4. `sided_with` picks whose edit list is kept.
+> - a `D..` question: Y or N, with the `quote` it rests on.
+> - `req:<id>`: Y or N. Add `quote`, `presented_as` and `evidence_used` when your answer
+>   differs from the judge you side with; otherwise theirs are kept.
+> - `tick:<name>`: Y or N.
+> - `claims`: the word `claims`, plus a `claims` field holding the full corrected list in the
+>   §9 shape.
+>
+> Write valid JSON with a tool and check it parses. Reply with one line per cell.
+
+## v2 pair-judge prompt (one pair packet; replace `<tag>`, `<pid>`)
+
+> You are one fresh judge for ONE pair of cover letters. Read `evals/grading-standard-v2.md`
+> in full: §8 is the rule for picking, and §4–§7 define what you weigh. Then read
+> `evals/panels/<tag>/pairs/<pid>.md`, and read nothing else.
+>
+> Pick `first`, `second` or `same` by §8's order, stopping at the first step that separates
+> the letters. Length is never a reason. Write
+> `evals/panels/<tag>/answers/pairs/<pid>.json` as
+> `{"standard": "v2", "pairs": {"<pid>": {"pick": "...", "reason": "..."}}}` with a tool,
+> check it parses, and reply with the pick and the reason.

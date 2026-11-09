@@ -40,6 +40,14 @@ evals/runs/
 evals/panels/
 evals/eval.db
 evals/set.json
+evals/candidates/
+# Frozen eval sets (scripts/eval_freeze.py): ads + profile stay local; each set's
+# MANIFEST.json (titles, companies, Seek ids, hashes) may be committed.
+evals/sets/**
+!evals/sets/*/
+!evals/sets/*/MANIFEST.json
+# A frozen set's working files (letter_lab.py --set v2): eval.db, set.json, runs/
+evals/work/
 
 # Generated personal reports (the to-work-on list: profile data)
 reports/

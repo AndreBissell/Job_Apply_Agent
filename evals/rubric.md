@@ -1,5 +1,9 @@
 # Cover-letter eval rubric
 
+> **v2 set (`--set v2`): see docs/letter-metrics-plan.md** (4-level send-readiness, requirement
+> coverage, claim honesty, recruiter checklist, code signals). This page is the v1 rubric and
+> still applies to v1 runs; the 5 code gates below are shared by both.
+
 Pass/fail per item, not a 1–10 score: models grading their own output are
 lenient on vague scales, and so are tired humans. A letter **passes** only if
 every item passes. (docs/cover-letter-loop-plan.md §9)

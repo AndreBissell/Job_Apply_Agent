@@ -46,6 +46,7 @@ from sqlalchemy.orm import sessionmaker  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
 import app.api.main as api  # noqa: E402
+from app import letter_bands  # noqa: E402
 from app.api import worker  # noqa: E402
 from app.api.origin_guard import origin_allowed  # noqa: E402
 from app.db import Base  # noqa: E402
@@ -63,6 +64,9 @@ class _RecordingExecutor:
 @pytest.fixture()
 def guarded(monkeypatch):
     """A client on http://localhost:8001 with one job; the worker records, never runs."""
+    # /regenerate claims the job in letter_bands.queued and the recording worker never
+    # releases it, so each test starts with an empty queue.
+    monkeypatch.setattr(letter_bands, "queued", set())
     eng = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False},
                         poolclass=StaticPool)
 

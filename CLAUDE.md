@@ -19,6 +19,26 @@ Full feature plan: docs/job-application-assistant-plan.md
 Full DB design: docs/database-schema.md
 
 
+PUBLIC REPO — nothing private gets committed (owner, 2026-10-22)
+
+This repo is PUBLIC on GitHub and is cloned by scrapers. The owner's name (Andre
+Bissell) and the commit email are fine to appear. NOTHING ELSE personal may be
+committed: no phone, address, date of birth, visa/work-rights details, Centrelink
+or other government IDs, real cover letters, real profile/CV text, writing samples,
+screening answers, screenshots, databases, API keys or GCP project ids.
+- Test data and examples use fake people ("Liam Chen", "Bob", @example.com) and
+  fake employers ("Acme", "LogiCo"), never the real profile.
+- Real data stays in gitignored places (real.db, app.db, .env, screenshots*/,
+  evals/jobs|runs|panels|candidates|work, evals/sets/** except MANIFEST.json,
+  reports/, backups/, dev_data/). Before adding a new folder that holds real data,
+  add it to .gitignore first.
+- Before every commit, check the staged diff (`git diff --cached`) for personal
+  data; if unsure whether something counts, ask the owner before committing.
+- Already in history and accepted by the owner: the name, the old commit email, and
+  the existing references to the real CV in tests/test_style_lint.py and a few docs.
+  Don't add more.
+
+
 SEEK ACCESS POLICY — how this app is allowed to touch Seek
 
 
@@ -241,8 +261,10 @@ job-app-assistant/
     run_matching.py    # batch LLM matching/scoring
     run_cover_letters.py  # batch cover-letter generation (dev/testing only)
     letter_lab.py      # cover-letter eval harness (evals/rubric.md); analyze = Phase 3 hand-check pack; loop-report = revisions
-    grading_panel.py   # blind Opus grading panel: pack / disagreements / merge (evals/grading-panel.md)
+    grading_panel.py   # blind Opus grading panel: pack / disagreements / merge; v2-* per-letter judges (evals/grading-panel.md)
     screening_eval.py  # Quick Apply question-help eval: build-set / sort / labels / drafts / report (Phase 9c)
+    eval_pool.py       # eval set: sorts real.db's ads into the scenarios (docs/eval-set-plan.md), read-only
+    eval_draw.py       # eval set: seeded draw of the candidates -> evals/candidates/candidates.csv
     check_matching.py  # scoring diagnostic report vs expected bands
     check_llm.py       # validate the LLM key before a batch
     smoke_test.py
@@ -573,6 +595,115 @@ in `evidence/<YYYY-MM>/(time)_(date)_(company).png`; "reported" is the `evidence
 screenshot never expires. Endpoints `/evidence/status|bundles|bundles/{id}/download`, SSE
 `evidence_changed`. 1655 tests; e2e `apply_sent_e2e.py` 51/51 (+ dashboard 92, sidebar_load 58).
 Part 2 NOT yet checked in the user's own Chrome.
+
+🔄 IN PROGRESS: Eval set, dev 20 / test 15 from real Seek ads — 2026-10-20 (branch `eval-set-creation`)
+
+docs/eval-set-plan.md (stages, the scenarios with their rules, Decision log; screening-questions
+scenario dropped: no real Seek ad asks questions in its own text). Stage 1 is DONE (145 usable ads;
+`scripts/eval_pool.py` tags them, `scripts/eval_draw.py` drew 49 candidates, seed 20261020). The 49 are
+FROZEN (2026-10-21, no LLM) in `evals/sets/v2/` (ads + profile.db + committed MANIFEST.json;
+`python scripts/eval_freeze.py --verify`; `--add` for reserves; never rewrite a frozen file).
+`scripts/eval_split.py` applies the near-duplicate rules (plan Decision log 2026-10-21); dry run by
+default, `--write` only once the real tags and the owner's labels exist. DONE 2026-10-22:
+`letter_lab.py --set v2` (default v1 unchanged; working files in gitignored `evals/work/v2/`, results
+in `evals/results/v2/`; v2 `prepare` verifies, builds once, scores only unscored ads) and the paid
+stage-3 analysis ($1.235, run `stage3`). The scenario rule lives once in `scripts/eval_tags.py`
+(eval_pool.py + `scripts/eval_tag.py` use it); final tags are in candidates.csv (`final_scenario`,
+`eval_score`, `why`; `none` = fits no scenario).
+Scenario 4 now has a 60 floor (owner, 2026-10-22): counts 1:12 2:4 3:7 4:5 6:6 7:7 none:8.
+ALL 49 LABELLED (2026-10-23; plan Decision log): Would apply = sent hoping to get the job
+(Centrelink-count-only = N); scenario_ok N on #11, #82, #186 only. SPLIT FINAL (2026-10-23, owner:
+no more ads): dev 17 (10 relevant) / test 14 (11 relevant) in `evals/sets/v2/split.json`; at most
+one ad per near-duplicate family (#122, #152 out); #12 pinned to test, #157 to dev (`PINS`).
+Scenario 1 dev short by 2, scenario 2 has 3 ads. Runs pick a side with `letter_lab.py run|analyze
+--set v2 --split dev|test` (a v2 run refuses without --split or --only; set.json stays all 49). Stage 5 APPROVED 2026-10-23 (docs/letter-metrics-plan.md, 22
+metrics, M2 weights 4/2/1): owner grade = 4-level send-readiness + untrue Y/N + reason ticks; honest requirement
+coverage against a fixed reference checklist; yes/no recruiter checklist; code signals; judge
+calibrated on half the dev grades. Build steps in its §7, each with a go-ahead. Step 1 DONE
+2026-10-26 (`scripts/eval_reference.py`: the owner-corrected reference checklist, the answer key).
+Step 2 BUILT 2026-10-26: `evals/grading-standard-v2.md` (approved; frozen after stage 8) and
+`grading_panel.py v2-*` (ONE FRESH OPUS SUBAGENT PER LETTER per grader A/B, a fresh adjudicator per
+split letter, pairwise in both orders, agreement with the owner; procedure and prompts in
+evals/grading-panel.md). The owner's answer key is the truth; judges' `checklist_doubts` go to
+panels/<tag>/checklist-doubts.md for a recheck. Step 3 BUILT 2026-10-26 (no LLM): `letter_lab.py
+grade-sheet --set v2 <run>` (blind HTML sheet + blank CSV in evals/work/v2/grading/<S####>/, key kept in
+grading-keys/; `--unblind <S####>` -> runs/<run>/grades-owner.csv, never overwrites a graded row),
+`scripts/letter_metrics.py` (G1, C3 incl. writing-sample copy, C4, C5, C6, C7, M1-M4, honest coverage,
+checklist score, `scorecard`) and `report --set v2 <run> [--judge TAG] [--picks TAG]` -> committed
+evals/results/v2/<run>.md (numbers + ad keys only) + gitignored runs/<run>/report-detail.md. Stage 6 DONE
+2026-10-27: run `dev-agent-v1` (agent, 17 dev letters, $4.39, 15/17 clean; eval-set plan Decision log).
+Stage 7 DONE 2026-10-28, rechecked 2026-10-29 (sheet S1674, owner grades in
+runs/dev-agent-v1/grades-owner.csv; eval-set plan Decision log has the final table): relevant
+send-readiness 2.30, 3 of 10 send-ready (all 2.35, 6/17); untrue 1/17 (0 relevant), a run
+check_claims passed. Ticks (all 17): generic 11, missed_important 11 (rechecked row by row: backed
+rows only, a gap is never a miss; hard skills named, traits named or shown; notes start "Missed R_"),
+weak_example 9, sounds_ai 13, no_personal_reason 11, too_long 7 (all owner-confirmed). sounds_ai is a COUNT RULE: Y when
+`letter_metrics.stock_phrases` (C5b) finds more than `STOCK_LIMIT` 8 hits; the list and the limit
+never go in the grading standard, which the judge reads, and the judge never gets the repo.
+`no_real_reason` became `no_personal_reason` = new item D4b (19 checklist items): a reason for
+applying tied to the candidate's own experience, study or goals, not the ad's blurb restated and
+not experience offered as a skill to apply (C5c `motivation` is a helper). Code checks after
+grading: G1 flags 4+ mentions outside the employer's name and the ad's title (14/17 pass); C4 skips
+the profile's employers, institutions and project titles (98 phrases); C7 unchanged. Stage 8 judge: two backends,
+`claude-cli` (owner's subscription, default) and `vertex`, one prompt builder, every rating names its
+backend (eval-set plan Decision log 2026-10-28). Stage 8 approach agreed 2026-10-29 (split by grade,
+derived ticks, D2d/D2e + relevance rule, probes, pass bar; 10 steps). Step 1 DONE: `grading_panel.py
+v2-run` (claude-cli; set JUDGE_CLAUDE_BIN to a claude.exe >= 2.1.280, npm's 2.1.128 shim is refused).
+Steps 2-4 built (split, derived ticks + pass-bar report, D2d/D2e + relevance rule, draft worked
+examples in gitignored evals/work/v2/calibration/). Step 5 DONE 2026-10-29: runs cal-bare..cal-ex5, owner
+regrades and rules (additive tiers, floor 2, example rungs, thin extra line = tier 3); cal-ex5 PASS
+6/8 exact on the rescored owner grades (eval-set plan Decision log 2026-10-29). Step 7 RUN 2026-10-29
+(panel `check-v1`, the final v1 text): FAIL on exact 3/9 (always-2 6), ready 3/9 and missed rows 4/10;
+±1 9/9 and D4b 8/9 pass; the judge grades 2s as 3s because its grade counts only must-cover misses
+and it credits partial rows on loose quotes (plan Decision log). POINTS SCHEME DECIDED 2026-11-03 (replaces
+the 1-4 grade): 0-10, the judge finds problems and sets low / high, code deducts (values, cap and rules in
+evals/results/v2/points-severity-guide.md; owner labels evals/results/v2/points-labels-dev-agent-v1.json, the
+scrubbed copy of gitignored evals/work/v2/points-draft/labels.json, which is the truth for agreement). The
+standard was rewritten for it 2026-11-04 (§4.1, §5, §7 issue list, §8, §9 "v2-points", §10). Stage 8 restarts on
+the same 8 / 9 split. Built 2026-11-04 (plan Decision log): `scripts/letter_points.py` (the one scorer, owner labels
+and judge alike), grading_panel.py's points answer / checks / A/B cells / merge (`judge-<tag>.json` has `points`,
+`issues`, `by_metric`) / `v2-agreement` vs labels.json; pass bar on points FIXED (±1 on n-1, mean gap below the
+constant guess, 80% of missed rows, all untrue + probes); worked examples in gitignored
+evals/work/v2/calibration/examples-points.md. `pts-cal-1` FAIL -> owner rules -> `pts-cal-2` PASS (7/8, gap 0.60);
+probes `probe-pts-1` 8/8 pass; check half `pts-check-1` FAIL (±1 6/9 vs 8, gap 0.84 vs the guess's 0.76), then the
+owner's two-way review (2026-11-05: 20 items, 15 Change / 4 Keep / 1 rule question; plus one calibration label by the
+same reasons) -> re-scored with no judge runs: PASS (±1 9/9, gap 0.03; cal half still PASS 7/8, gap 0.56). The pass means
+"the judge applies the standard as the owner reads it", not agreement with the first labels; fresh test-split letters are
+the real test. Rule questions for the next version: future_work/grading-standard-next-version.md. JUDGE V1 FROZEN
+2026-11-05 (evals/results/v2/judge-v1.json: CLI 2.1.317, standard a1b0d9de, instructions 2ddb9aa8, examples f78725e7;
+Vertex skipped). Always run `v2-run <tag> --judge v1` (refuses on any difference) with JUDGE_CLAUDE_BIN set to the
+pinned copy evals/work/v2/judge-bin/2.1.317/claude.exe (gitignored). `v2-agreement` now also lists untrue flags one
+by one (matched by quote; reported, not gated). ALL 17 JUDGED 2026-11-05 (panel `v1-dev`, $18.58 notional): FAIL
+on ±1 only (14/17; gap 0.53 vs 0.90, missed rows 13/14, untrue 6/6 after one accepted flag); the cause is the
+judge's own run-to-run noise (up to 1.5 points on one letter), and the owner kept v1 as is (Option A: trust split
+means, never one letter). Answer key: supported = every part backed, partial = some; 7 rows corrected, corrections
+may now set `note`. Next (owner's choice): improve the writer on dev scored by judge v1, the test set graded once
+at the end (plan order), or test the judge on the test split first. NEVER edit the
+standard or the examples while a judge run is going: each judge reads them when its prompt is built. Evidence behind it:
+docs/ai-recruitment-research.md (AI screeners' biases, rated by strength; lines we never cross).
+The real profile is frozen as of 2026-10-20. Strong fit = score 85+ and
+no must-have GAP (`Requirement.needs_user`); partials are allowed (owner, 2026-10-20). Main metric:
+the relevant score (Would apply = Yes ads).
+
+🔄 BUILT, AWAITING THE USER'S MANUAL CHECKS: Rewrite letter + letter date — 2026-10-20 (branch `eval-set-creation`)
+
+docs/letter-rewrite-plan.md (D1–D3 approved; manual checks at its end). `cover_letters.generated_at`
+(migration `e3a7c1d9f264`, backfilled from `llm_usage`) is stamped by both write paths, never by
+saving edits. `GET /jobs` rows: `letter_written_at`, `letter_outdated` (older than
+`retention.profile_revised_at`), `letter_edited`; `GET /jobs/{id}`'s `cover_letter`: `generated_at`,
+`outdated`, `queued`, `edited`, `rewrite_est_usd`; `GET /jobs/letter-bands`: `rewrite_est_usd`
+(`letter_bands.rewrite_cost_estimate`: mean cost per pipeline run from `llm_usage.run_id`, else the
+one-pass estimate while the loop is off). The Rewrite is `/regenerate` (now `worker._rewrite_letter`):
+it claims the job in `letter_bands.queued` (cards show "✍ Writing…"; a second call returns
+`"writing"`), refuses applied jobs (409), and with `discard_edits=true` (the Rewrite's D1, the ONE
+exception to "generation never clears edited_content") clears the edits only once a new letter has
+landed; it always releases and sends SSE `letter_rewrite_done`. UI: Keep Applying card ("Written 14
+Oct", amber "before profile update", two-click "⟳ Rewrite") and the Quick Apply panel on the ad (same,
+polls the local API every 15 s and puts the new letter in its box; none on applied jobs). D4 (owner):
+ONLY an outdated letter offers Rewrite; /regenerate itself still takes any job (Try again now). The stub
+LLM now answers `complete_text` too (a string in LLM_STUB_RESPONSES). pytest 1813; e2e new
+`letter_rewrite_e2e.py` 35/35, apply_sent 51, dashboard 199, sidebar_load 67, pipeline 86, quick_apply
+124. Not checked in the user's own Chrome yet; real.db migrates on the next `run_api.py real`.
 
 🔄 BUILT, AWAITING THE USER'S MANUAL CHECKS: Settings simplified — 2026-10-16 (branch `centrelink-ease-apply`)
 

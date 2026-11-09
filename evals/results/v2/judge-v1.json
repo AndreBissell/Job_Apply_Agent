@@ -1,0 +1,21 @@
+{
+  "name": "v1",
+  "frozen": "2026-11-05",
+  "version": {
+    "backend": "claude-cli",
+    "model": "claude-opus-5-5",
+    "effort": "high",
+    "cli_version": "2.1.317",
+    "standard_sha256": "a1b0d9de3c95ddca5e29c302fc1c0ea7f345879047c4370a4dc25f9609fc7df0",
+    "instructions_sha256": "2ddb9aa8c53ab2249ceda6e49e72c7354815b3b3d3e79f3f801503f7592fa822",
+    "examples_sha256": "f78725e7e0f35cf9c9e31414fd161e6764e600dc8ebf76f226ae2aefdb8605b4"
+  },
+  "note": "The cover-letter judge for eval set v2 (points scheme), frozen by the owner on 2026-11-05. It passed stage 8 on run dev-agent-v1's dev letters: calibration half pts-cal-2 (7/8 within ±1, mean gap 0.56 vs the constant guess's 1.01), check half pts-check-1 (9/9 within ±1, mean gap 0.03 vs 0.79, after the owner's review of 2026-11-05) and probes pts-probe-1 (8/8). All three runs used exactly this version. `grading_panel.py v2-run <tag> --judge v1` refuses to start when any field differs. The CLI is pinned locally (gitignored) at evals/work/v2/judge-bin/2.1.317/claude.exe; set JUDGE_CLAUDE_BIN to it. The examples hash is of the gitignored evals/work/v2/calibration/examples-points.md.",
+  "runs": {
+    "pts-cal-2": "dev-agent-v1",
+    "pts-check-1": "dev-agent-v1",
+    "pts-probe-1": "probe-pts-1"
+  },
+  "cli_binary_sha256": "26b01ec22df2c17ac7f5703aa547d36706e8d58412136ced0344a8ced4d86038",
+  "cli_binary_note": "sha256 of the 2.1.317 win32-x64 claude.exe the runs used; for reference, not checked by code"
+}

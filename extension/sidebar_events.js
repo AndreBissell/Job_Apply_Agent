@@ -79,7 +79,9 @@ function connectEvents() {
 
   // A cover-letter run started, is waiting on a question, finished or failed: move the
   // card between "Writing…", "Needs your answer" and "Ready".
-  for (const name of ['letter_run_started', 'letter_run_waiting', 'letter_run_done', 'letter_run_failed']) {
+  // A Rewrite ended (landed, failed or paused): its card leaves "Writing…".
+  for (const name of ['letter_run_started', 'letter_run_waiting', 'letter_run_done', 'letter_run_failed',
+                      'letter_rewrite_done']) {
     source.addEventListener(name, () => scheduleReload());
   }
 

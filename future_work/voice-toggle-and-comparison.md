@@ -48,6 +48,10 @@ the finished agent is a better use of the grading effort.
 - Status 2026-10-04 (writer v3, Phases 7-8): still open. The writer still copies one stock
   line from the writing sample into some letters (plan Decision log 2026-10-04, follow-up
   (4)). Nothing has been built for it yet: no copy check in `style_lint` and no voice switch.
+- Eval v2 (`dev-agent-v1`, 2026-10-29): the sample's "I am drawn to" and "exactly the kind of"
+  turn up in 8 and 9 of the 17 letters, and count towards the owner's sounds_ai rule (C5b,
+  `letter_metrics.stock_phrases`). C3's writing-sample copy is 3%, so the problem is a few
+  signature phrases repeated, not long copied runs.
 
 ## How (rough)
 
