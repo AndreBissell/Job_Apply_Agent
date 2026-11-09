@@ -23,7 +23,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app import evidence_pdf
-from app.api import paths
+from app.api import evidence, paths
 from app.api.main import app, get_db
 from app.db import Base
 from app.llm import client as llm_client
@@ -322,11 +322,44 @@ class TestBundles:
         assert all(n.endswith(".pdf") and "_1_job" in n for n in names)
 
 
+def _caption_for(title="Graduate Analyst", company="Acme Pty Ltd") -> tuple[str, ...]:
+    """The caption for a job applied for at noon UTC on 14 Oct 2026: the same local date
+    in any time zone from UTC-11 to UTC+11, so the test passes wherever it runs."""
+    match = Match(applied_at=datetime(2026, 10, 14, 12, 0, tzinfo=timezone.utc))
+    job = JobListing(title=title, company=company,
+                     url="https://au.seek.com/job/12345", source_job_id="12345")
+    return evidence._caption(match, job)
+
+
+class TestCaption:
+    def test_caption_has_three_lines(self):
+        assert len(_caption_for()) == 3
+
+    def test_first_line_is_the_date_applied_without_the_time(self):
+        assert _caption_for()[0] == "Applied 14/10/2026"
+
+    def test_second_line_is_title_and_company(self):
+        assert _caption_for()[1] == "Graduate Analyst — Acme Pty Ltd"
+
+    def test_third_line_is_only_the_url(self):
+        assert _caption_for()[2] == "https://au.seek.com/job/12345"
+
+    def test_no_title_shows_the_company_alone(self):
+        assert _caption_for(title=None)[1] == "Acme Pty Ltd"
+
+    def test_no_company_shows_the_title_alone(self):
+        assert _caption_for(company=None)[1] == "Graduate Analyst"
+
+    @pytest.mark.parametrize("title, company", [(None, None), ("", ""), (None, "")])
+    def test_no_title_or_company_falls_back_to_the_job_number(self, title, company):
+        assert _caption_for(title=title, company=company)[1] == "Seek job 12345"
+
+
 class TestPdf:
     def test_each_page_has_a_caption_band_above_the_screenshot(self, tmp_path):
         src = tmp_path / "s.png"
         src.write_bytes(_png(800, 300))
-        page = evidence_pdf.render_page(evidence_pdf.EvidencePage(src, ("Applied 14/10/2026 at 1:12 pm", "Role — Co", "url")))
+        page = evidence_pdf.render_page(evidence_pdf.EvidencePage(src, ("Applied 14/10/2026", "Role — Co", "url")))
         assert page.width == 800 and page.height > 300
         assert page.getpixel((page.width - 2, 2)) == (255, 255, 255)  # the band is white
 

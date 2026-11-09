@@ -218,11 +218,9 @@ def _unreported(db: Session, profile_id: int) -> list[tuple[Match, JobListing, P
 
 
 def _caption(match: Match, job: JobListing) -> tuple[str, ...]:
-    when = _local(match.applied_at)
-    clock = f"{when.hour % 12 or 12}:{when:%M} {'am' if when.hour < 12 else 'pm'}"
-    applied = f"Applied {when:%d/%m/%Y} at {clock}"
+    applied = f"Applied {_local(match.applied_at):%d/%m/%Y}"
     role = " — ".join(part for part in (job.title, job.company) if part) or f"Seek job {job.source_job_id}"
-    return (applied, role, f"Seek Quick Apply · {job.url}")
+    return (applied, role, job.url)
 
 
 def _bundle_name(now_local: datetime, count: int) -> str:
