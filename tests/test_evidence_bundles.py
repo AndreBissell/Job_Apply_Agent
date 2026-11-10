@@ -23,7 +23,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app import evidence_pdf
-from app.api import paths
+from app.api import evidence, paths
 from app.api.main import app, get_db
 from app.db import Base
 from app.llm import client as llm_client
@@ -218,7 +218,7 @@ class TestBundles:
         assert status["bundles"] == []
         assert status["folder"] == "screenshots_real/centrelink_ready"
 
-    def test_collate_makes_one_pdf_named_time_date_count(self, client, db, shots):
+    def test_collate_makes_one_pdf_named_date_and_job_count(self, client, db, shots):
         _profile(db)
         for i in range(5):
             _applied(db, shots, f"Job {i}", hours_ago=10 - i)
@@ -227,7 +227,7 @@ class TestBundles:
         bundles = res.json()["bundles"]
         assert len(bundles) == 1
         b = bundles[0]
-        assert re.fullmatch(r"\d{4}_\d{2}-\d{2}-\d{4}_5_jobs\.pdf", b["filename"])
+        assert re.fullmatch(r"\d{6}JOBS5\.pdf", b["filename"])
         assert b["job_count"] == 5 and b["on_disk"]
         pdf = (shots / "centrelink_ready" / b["filename"]).read_bytes()
         assert pdf.startswith(b"%PDF")
@@ -256,10 +256,10 @@ class TestBundles:
         assert b["job_count"] == 2
         assert db.scalar(select(func.count()).select_from(EvidenceBundleItem)) == 3
 
-    def test_one_job_reads_singular(self, client, db, shots):
+    def test_one_job_is_named_jobs1(self, client, db, shots):
         _profile(db)
         _applied(db, shots)
-        assert client.post("/evidence/bundles").json()["bundles"][0]["filename"].endswith("_1_job.pdf")
+        assert client.post("/evidence/bundles").json()["bundles"][0]["filename"].endswith("JOBS1.pdf")
 
     def test_nothing_to_collate_is_a_409(self, client, db, shots):
         _profile(db)
@@ -318,15 +318,72 @@ class TestBundles:
         bundles = client.post("/evidence/bundles").json()["bundles"]
         assert [b["job_count"] for b in bundles] == [1] * 6
         names = [b["filename"] for b in bundles]
-        assert len(set(names)) == 6  # the clash suffix _2, _3, ...
-        assert all(n.endswith(".pdf") and "_1_job" in n for n in names)
+        assert len(set(names)) == 6  # the clash suffix V2, V3, ...
+        assert all(re.fullmatch(r"\d{6}JOBS1(V\d+)?\.pdf", n) for n in names)
+
+
+def _caption_for(title="Graduate Analyst", company="Acme Pty Ltd") -> tuple[str, ...]:
+    """The caption for a job applied for at noon UTC on 14 Oct 2026: the same local date
+    in any time zone from UTC-11 to UTC+11, so the test passes wherever it runs."""
+    match = Match(applied_at=datetime(2026, 10, 14, 12, 0, tzinfo=timezone.utc))
+    job = JobListing(title=title, company=company,
+                     url="https://au.seek.com/job/12345", source_job_id="12345")
+    return evidence._caption(match, job)
+
+
+class TestCaption:
+    def test_caption_has_three_lines(self):
+        assert len(_caption_for()) == 3
+
+    def test_first_line_is_the_date_applied_without_the_time(self):
+        assert _caption_for()[0] == "Applied 14/10/2026"
+
+    def test_second_line_is_title_and_company(self):
+        assert _caption_for()[1] == "Graduate Analyst — Acme Pty Ltd"
+
+    def test_third_line_is_only_the_url(self):
+        assert _caption_for()[2] == "https://au.seek.com/job/12345"
+
+    def test_no_title_shows_the_company_alone(self):
+        assert _caption_for(title=None)[1] == "Acme Pty Ltd"
+
+    def test_no_company_shows_the_title_alone(self):
+        assert _caption_for(company=None)[1] == "Graduate Analyst"
+
+    @pytest.mark.parametrize("title, company", [(None, None), ("", ""), (None, "")])
+    def test_no_title_or_company_falls_back_to_the_job_number(self, title, company):
+        assert _caption_for(title=title, company=company)[1] == "Seek job 12345"
+
+
+class TestBundleName:
+    DAY = datetime(2026, 10, 3, 13, 12)  # 3 Oct: a one-digit day, and day != month
+
+    def test_name_is_day_month_year_then_jobs_and_count(self, shots):
+        assert evidence._bundle_name(self.DAY, 5) == "031026JOBS5.pdf"
+
+    def test_name_holds_only_letters_and_digits(self, shots):
+        assert re.fullmatch(r"[A-Za-z0-9]+\.pdf", evidence._bundle_name(self.DAY, 12))
+
+    def test_a_clash_gets_v2_then_v3(self, shots):
+        folder = shots / evidence.BUNDLES_DIR
+        folder.mkdir()
+        (folder / "031026JOBS5.pdf").touch()
+        assert evidence._bundle_name(self.DAY, 5) == "031026JOBS5V2.pdf"
+        (folder / "031026JOBS5V2.pdf").touch()
+        assert evidence._bundle_name(self.DAY, 5) == "031026JOBS5V3.pdf"
+
+    def test_a_different_job_count_is_not_a_clash(self, shots):
+        folder = shots / evidence.BUNDLES_DIR
+        folder.mkdir()
+        (folder / "031026JOBS5.pdf").touch()
+        assert evidence._bundle_name(self.DAY, 4) == "031026JOBS4.pdf"
 
 
 class TestPdf:
     def test_each_page_has_a_caption_band_above_the_screenshot(self, tmp_path):
         src = tmp_path / "s.png"
         src.write_bytes(_png(800, 300))
-        page = evidence_pdf.render_page(evidence_pdf.EvidencePage(src, ("Applied 14/10/2026 at 1:12 pm", "Role — Co", "url")))
+        page = evidence_pdf.render_page(evidence_pdf.EvidencePage(src, ("Applied 14/10/2026", "Role — Co", "url")))
         assert page.width == 800 and page.height > 300
         assert page.getpixel((page.width - 2, 2)) == (255, 255, 255)  # the band is white
 

@@ -379,7 +379,7 @@ Corrected maths: 30 × 104 KB ≈ 3.19 MB is just OVER 3 MB, so the packer measu
 
 ```
 evidence/2026-10/1312_14-10-2026_Acme-Pty-Ltd.png   every screenshot, once; (time)_(date)_(company)
-centrelink_ready/1312_14-10-2026_5_jobs.pdf         the upload files; (time)_(date)_(number of jobs)
+centrelink_ready/141026JOBS5.pdf                    the upload files; ddmmyyJOBS(number of jobs)
 ```
 
 Names hold only letters, digits, `_` and `-` (company names are cleaned; no company → `job-<id>`;
@@ -425,7 +425,7 @@ a clash gets `_<job id>` / `_2`). Older screenshots keep their old top-level pat
    migration `d8f3b6a1c527` runs.
 2. Overview: the Centrelink evidence card should show **1 Quick Apply application not yet reported**
    (the screenshot from part 1's live check).
-3. Press **Collate**: a PDF named like `1312_14-10-2026_1_job.pdf` lands in Downloads and in
+3. Press **Collate**: a PDF named like `141026JOBS1.pdf` lands in Downloads and in
    `app/screenshots_real/centrelink_ready/`. Open it: caption above the screenshot.
 4. Try **Undo** (two clicks), then collate again. Upload the PDF to Centrelink when you report,
    entering the number of jobs from the file name.

@@ -443,8 +443,8 @@ def run(headed: bool, keep: bool = False) -> int:
             collate.click()
             wait_until(lambda: side_downloads, timeout_s=20)
             name = side_downloads[0].suggested_filename if side_downloads else ""
-            c.check(re.fullmatch(r"\d{4}_\d{2}-\d{2}-\d{4}_3_jobs\.pdf", name),
-                    f"Collate: one PDF downloaded, named (time)_(date)_3_jobs ({name})")
+            c.check(re.fullmatch(r"\d{6}JOBS3\.pdf", name),
+                    f"Collate: one PDF downloaded, named ddmmyyJOBS3 ({name})")
             pdf = Path(side_downloads[0].path()).read_bytes() if side_downloads else b""
             c.check(pdf.startswith(b"%PDF") and len(re.findall(rb"/Type\s*/Page\b(?!s)", pdf)) == 3,
                     "Collate: the PDF has 3 pages")
