@@ -294,9 +294,12 @@ def run(headed: bool, keep: bool = False) -> int:
             ctx.route(intercepted, route)
             sw = ctx.service_workers[0] if ctx.service_workers else ctx.wait_for_event("serviceworker")
             sw.evaluate("chrome.storage.local.set({ backendEnv: 'test' })")
-            for extra in ctx.pages:  # the initial blank tab: one tab only, so ours is the active one
-                extra.close()
+            # Open ours first, then close the initial blank tab: in a headed browser, closing the
+            # last tab closes the window and new_page() fails. One tab only, so ours is the active one.
             pg = ctx.new_page()
+            for extra in ctx.pages:
+                if extra is not pg:
+                    extra.close()
             global PAGE
             PAGE = pg
             pg.on("console", lambda m: m.text.startswith("[SeekAssistant]") and print("   console:", m.text))
