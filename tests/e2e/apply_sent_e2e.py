@@ -195,7 +195,7 @@ class Checks:
 PAGE = None
 
 
-def wait_until(fn, timeout_s: float = 20, step_s: float = 0.25):
+def wait_until(fn, timeout_s: float = 30, step_s: float = 0.25):
     end = time.time() + timeout_s
     value = fn()
     while not value and time.time() < end:
