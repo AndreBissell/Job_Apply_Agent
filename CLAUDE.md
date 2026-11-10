@@ -589,7 +589,7 @@ PASSED 2026-10-14 (a real Quick Apply on REAL was recorded and screenshotted).
 Part 2, Centrelink-ready PDFs (2026-10-14, same plan doc): Centrelink takes one file (<3 MB) per
 upload, so the Overview's "Centrelink evidence" card collates every UNREPORTED Quick Apply screenshot
 into one PDF (captioned pages, Pillow, NO LLM), saved in `<screenshots>/centrelink_ready/
-(time)_(date)_(n)_jobs.pdf` (kept forever) and downloaded; two-click Undo. Screenshots are stored ONCE
+ddmmyyJOBSn.pdf` (letters and digits only, V2 on a clash; kept forever) and downloaded; two-click Undo. Screenshots are stored ONCE
 in `evidence/<YYYY-MM>/(time)_(date)_(company).png`; "reported" is the `evidence_bundle_items` table
 (migration `d8f3b6a1c527`), not a second folder. `screenshot_ttl_days` 30 -> 150, and an unreported
 screenshot never expires. Endpoints `/evidence/status|bundles|bundles/{id}/download`, SSE

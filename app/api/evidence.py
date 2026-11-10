@@ -224,14 +224,14 @@ def _caption(match: Match, job: JobListing) -> tuple[str, ...]:
 
 
 def _bundle_name(now_local: datetime, count: int) -> str:
-    """(time)_(date)_(number of jobs).pdf, e.g. 1312_14-10-2026_5_jobs.pdf: letters,
-    digits, _ and - only, so any upload form accepts it. A clash (two bundles in the
-    same minute, or one click split in two) gets _2, _3, ..."""
-    stem = f"{now_local:%H%M_%d-%m-%Y}_{count}_{'job' if count == 1 else 'jobs'}"
+    """ddmmyyJOBSn.pdf, e.g. 141026JOBS5.pdf for 5 jobs on 14 Oct 2026: letters and
+    digits only, so any upload form accepts it. A clash (same day and job count, or one
+    click split in two) gets V2, V3, ...: a letter first, so JOBS5V2 never reads as 52."""
+    stem = f"{now_local:%d%m%y}JOBS{count}"
     name, n = f"{stem}.pdf", 1
     while (_bundles_dir() / name).exists():
         n += 1
-        name = f"{stem}_{n}.pdf"
+        name = f"{stem}V{n}.pdf"
     return name
 
 

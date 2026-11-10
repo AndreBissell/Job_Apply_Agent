@@ -645,7 +645,7 @@ migration (`d8f3b6a1c527`) never rebuilds `matches` on SQLite.
 CREATE TABLE evidence_bundles (
     id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     user_id     BIGINT      NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
-    filename    TEXT        NOT NULL,   -- (time)_(date)_(n)_jobs.pdf, e.g. 1312_14-10-2026_5_jobs.pdf
+    filename    TEXT        NOT NULL,   -- ddmmyyJOBSn.pdf, e.g. 141026JOBS5.pdf (V2, V3, ... on a clash)
     job_count   INTEGER     NOT NULL,
     size_bytes  INTEGER     NOT NULL,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
