@@ -250,6 +250,8 @@ def run(headed: bool, keep: bool = False) -> int:
             sw = ctx.service_workers[0] if ctx.service_workers else ctx.wait_for_event("serviceworker")
             sw.evaluate("chrome.storage.local.set({ backendEnv: 'test' })")
             ext_id = sw.url.split("/")[2]
+            # Open ours first, then close the initial blank tab: in a headed browser, closing the
+            # last tab closes the window and new_page() fails.
             for extra in ctx.pages:
                 extra.close()
             side = ctx.new_page()
