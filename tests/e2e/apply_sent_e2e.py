@@ -297,9 +297,9 @@ def run(headed: bool, keep: bool = False) -> int:
             # Open ours first, then close the initial blank tab: in a headed browser, closing the
             # last tab closes the window and new_page() fails. One tab only, so ours is the active one.
             pg = ctx.new_page()
-            for extra in ctx.pages[:-1]:
-                extra.close()
-            print("   tabs:", [t.url for t in ctx.pages])
+            for extra in ctx.pages:
+                if extra is not pg:
+                    extra.close()
             global PAGE
             PAGE = pg
             pg.on("console", lambda m: m.text.startswith("[SeekAssistant]") and print("   console:", m.text))
