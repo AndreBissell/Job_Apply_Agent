@@ -252,9 +252,10 @@ def run(headed: bool, keep: bool = False) -> int:
             ext_id = sw.url.split("/")[2]
             # Open ours first, then close the initial blank tab: in a headed browser, closing the
             # last tab closes the window and new_page() fails.
-            for extra in ctx.pages:
-                extra.close()
             side = ctx.new_page()
+            for extra in ctx.pages:
+                if extra is not side:
+                    extra.close()
             global PAGE
             PAGE = side
             errors: list[str] = []
