@@ -1,23 +1,30 @@
-// Background availability checks: is a stored listing still advertised? The backend picks which
-// one (GET /availability/next) and records the verdict (POST /availability/{id}); this file does
-// the only part that touches Seek, in the user's own browser, one background tab at a time.
+// Availability checks: is a stored listing still advertised? The backend picks which one and in
+// which mode (GET /availability/next) and records the verdict (POST /availability/{id}); this file
+// does the only part that touches Seek, in the user's own browser, one background tab at a time.
 // Classic script: sidebar.html loads it after sidebar_scan.js (it reuses sleep, injectFn,
 // waitForTabComplete, seekPace and `scanning`) and before sidebar_personalise.js; all share one
 // global scope. Nothing here runs at load except arming the timer.
 //
+// Two modes (docs/availability-fast-mode-plan.md). The BACKEND decides the mode and holds its caps
+// (fast: 10 top jobs seen live or 15 pages a run, one run an hour; DAILY_CAP for all checks); this
+// file only paces the pages: fast ≥ CHECK_FAST_DELAY_MS apart and started as soon as the panel is
+// ready, background ≥ CHECK_DELAY_MS apart, ≤ CHECK_SESSION_CAP pages a session, first one
+// CHECK_START_DELAY_MS after load. CHECK_SESSION_HARD_LIMIT is a backstop whatever the backend says.
+//
 // Policy (CLAUDE.md, "Availability re-checks"): a stored listing's own /job/{id} page only, never
-// a link found on it; ≥ CHECK_DELAY_MS apart and never alongside a scan; at most CHECK_SESSION_CAP
-// pages per session and DAILY_CAP (backend) per 24 hours; stop for CHECK_COOLDOWN_MS if Seek looks
-// like it is challenging the browser. A scan always wins (cancelAvailabilityCheck).
+// a link found on it; never alongside a scan; stop for CHECK_COOLDOWN_MS if Seek looks like it is
+// challenging the browser. A scan always wins (cancelAvailabilityCheck).
 //
 // Why the side panel and not background.js: the pacing is setTimeout and a tab handle, which an
 // MV3 service worker loses when it is killed, and the scan flag lives here.
 // ---------------------------------------------------------------------------
-const CHECK_DELAY_MS = 15000;                       // between pages; the policy floor is SCAN_DELAY_MS
-const CHECK_SESSION_CAP = 8;                        // pages per session
-const CHECK_START_DELAY_MS = 60000;                 // after the panel loads, so Scan Page can go first
+const CHECK_DELAY_MS = 15000;                       // background pace; the policy floor is SCAN_DELAY_MS
+const CHECK_FAST_DELAY_MS = 5000;                   // fast-mode pace: the policy floor itself (= SCAN_DELAY_MS)
+const CHECK_SESSION_CAP = 8;                        // background pages per session (fast pages: the backend's cap)
+const CHECK_SESSION_HARD_LIMIT = 25;                // pages per session in all, whatever the backend says (15 + 8 is the most it should give)
+const CHECK_START_DELAY_MS = 60000;                 // background only: after the panel loads, so Scan Page can go first
 const CHECK_SESSION_INTERVAL_MS = 30 * 60 * 1000;   // between sessions while the panel stays open
-const CHECK_MISS_STREAK_LIMIT = 5;                  // "no description" this many times running = blocked
+const CHECK_MISS_STREAK_LIMIT = 5;                  // pages opened in a row that were not live (missing or unknown) = blocked?
 const CHECK_COOLDOWN_MS = 6 * 60 * 60 * 1000;       // pause after a suspected block
 const CHECK_COOLDOWN_KEY = 'availabilityCooldownUntil';
 const CHECK_HOSTS = ['au.seek.com', 'www.seek.com.au'];
@@ -81,12 +88,13 @@ async function fetchNextCheck(tried) {
   }
 }
 
-async function postVerdict(jobId, verdict) {
+// `mode` is the mode the page was OPENED in (the backend starts a fast run on the first fast one).
+async function postVerdict(jobId, verdict, mode) {
   try {
-    const res = await fetch(`${BACKEND}/availability/${jobId}`, {
+    const res = await fetch(`${BACKEND}/availability/${jobId}?profile_id=${PROFILE_ID}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ verdict }),
+      body: JSON.stringify({ verdict, mode }),
     });
     return res.ok ? await res.json() : null;
   } catch {
@@ -94,11 +102,15 @@ async function postVerdict(jobId, verdict) {
   }
 }
 
-// Visit one listing. Returns 'live' | 'missing' | 'unknown' | 'challenge', or null when a scan
+// Visit one listing. Returns 'live' | 'missing' | 'unknown' | 'challenge', 'refused' when its URL
+// isn't a Seek listing page so nothing was opened (recorded as 'unknown'), or null when a scan
 // cancelled it (then nothing is recorded: the job simply comes up again later).
-async function checkOne(job) {
+async function checkOne(job, mode) {
   const url = checkUrlFor(job);
-  if (!url) return 'unknown';
+  if (!url) {
+    console.log(`[availability] job ${job.job_id}: not a Seek listing URL, not opened`);
+    return 'refused';
+  }
   const handle = { tabId: null, cancelled: false };
   handle.signal = new Promise(r => { handle.cancel = r; });
   handle.done = new Promise(r => { handle.finish = r; });
@@ -126,7 +138,7 @@ async function checkOne(job) {
   }
   if (handle.cancelled) return null;
   const verdict = classifyCheck(ev, job.source_job_id);
-  console.log(`[availability] job ${job.job_id} (${job.group}) -> ${verdict}`, ev);
+  console.log(`[availability] job ${job.job_id} (${mode}, ${job.group}) -> ${verdict}`, ev);
   return verdict;
 }
 
@@ -156,74 +168,88 @@ async function startCooldown(why) {
   } catch { /* the pause just won't outlive this panel */ }
 }
 
-// One session: up to CHECK_SESSION_CAP pages. Returns 'busy' when it could not start because a
-// scan or another session is running, else 'done'.
+// One session. Each page's mode comes from the backend: fast pages are paced CHECK_FAST_DELAY_MS
+// and capped by the backend (it switches to background when the fast run is over); background
+// pages are paced CHECK_DELAY_MS, at most CHECK_SESSION_CAP of them. Returns 'busy' when it could
+// not start because a scan or another session is running, else 'done'.
 //
 // False-positive guard: a "no description" result is only a candidate. It is sent as 'missing'
 // once this session has also seen a LIVE page (proof this browser can still see descriptions);
 // if the session ends without one, every held result is sent as 'unknown' instead. So a blocked
 // or logged-out browser, where every page looks empty, can never flag anything.
+//
+// Block guard (plan D7): CHECK_MISS_STREAK_LIMIT pages opened in a row that were not live
+// ('missing' or 'unknown', e.g. a redirect everywhere) pause the checks; a live page resets the
+// count, and a 'refused' URL opened nothing so says nothing about Seek.
 async function runAvailabilitySession() {
   if (checkingAvailability || scanning) return 'busy';
   checkingAvailability = true;
   const tried = [];
-  const heldMisses = [];
+  const heldMisses = [];   // { id, mode } of 'missing' results not yet corroborated by a live page
   let sawLive = false;
-  let missStreak = 0;
+  let notLiveStreak = 0;
+  let backgroundPages = 0;
   let changed = false;
   try {
     if (await cooldownActive()) return 'done';
-    let opened = 0;
-    while (opened < CHECK_SESSION_CAP) {
+    while (tried.length < CHECK_SESSION_HARD_LIMIT) {
       if (scanning) break;
       const next = await fetchNextCheck(tried);
       if (!next || !next.enabled || !next.job || next.remaining_today <= 0) break;
       const job = next.job;
+      const mode = next.mode === 'fast' ? 'fast' : 'background';
+      if (mode === 'background' && backgroundPages >= CHECK_SESSION_CAP) break;
 
-      await seekPace(CHECK_DELAY_MS);
+      await seekPace(mode === 'fast' ? CHECK_FAST_DELAY_MS : CHECK_DELAY_MS);
       if (scanning) break; // a scan started while we waited our turn
-      opened += 1;
+      if (mode === 'background') backgroundPages += 1;
       tried.push(job.job_id);
-      const verdict = await checkOne(job);
+      const verdict = await checkOne(job, mode);
       if (verdict === null) break; // a scan took over
 
       if (verdict === 'live') {
         sawLive = true;
-        missStreak = 0;
-        const out = await postVerdict(job.job_id, 'live');
+        notLiveStreak = 0;
+        const out = await postVerdict(job.job_id, 'live', mode);
         if (out) changed = true;
-        for (const id of heldMisses.splice(0)) {
-          const r = await postVerdict(id, 'missing');
+        for (const held of heldMisses.splice(0)) {
+          const r = await postVerdict(held.id, 'missing', held.mode);
           if (r?.expired) changed = true;
         }
-      } else if (verdict === 'missing') {
-        missStreak += 1;
+        continue;
+      }
+      if (verdict === 'missing') {
         if (sawLive) {
-          const r = await postVerdict(job.job_id, 'missing');
+          const r = await postVerdict(job.job_id, 'missing', mode);
           if (r?.expired) changed = true;
         } else {
-          heldMisses.push(job.job_id);
-        }
-        if (missStreak >= CHECK_MISS_STREAK_LIMIT) {
-          await startCooldown(`${missStreak} pages in a row had no description (a block, or a bad selector?)`);
-          break;
+          heldMisses.push({ id: job.job_id, mode });
         }
       } else {
-        await postVerdict(job.job_id, 'unknown');
+        await postVerdict(job.job_id, 'unknown', mode); // 'unknown', 'challenge' and 'refused'
         if (verdict === 'challenge') {
           await startCooldown('Seek showed a challenge page');
           break;
         }
       }
+      if (verdict !== 'refused') notLiveStreak += 1;
+      if (notLiveStreak >= CHECK_MISS_STREAK_LIMIT) {
+        await startCooldown(`${notLiveStreak} pages in a row were not live (no description or a redirect: a block, or a bad selector?)`);
+        break;
+      }
     }
   } finally {
-    for (const id of heldMisses) await postVerdict(id, 'unknown'); // never corroborated: prove nothing
+    // Never corroborated: prove nothing.
+    for (const held of heldMisses) await postVerdict(held.id, 'unknown', held.mode);
     checkingAvailability = false;
     if (changed) scheduleReload(); // a job was flagged or un-flagged: refresh the list
   }
   return 'done';
 }
 
+// D6: fast mode starts as soon as the panel is ready (a Scan Page click still wins: it cancels
+// the page in flight); the background trickle waits CHECK_START_DELAY_MS so a scan can go first.
+// Asking /availability/next changes nothing, so this first look costs no page and starts no run.
 function armAvailabilityChecks() {
   const tick = async (delay) => {
     setTimeout(async () => {
@@ -233,7 +259,10 @@ function armAvailabilityChecks() {
       tick(state === 'busy' ? 2 * 60 * 1000 : CHECK_SESSION_INTERVAL_MS);
     }, delay);
   };
-  tick(CHECK_START_DELAY_MS);
+  fetchNextCheck([]).then((next) => {
+    const fastNow = !!(next && next.enabled && next.job && next.mode === 'fast');
+    tick(fastNow ? 0 : CHECK_START_DELAY_MS);
+  });
 }
 
 backendReady.then(armAvailabilityChecks);

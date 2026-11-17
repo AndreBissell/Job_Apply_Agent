@@ -155,6 +155,23 @@ def test_check_session_cap_stays_a_trickle():
     assert 1 <= _const("CHECK_SESSION_CAP") <= 10
 
 
+def test_fast_mode_pace_is_never_below_the_scan_delay():
+    # Fast mode (docs/availability-fast-mode-plan.md D3) paces at the policy floor, never under it.
+    assert _const("CHECK_FAST_DELAY_MS") >= _const("SCAN_DELAY_MS") >= 5000
+
+
+def test_a_session_has_a_hard_page_limit():
+    """A backstop in the panel whatever the backend says: at most 25 pages a session, and never
+    less than one full fast run plus one background session (or it would cut a legal session)."""
+    from app import availability
+
+    limit = _const("CHECK_SESSION_HARD_LIMIT")
+    assert limit <= 25
+    assert limit >= availability.FAST_RUN_PAGE_CAP + _const("CHECK_SESSION_CAP")
+    run = _sources()["sidebar_availability.js"]
+    assert "while (tried.length < CHECK_SESSION_HARD_LIMIT)" in run
+
+
 def test_backend_daily_cap_is_bounded():
     from app import availability
 
@@ -200,7 +217,9 @@ def test_checks_wait_their_turn_behind_the_scan_and_the_shared_pace():
     text = _sources()["sidebar_availability.js"]
     run = text[text.index("async function runAvailabilitySession"):text.index("function armAvailabilityChecks")]
     assert "scanning" in run
-    assert run.index("seekPace(CHECK_DELAY_MS)") < run.index("checkOne(job)")
+    # Every page waits its mode's pace first: 5 s fast, 15 s background, both through seekPace.
+    pace = "seekPace(mode === 'fast' ? CHECK_FAST_DELAY_MS : CHECK_DELAY_MS)"
+    assert run.count("seekPace(") == 1 and run.index(pace) < run.index("checkOne(job, mode)")
     scan = _sources()["sidebar_scan.js"]
     assert "cancelAvailabilityCheck()" in scan and "seekPace(SCAN_DELAY_MS)" in scan
 

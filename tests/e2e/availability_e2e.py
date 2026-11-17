@@ -86,14 +86,14 @@ def make_scratch_db(folder: Path) -> Path:
 
 
 def add_job(db: Path, n: int, score: float, *, applied: bool = False, letter: bool = False,
-            seen_days: float = 10, checked_days: float | None = None) -> None:
+            seen_days: float = 10, checked_days: float | None = None, url: str | None = None) -> None:
     """A stored listing, extracted and matched (so the idle loop never has AI work for it),
     last seen live `seen_days` ago."""
     con = sqlite3.connect(db)
     con.execute(
         "INSERT INTO job_listings (id, source, source_job_id, url, title, raw_description, extracted_at,"
         " last_seen_live_at, availability_checked_at) VALUES (?, 'seek', ?, ?, ?, 'An ad', ?, ?, ?)",
-        (n, str(n), f"{seek_url(n)}?type=standard&ref=search", f"Job {n}", ago(), ago(seen_days),
+        (n, str(n), url or f"{seek_url(n)}?type=standard&ref=search", f"Job {n}", ago(), ago(seen_days),
          ago(checked_days) if checked_days is not None else None),
     )
     con.execute(
@@ -123,9 +123,14 @@ def api(path: str, method: str = "GET", body: dict | None = None):
 
 INIT = """
 (() => {
-  // The one delayed start the panel arms (60 s) would fire mid-test: never let it.
+  // Every delay the panel asks for is recorded (which start did armAvailabilityChecks choose?).
+  // The background start (60 s) would fire mid-test: never let it.
+  window.__delays = [];
   const realSetTimeout = window.setTimeout.bind(window);
-  window.setTimeout = (fn, ms, ...rest) => (ms === 60000 ? 0 : realSetTimeout(fn, ms, ...rest));
+  window.setTimeout = (fn, ms, ...rest) => {
+    window.__delays.push(ms);
+    return ms === 60000 ? 0 : realSetTimeout(fn, ms, ...rest);
+  };
 })();
 """
 
@@ -157,12 +162,8 @@ def run(headed: bool, keep: bool) -> int:
         raise SystemExit(f"port {PORT} is busy: stop the test server first (this run needs a scratch DB)")
     work = Path(tempfile.mkdtemp(prefix="avail_e2e_"))
     db = make_scratch_db(work)
-    # 1 live (letter ready), 2 and 7 are closed ads, 3 redirects, 4 is applied (and would look closed).
-    add_job(db, 1, 90, letter=True)
-    add_job(db, 2, 80)
-    add_job(db, 7, 75)
-    add_job(db, 3, 70)
-    add_job(db, 4, 95, applied=True)
+    # No job yet: the panel's first look at /availability/next (as soon as it is ready) must find
+    # nothing to do, because the tab stubs below can only go in after the page has loaded.
     stub_log = work / "llm_stub.jsonl"
     server = d.start_server(db, work / "server.log", stub_log)
     con = sqlite3.connect(db)
@@ -200,6 +201,14 @@ def run(headed: bool, keep: bool) -> int:
             side.wait_for_function("typeof runAvailabilitySession === 'function' && typeof BACKEND === 'string'")
             side.evaluate(STUBS)
             c.check(side.evaluate("chrome.tabs.create.toString().includes('__opened')"), "tab opening is stubbed")
+            c.check(wait_for(lambda: 60000 in side.evaluate("window.__delays")),
+                    "nothing to check at load: the first check waits the background 60 s (D6)")
+            # 1 live (letter ready), 2 and 7 are closed ads, 3 redirects, 4 is applied (and would look closed).
+            add_job(db, 1, 90, letter=True)
+            add_job(db, 2, 80)
+            add_job(db, 7, 75)
+            add_job(db, 3, 70)
+            add_job(db, 4, 95, applied=True)
 
             def set_pages(mapping: dict) -> None:
                 side.evaluate("m => { window.__pages = m; }", mapping)
@@ -213,12 +222,17 @@ def run(headed: bool, keep: bool) -> int:
             def opened_ids() -> list[int]:
                 return [int(urlparse(o["url"]).path.rsplit("/", 1)[1]) for o in side.evaluate("window.__opened")]
 
-            # --- Session 1: order, pacing, one miss is only a strike ---------------------
-            print("Session 1: order, pacing and strikes")
+            # --- Session 1: fast mode starts by itself; order, pacing, one miss is only a strike
+            print("Session 1: fast mode on panel ready, order, pacing and strikes")
             set_pages({seek_url(1): page(1, LIVE), seek_url(2): page(2, EMPTY), seek_url(7): page(7, EMPTY),
                        seek_url(3): {**LIVE, "path": "/jobs", "title": "Jobs | SEEK"},
                        seek_url(4): page(4, EMPTY)})
-            c.check(run_session() == "done", "the session runs")
+            c.check(api("/availability/next")["mode"] == "fast", "nothing seen live lately: the backend says fast")
+            side.evaluate("() => { window.__delays = []; armAvailabilityChecks(); }")   # what backendReady runs
+            c.check(wait_for(lambda: len(opened_ids()) == 4 and not side.evaluate("checkingAvailability")),
+                    "fast mode starts as soon as the panel is ready: a session ran without being asked (D6)")
+            c.check(side.evaluate("window.__delays")[:1] == [0] and 60000 not in side.evaluate("window.__delays"),
+                    f"...with no 60 s wait ({side.evaluate('window.__delays')[:3]})")
             ids = opened_ids()
             c.check(ids == [1, 2, 7, 3], f"visited letter-ready first, then by score; applied job 4 never ({ids})")
             opened = side.evaluate("window.__opened")
@@ -226,7 +240,9 @@ def run(headed: bool, keep: bool) -> int:
             c.check([urlparse(o["url"]).query for o in opened] == [""] * 4 and
                     all(urlparse(o["url"]).netloc == "au.seek.com" for o in opened),
                     "URLs are rebuilt as https://au.seek.com/job/{id} (the stored query string is dropped)")
-            c.check(side.evaluate("window.__paces") == [15000] * 4, "each page waited the shared 15 s pace first")
+            c.check(side.evaluate("window.__paces") == [5000] * 4, "fast mode: each page waited the shared 5 s pace first")
+            c.check(api("/profile/1/preferences")["availability_fast_started_at"],
+                    "the first fast verdict started the fast run")
             c.check(sorted(side.evaluate("window.__removed")) == [101, 102, 103, 104], "every check tab was closed")
             inj = side.evaluate("window.__injected")
             c.check({i["name"] for i in inj} == {"pageCheckListing"} and
