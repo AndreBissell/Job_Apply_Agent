@@ -224,11 +224,23 @@ class TestCandidates:
         assert availability.next_candidate(db, 1, [2], NOW)[0].id == 1
 
     def test_daily_cap_counts_verdicts(self, db):
+        cap = availability.DAILY_CAP
+        add_job(db, cap + 1, score=70, seen_hours_ago=200, checked_hours_ago=30)   # outside the window
+        for n in range(1, cap):
+            add_job(db, n, score=70, seen_hours_ago=200, checked_hours_ago=1 + n / 1000)
+        assert availability.remaining_today(db, NOW) == 1      # exact: one check left
+        add_job(db, cap, score=70, seen_hours_ago=200, checked_hours_ago=2)
+        assert availability.remaining_today(db, NOW) == 0
+
+    def test_at_the_daily_cap_nothing_is_offered(self, client, db):
+        # The endpoint reads the real clock, so these checks are stamped from it, not NOW.
         for n in range(1, availability.DAILY_CAP + 1):
-            add_job(db, n, score=70, seen_hours_ago=200, checked_hours_ago=1 + n / 100)
-        assert availability.remaining_today(db, NOW) == 0
-        add_job(db, 99, score=70, seen_hours_ago=200, checked_hours_ago=30)   # outside the window
-        assert availability.remaining_today(db, NOW) == 0
+            add_job(db, n, score=70, seen_hours_ago=None)
+            db.get(JobListing, n).availability_checked_at = datetime.now(timezone.utc) - timedelta(minutes=n)
+        db.commit()
+        add_job(db, availability.DAILY_CAP + 1, score=95, letter=True, seen_hours_ago=None)   # due, top of the queue
+        body = client.get("/availability/next").json()
+        assert body["remaining_today"] == 0 and body["job"] is None
 
     def test_endpoint_shape_toggle_and_cap(self, client, db):
         add_job(db, 1, score=90, letter=True, seen_hours_ago=200)

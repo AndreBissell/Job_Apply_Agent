@@ -45,9 +45,10 @@ RECHECK_AFTER_MISS = timedelta(days=1)
 
 MISSES_TO_EXPIRE = 2
 
-# Page loads per rolling 24 hours, counted from the verdicts themselves. A policy cap
-# (CLAUDE.md, "Availability re-checks"): tests/test_scan_policy.py pins it.
-DAILY_CAP = 24
+# Page loads per rolling 24 hours, fast mode and the background trickle together, counted from
+# the verdicts themselves. A policy cap (CLAUDE.md, "Availability re-checks"):
+# tests/test_scan_policy.py pins it. Raised 24 -> 100 on purpose (plan D5, 2026-11-17).
+DAILY_CAP = 100
 
 # A scored job WITHOUT a letter is checked only from this score up (the long tail under it is
 # folded away in the list). A job with a letter is checked at any score.

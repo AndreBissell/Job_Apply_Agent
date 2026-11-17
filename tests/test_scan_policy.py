@@ -158,7 +158,8 @@ def test_check_session_cap_stays_a_trickle():
 def test_backend_daily_cap_is_bounded():
     from app import availability
 
-    assert 1 <= availability.DAILY_CAP <= 30
+    # 100 since 2026-11-17 (docs/availability-fast-mode-plan.md, D5): fast mode + background.
+    assert 1 <= availability.DAILY_CAP <= 100
     assert availability.MISSES_TO_EXPIRE >= 2  # one miss is never enough to flag a job
 
 

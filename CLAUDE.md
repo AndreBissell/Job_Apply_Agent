@@ -100,7 +100,8 @@ Caps, all in code and pinned by tests/test_scan_policy.py: side panel only (neve
 background.js); one background tab at a time (`active: false`) and one Seek page at a time across
 scans and checks together (`seekPace`); ≥ `CHECK_DELAY_MS` (15s, never below `SCAN_DELAY_MS`) apart;
 ≤ `CHECK_SESSION_CAP` (8) pages per session, one session per 30 min while the panel is open and
-≤ `DAILY_CAP` (24, app/availability.py) per rolling 24 hours; never while a scan runs (a scan
+≤ `DAILY_CAP` (100, app/availability.py; 24 until 2026-11-17, docs/availability-fast-mode-plan.md
+D5) per rolling 24 hours, all checks together; never while a scan runs (a scan
 cancels the check in flight); a toggle in ⚙ Settings (`availability_checks_enabled`). Hard stop:
 a challenge page, or `CHECK_MISS_STREAK_LIMIT` (5) empty pages in a row, pauses checks for 6 hours.
 A closed ad is never concluded from one empty page: it takes two separate visits (≥1 day apart)
