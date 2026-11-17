@@ -1,7 +1,8 @@
 # Plan: availability checks, fast mode and a value-first queue
 
-Status: DRAFT 2026-11-17, all decisions made; awaiting the owner's final read and go-ahead. No
-code written yet. Branch `avaliability-check`.
+Status: BUILT 2026-11-17 on branch `avaliability-check` (commits `9ce9b1a` queue, `e7a769d` daily
+cap, `9d85868` backend fast mode, `dafa0e1` panel, `24d777b` e2e); awaiting the owner's manual
+checks (end of this file). Choices made while building: the Implementation log below.
 
 ## Why
 
@@ -59,7 +60,8 @@ zone can't come back. `RETRY_BLOCKING_AFTER` (6 h) goes with the blocking tier.
   jobs: all of them. Exact trigger, visit and count rules: P1.
 - **Pace:** 5 s between pages (`SCAN_DELAY_MS`, the policy floor, the same as Scan Page).
 - **Stops when** 10 jobs are seen live, or after **15 pages**, whichever comes first.
-- **At most once an hour** (timestamp in `chrome.storage.local`, like the cooldown).
+- **At most once an hour** (the run's start time, kept by the backend: D8, which replaced the
+  first idea of a timestamp in `chrome.storage.local`).
 - Its pages don't count toward the background rate (D4); they do count toward the daily cap (D5).
 
 **D4. Background trickle unchanged in rate:** 15 s apart, 8 pages per session, one session per
@@ -152,17 +154,49 @@ constant.
   job captured this morning counts and is never visited; stops at 10 live; daily cap at 100.
 - Policy (`tests/test_scan_policy.py`): as above.
 - e2e (`tests/e2e/availability_e2e.py`, tabs stubbed, never real Seek): fast mode runs at 5 s,
-  stops at 10 checked or 15 pages, doesn't run again within the hour, a scan cancels it, a
-  challenge page stops it, background then continues at 15 s.
+  stops at 10 live (P1; the first draft said "10 checked") or 15 pages, doesn't run again within
+  the hour, a scan cancels it, a challenge page stops it, background then continues at 15 s.
 - **Exact counts, not only bounds.** Each cap test asserts the expected number, e.g. "20 stale
-  jobs, none live: fast mode opens exactly 15 pages", so a loop that stops early (say at the
-  background cap of 8) fails too. A test that only checks "never more than 15" would pass it.
+  jobs, one live page in five: fast mode opens exactly 15 pages", so a loop that stops early (say
+  at the background cap of 8) fails too. A test that only checks "never more than 15" would pass
+  it. (The first draft's example, "none live", can't reach 15: D7 pauses the checks after 5
+  non-live pages in a row.)
 - **D7 cooldown:** 5 non-live pages in a row (mixed missing/unknown) start it; a live page
   in between resets the count; an unknown from a refused URL (no page opened) doesn't count.
 - **The backend guard holds whatever the panel does:** after 100 checks in 24 h,
   `/availability/next` offers nothing in either mode.
 
+## Implementation log (2026-11-17)
+
+- Owner's picks: equal scores go lower job id first (A1, roughly oldest capture first); the
+  pick's group (`letter` / `no_letter` / `unscored`) replaces `tier` in the response and the
+  console log (B2, for the manual check below); one `_queue()` defines the order, reused by fast
+  mode (C1).
+- Added by Claude, all on the cautious side: a fast run's page count also includes the panel's
+  `exclude` ids, because the canary holds back misses (a recorded-only count could pass 15 by
+  up to 4); any check recorded after the run started counts as one of its pages, background
+  ones too; the POST carries the mode the page was opened in, so held misses keep theirs; the
+  panel has a hard limit of 25 pages a session whatever the backend says
+  (`CHECK_SESSION_HARD_LIMIT`, pinned); a URL `checkUrlFor` refuses is now `'refused'` (recorded
+  as unknown, doesn't count for D7).
+- D6 is done by the panel's first GET /availability/next at load (a GET changes nothing).
+- The e2e test now seeds its jobs after its tab stubs are installed, because the panel starts a
+  fast session as soon as it is ready.
+- Results: pytest 2065 passed (baseline 2041); availability e2e 70/70 (baseline 48), three
+  runs in a row; one earlier run timed out on a local API call (10 s) and didn't come back in
+  8 later runs. Every new rule was broken on purpose once and a test went red.
+
+**Not verified:** anything in a real Chrome against real Seek (see Manual checks); the fast
+mode against a real backlog; what a closed Seek ad looks like (D7's risk).
+
 ## Follow-ups (out of scope, logged so they aren't lost)
+
+- **e2e tab stubs before load.** `dashboard`, `pipeline` and `settings` stub `chrome.tabs.create`
+  after the panel loads, and `quick_apply` not at all. Today none of their databases gives fast
+  mode a job, but a future seed with a stale scored ad would let fast mode open a real tab at
+  load. Stub with `add_init_script` (as `sidebar_load` does) or switch the checks off there.
+- **The e2e's one 10 s API timeout** (seen once): watch for it; if it comes back, find which
+  call and why.
 
 - **First-strike display.** Mark or hide a Keep Applying job on its first "missing" result
   (not flagged, just "may have closed"), so a closed ad doesn't look ready for a day.
