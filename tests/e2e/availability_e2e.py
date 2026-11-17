@@ -13,12 +13,17 @@ Not collected by pytest (needs Chromium and a server). Nothing reaches Seek:
 - The server runs with LLM_PROVIDER=stub, every job is extracted and matched, and the letter bars
   are 100, so the idle loop has no model work; a stray call would fail instead of costing money.
 
-What it checks, in order: the order jobs are visited in and the pacing; one miss is only a strike;
+What it checks, in order: fast mode starts as soon as the panel is ready (and the background
+trickle waits 60 s); the order jobs are visited in and the pacing; one miss is only a strike;
 the canary (a session with no live page flags nothing); a later live page corroborates the held
 misses and the second strike flags; the flagged job drops out of GET /jobs and a capture with a
 description brings it back; a redirect proves nothing; an applied job is never visited; a scan
-cancels the page being checked and blocks a session; a challenge page and five empty pages in a row
-pause the checks; the Personalise toggle; the service worker's scan-tab set empties again.
+cancels a fast-mode page and blocks a session; a challenge page stops fast mode and pauses the
+checks, as do five empty pages in a row; fast mode stops at exactly 15 pages (few live) or exactly
+10 live, then the background pace takes over (8 pages a session); within the hour no second fast
+run, an hour later a new one; five pages in a row that were not live (missing and unknown mixed)
+pause the checks, a live page resets the count and a refused URL doesn't count; the Settings
+toggle; the service worker's scan-tab set empties again (docs/availability-fast-mode-plan.md).
 
 Exit code 0 = all checks passed.
 """
@@ -222,6 +227,28 @@ def run(headed: bool, keep: bool) -> int:
             def opened_ids() -> list[int]:
                 return [int(urlparse(o["url"]).path.rsplit("/", 1)[1]) for o in side.evaluate("window.__opened")]
 
+            def quiet_all() -> None:
+                """Every job so far: checked 2 h ago (before any fast run of this test started, so
+                not one of its pages; within 24 h, so not due) and seen live 10 days ago (so not
+                counted as live). A scenario then adds its own due jobs."""
+                con.execute("UPDATE job_listings SET availability_checked_at = ?, last_seen_live_at = ?,"
+                            " availability_misses = 0", (ago(hours=2), ago(10)))
+                con.commit()
+
+            def set_run_start(when) -> None:
+                raw = con.execute("SELECT preferences FROM profiles WHERE id = 1").fetchone()[0]
+                prefs = json.loads(raw or "{}")
+                prefs["availability_fast_started_at"] = when.isoformat() if when else None
+                con.execute("UPDATE profiles SET preferences = ? WHERE id = 1", (json.dumps(prefs),))
+                con.commit()
+
+            def cooldown_set() -> bool:
+                got = sw.evaluate("chrome.storage.local.get('availabilityCooldownUntil')")
+                return bool(got.get("availabilityCooldownUntil"))
+
+            def clear_cooldown() -> None:
+                sw.evaluate("chrome.storage.local.remove('availabilityCooldownUntil')")
+
             # --- Session 1: fast mode starts by itself; order, pacing, one miss is only a strike
             print("Session 1: fast mode on panel ready, order, pacing and strikes")
             set_pages({seek_url(1): page(1, LIVE), seek_url(2): page(2, EMPTY), seek_url(7): page(7, EMPTY),
@@ -311,6 +338,7 @@ def run(headed: bool, keep: bool) -> int:
             side.evaluate("() => { window.__session = runAvailabilitySession(); }")
             wait_for(lambda: side.evaluate("window.__opened.length") == 1)
             c.check(side.evaluate("window.__opened.length") == 1, "a check page is open")
+            c.check(side.evaluate("window.__paces") == [5000], "...a fast-mode page (5 s pace)")
             t0 = time.time()
             side.evaluate("cancelAvailabilityCheck()")
             c.check(time.time() - t0 < 5, "cancelling returns at once (it does not wait for the page)")
@@ -326,9 +354,13 @@ def run(headed: bool, keep: bool) -> int:
             # --- A challenge page pauses everything --------------------------------------
             print("Challenge page and empty streak")
             reset_counters()
-            set_pages({seek_url(1): {**EMPTY, "path": "/job/1", "title": "Just a moment...", "challenge": True}})
+            add_job(db, 30, 61)   # two more due jobs, so stopping is the challenge's doing
+            add_job(db, 31, 60)
+            set_pages({seek_url(1): {**EMPTY, "path": "/job/1", "title": "Just a moment...", "challenge": True},
+                       seek_url(30): page(30, LIVE), seek_url(31): page(31, LIVE)})
+            c.check(api("/availability/next")["mode"] == "fast", "fast mode is on before the challenge")
             run_session()
-            c.check(opened_ids() == [1], "a challenge page ends the session after that page")
+            c.check(opened_ids() == [1], "a challenge page stops fast mode after that page (two jobs still due)")
             c.check(row(con, 1)["misses"] == 0 and row(con, 1)["checked"] != before,
                     "...recorded as 'unknown', not as a miss")
             cooldown = sw.evaluate("chrome.storage.local.get('availabilityCooldownUntil')")
@@ -357,6 +389,100 @@ def run(headed: bool, keep: bool) -> int:
             c.check(sw.evaluate("chrome.storage.local.get('availabilityCooldownUntil')").get("availabilityCooldownUntil"),
                     "...and the checks are paused again")
             sw.evaluate("chrome.storage.local.remove('availabilityCooldownUntil')")
+
+            # --- Fast mode: exactly 15 pages when few are live, then the background pace -------
+            print("Fast mode: 15-page cap, 10-live goal, once an hour")
+            clear_cooldown()
+            quiet_all()
+            set_run_start(None)
+            for n in range(40, 70):
+                add_job(db, n, 99 - (n - 40))      # visited in id order
+            # Live every 5th page (44, 49, 54): 3 live in 15 pages, never 5 non-live in a row.
+            set_pages({**{seek_url(n): page(n, LIVE if (n - 40) % 5 == 4 else EMPTY) for n in range(40, 55)},
+                       **{seek_url(n): page(n, LIVE) for n in range(55, 70)}})
+            reset_counters()
+            run_session()
+            c.check(opened_ids() == list(range(40, 63)),
+                    f"15 fast pages, then 8 background ones, in queue order ({opened_ids()})")
+            c.check(side.evaluate("window.__paces") == [5000] * 15 + [15000] * 8,
+                    "fast mode stops at exactly 15 pages (3 live of the 10 wanted); then 15 s, 8 a session")
+            c.check(not cooldown_set(), "no pause: never 5 non-live pages in a row")
+
+            # --- ... and exactly 10 live when they are -----------------------------------------
+            quiet_all()
+            set_run_start(dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=2))   # last run long ago
+            for n in range(70, 85):
+                add_job(db, n, 99 - (n - 70))
+            set_pages({seek_url(n): page(n, LIVE) for n in range(70, 85)})
+            reset_counters()
+            run_session()
+            c.check(opened_ids() == list(range(70, 85)), f"every due job visited ({opened_ids()})")
+            c.check(side.evaluate("window.__paces") == [5000] * 10 + [15000] * 5,
+                    "fast mode stops at exactly 10 seen live; the rest go at the background pace")
+
+            # --- Within the hour: no second fast run; an hour later: a new one -----------------
+            con.execute("UPDATE job_listings SET last_seen_live_at = ? WHERE id BETWEEN 70 AND 84", (ago(10),))
+            con.commit()   # the 10 are no longer live, but this run already used its 15 pages
+            for n in range(90, 95):
+                add_job(db, n, 99 - (n - 90))
+            set_pages({seek_url(n): page(n, LIVE) for n in range(90, 95)})
+            c.check(api("/availability/next")["mode"] == "background",
+                    "reopened within the hour of a run: the backend says background")
+            reset_counters()
+            side.evaluate("() => { window.__delays = []; armAvailabilityChecks(); }")
+            c.check(wait_for(lambda: 60000 in side.evaluate("window.__delays")),
+                    "...so the panel's start waits the background 60 s (D6)")
+            side.wait_for_timeout(1500)
+            c.check(opened_ids() == [], "...and opens nothing straight away")
+            run_session()
+            c.check(side.evaluate("window.__paces") == [15000] * 5, "...every page at the background pace")
+            set_run_start(dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=61))
+            add_job(db, 95, 99)
+            c.check(api("/availability/next")["mode"] == "fast", "an hour after the run started, a new one may start")
+
+            # --- D7: pages in a row that were not live, missing and unknown mixed ---------------
+            print("Not live in a row (D7)")
+            quiet_all()
+            for n in range(110, 116):
+                add_job(db, n, 99 - (n - 110))
+            set_pages({seek_url(110): page(110, EMPTY),
+                       seek_url(111): {**LIVE, "path": "/jobs", "title": "Jobs | SEEK"},   # a redirect: unknown
+                       seek_url(112): page(112, EMPTY),
+                       seek_url(113): "throw",                                              # a tab error: unknown
+                       seek_url(114): page(114, EMPTY),
+                       seek_url(115): page(115, LIVE)})
+            reset_counters()
+            run_session()
+            c.check(opened_ids() == [110, 111, 112, 113, 114],
+                    f"5 non-live pages in a row (missing and unknown mixed) stop the session ({opened_ids()})")
+            c.check(cooldown_set(), "...and pause the checks for 6 h")
+            c.check(all(row(con, n)["misses"] == 0 for n in range(110, 115)),
+                    "...without a single strike (no live page corroborated the misses)")
+            clear_cooldown()
+
+            quiet_all()
+            for n in range(120, 128):
+                add_job(db, n, 99 - (n - 120))
+            kinds = [EMPTY, EMPTY, LIVE, EMPTY, "redirect", EMPTY, EMPTY, LIVE]
+            set_pages({seek_url(n): ({**LIVE, "path": "/jobs", "title": "Jobs | SEEK"} if k == "redirect" else page(n, k))
+                       for n, k in zip(range(120, 128), kinds)})
+            reset_counters()
+            run_session()
+            c.check(opened_ids() == list(range(120, 128)) and not cooldown_set(),
+                    f"a live page resets the count: 2 + 4 non-live around it, no pause ({opened_ids()})")
+
+            quiet_all()
+            for n in range(130, 136):
+                add_job(db, n, 99 - (n - 130),
+                        url="https://evil.example/job/132" if n == 132 else None)   # checkUrlFor refuses it
+            set_pages({seek_url(n): page(n, LIVE if n == 135 else EMPTY) for n in range(130, 136)})
+            reset_counters()
+            run_session()
+            c.check(opened_ids() == [130, 131, 133, 134, 135] and not cooldown_set(),
+                    f"a refused URL opens nothing and doesn't count towards the 5 ({opened_ids()})")
+            c.check(row(con, 132)["checked"] and row(con, 132)["misses"] == 0,
+                    "...it is recorded as 'unknown' (checked, no strike)")
+            clear_cooldown()
 
             # --- The Settings toggle --------------------------------------------------------
             print("Toggle")
