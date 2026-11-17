@@ -45,7 +45,7 @@ def next_check(profile_id: int = 1, exclude: str = "", db: Session = Depends(get
                 "job_id": found[0].id,
                 "source_job_id": found[0].source_job_id,
                 "url": found[0].url,
-                "tier": found[1],
+                "group": found[1],
             }
             if found else None
         ),

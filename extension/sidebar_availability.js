@@ -126,7 +126,7 @@ async function checkOne(job) {
   }
   if (handle.cancelled) return null;
   const verdict = classifyCheck(ev, job.source_job_id);
-  console.log(`[availability] job ${job.job_id} (${job.tier}) -> ${verdict}`, ev);
+  console.log(`[availability] job ${job.job_id} (${job.group}) -> ${verdict}`, ev);
   return verdict;
 }
 

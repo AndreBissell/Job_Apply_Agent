@@ -30,17 +30,17 @@ from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models import CoverLetter, JobListing, Match
-from app.preferences import availability_checks_enabled, letter_settings
+from app.preferences import availability_checks_enabled
 
 # LLM work (quick screen, extraction, matching, a letter) only runs on a job seen live this
 # recently. A fresh capture always passes; a backlog job has to be re-checked first.
 FRESH_FOR = timedelta(hours=24)
 
-# How long before a job is re-checked: a job nobody is waiting on, a job the LLM pipeline is
-# waiting on (it got no verdict yet), and a job with a strike against it (the second strike
-# must come from a separate visit, a day later).
-RECHECK_AFTER = timedelta(days=3)
-RETRY_BLOCKING_AFTER = timedelta(hours=6)
+# A job is due a re-check exactly when it stops being fresh enough for LLM work. Defined AS
+# FRESH_FOR, not as its own number: when the two differed (3 days vs 24 h) a job could be too
+# stale for a letter yet not due a check (docs/availability-fast-mode-plan.md, D2).
+RECHECK_AFTER = FRESH_FOR
+# A job with a strike waits this long: the second strike must come from a separate visit.
 RECHECK_AFTER_MISS = timedelta(days=1)
 
 MISSES_TO_EXPIRE = 2
@@ -49,13 +49,17 @@ MISSES_TO_EXPIRE = 2
 # (CLAUDE.md, "Availability re-checks"): tests/test_scan_policy.py pins it.
 DAILY_CAP = 24
 
-# Only jobs the user can see in the main list (the long tail under this is folded away) are
-# re-checked for their own sake. Jobs the LLM pipeline is waiting on are checked at any score.
+# A scored job WITHOUT a letter is checked only from this score up (the long tail under it is
+# folded away in the list). A job with a letter is checked at any score.
 MIN_DISPLAY_SCORE = 60
 
 VERDICTS = ("live", "missing", "unknown")
-TIER_BLOCKING = "blocking"  # the LLM pipeline is waiting on a sighting
-TIER_LISTED = "listed"      # on the user's list; keep it honest
+
+# The queue's three groups, in order (plan D1). The label goes to the panel for its log.
+GROUP_LETTER = "letter"        # scored, has a cover letter: any score
+GROUP_NO_LETTER = "no_letter"  # scored, no letter yet: MIN_DISPLAY_SCORE and up
+GROUP_UNSCORED = "unscored"    # no match for this profile yet
+_GROUP_NAMES = {1: GROUP_LETTER, 2: GROUP_NO_LETTER, 3: GROUP_UNSCORED}
 
 
 def now_utc() -> datetime:
@@ -86,15 +90,16 @@ def llm_gate(db: Session, profile_id: int, now: datetime | None = None):
 # ---------------------------------------------------------------------------
 # Choosing what to re-visit
 # ---------------------------------------------------------------------------
-def _due(gap: timedelta, now: datetime):
-    """Not seen or re-checked within ``gap`` (a job with a strike waits ``RECHECK_AFTER_MISS``)."""
+def _due(now: datetime):
+    """Not seen live or re-checked within ``RECHECK_AFTER`` (a job with a strike waits
+    ``RECHECK_AFTER_MISS`` after its last check)."""
     checked, seen = JobListing.availability_checked_at, JobListing.last_seen_live_at
     checked_ok = or_(
         checked.is_(None),
-        and_(JobListing.availability_misses == 0, checked < now - gap),
+        and_(JobListing.availability_misses == 0, checked < now - RECHECK_AFTER),
         and_(JobListing.availability_misses > 0, checked < now - RECHECK_AFTER_MISS),
     )
-    return and_(checked_ok, or_(seen.is_(None), seen < now - gap))
+    return and_(checked_ok, or_(seen.is_(None), seen < now - RECHECK_AFTER))
 
 
 def remaining_today(db: Session, now: datetime | None = None) -> int:
@@ -106,59 +111,59 @@ def remaining_today(db: Session, now: datetime | None = None) -> int:
     return max(0, DAILY_CAP - used)
 
 
-def next_candidate(
-    db: Session, profile_id: int, exclude: list[int] | None = None, now: datetime | None = None,
-) -> tuple[JobListing, str] | None:
-    """The next listing to re-visit and why, or None.
+def _queue(profile_id: int):
+    """Every listing that may be re-checked, in the plan's D1 order, due or not, as a
+    ``select(JobListing, group number)``. The ONE definition of the order: callers add the
+    "due" filter, exclusions and a limit.
 
-    Always needs a stored description (a job we never captured has no baseline, so "no
-    description" would mean nothing), no expiry flag, and no applied match.
-    1. ``blocking``: the LLM pipeline is waiting. Not matched yet, or matched at or above the
-       auto-letter score with no letter, and not seen live within ``FRESH_FOR``. Newest first:
-       a recent ad is the likelier to be live, and old ones cost nothing while they wait.
-    2. ``listed``: an unhidden, unapplied match on the user's list (score >= MIN_DISPLAY_SCORE),
-       letter-ready first, then by score.
+    Never offered: no stored description (a job we never captured has no baseline, so "no
+    description" would mean nothing), flagged expired, applied (by anyone: Centrelink
+    evidence), or hidden by this profile.
+    1. ``letter``: scored, with a cover letter, at ANY score (a letter is the strongest sign
+       the user means to apply), highest score first.
+    2. ``no_letter``: scored, no letter, score >= MIN_DISPLAY_SCORE, highest score first.
+       Equal scores in groups 1-2: lower job id first.
+    3. ``unscored``: no match for this profile yet, newest capture first.
     """
-    now = now or now_utc()
-    exclude = exclude or []
-    # A subquery, not ``matches.any()``: the listed query below joins ``matches`` itself, and
-    # an EXISTS on the same table would correlate to that join instead of any applied match.
+    # Outer joins: a job with no match (group 3) must still come back. They can't repeat a
+    # job: matches is unique on (user_id, job_id) and cover_letters on match_id.
+    my_match = and_(Match.job_id == JobListing.id, Match.user_id == profile_id)
+    scored = Match.id.isnot(None)
+    has_letter = CoverLetter.id.isnot(None)
+    group = case((has_letter, 1), (scored, 2), else_=3)
+    # Applied by ANY user, so a subquery rather than the joined row (which is this profile's).
     applied_jobs = select(Match.job_id).where(Match.applied_at.isnot(None))
-    base = (
-        select(JobListing)
+    return (
+        select(JobListing, group)
+        .outerjoin(Match, my_match)
+        .outerjoin(CoverLetter, CoverLetter.match_id == Match.id)
         .where(JobListing.raw_description.isnot(None))
         .where(JobListing.expired_detected_at.is_(None))
         .where(JobListing.id.notin_(applied_jobs))
+        .where(or_(~scored, Match.hidden_at.is_(None)))
+        .where(or_(~scored, has_letter, Match.score >= MIN_DISPLAY_SCORE))
+        .order_by(
+            group,
+            # Empty in group 3, so it doesn't reorder it. nulls_last: Postgres would otherwise
+            # put an empty score FIRST in a descending sort, SQLite last.
+            Match.score.desc().nulls_last(),
+            case((group == 3, JobListing.date_scraped), else_=None).desc(),  # group 3 only
+            JobListing.id,
+        )
     )
+
+
+def next_candidate(
+    db: Session, profile_id: int, exclude: list[int] | None = None, now: datetime | None = None,
+) -> tuple[JobListing, str] | None:
+    """The first listing in the queue (``_queue``) that is due a re-check, with its group
+    label (``GROUP_*``), or None. ``exclude``: job ids the panel already tried this session."""
+    now = now or now_utc()
+    stmt = _queue(profile_id).where(_due(now))
     if exclude:
-        base = base.where(JobListing.id.notin_(exclude))
-
-    auto_min = letter_settings(db, profile_id)["auto_min_score"]
-    mine = Match.user_id == profile_id
-    needs_letter = and_(
-        mine, Match.hidden_at.is_(None), Match.score >= auto_min,
-        ~Match.cover_letter.has(),
-    )
-    stale = or_(
-        JobListing.last_seen_live_at.is_(None), JobListing.last_seen_live_at < now - FRESH_FOR,
-    )
-    waiting = or_(~JobListing.matches.any(mine), JobListing.matches.any(needs_letter))
-    job = db.scalars(
-        base.where(waiting).where(stale).where(_due(RETRY_BLOCKING_AFTER, now))
-        .order_by(JobListing.date_scraped.desc()).limit(1)
-    ).first()
-    if job is not None:
-        return job, TIER_BLOCKING
-
-    has_letter = select(CoverLetter.id).where(CoverLetter.match_id == Match.id).exists()
-    job = db.scalars(
-        base.join(Match, Match.job_id == JobListing.id)
-        .where(mine, Match.hidden_at.is_(None), Match.score >= MIN_DISPLAY_SCORE)
-        .where(_due(RECHECK_AFTER, now))
-        .order_by(case((has_letter, 0), else_=1), Match.score.desc(), JobListing.id)
-        .limit(1)
-    ).first()
-    return (job, TIER_LISTED) if job is not None else None
+        stmt = stmt.where(JobListing.id.notin_(exclude))
+    row = db.execute(stmt.limit(1)).first()
+    return (row[0], _GROUP_NAMES[row[1]]) if row is not None else None
 
 
 # ---------------------------------------------------------------------------
