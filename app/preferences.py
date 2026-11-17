@@ -79,6 +79,10 @@ DEFAULTS: dict = {
     # a job seen live recently. Off = no re-visits and no freshness gate (an already-flagged
     # job is still skipped).
     "availability_checks_enabled": True,
+    # ISO timestamp: when the current availability fast run started (app/availability.py,
+    # FAST_RUN_KEY). Written by the first fast-mode verdict, never by a GET; at most one run
+    # per hour. Not a setting: the sidebar neither shows nor sends it.
+    "availability_fast_started_at": None,
     # Layer 4 of the search-suggestion pipeline. OFF by default and opt-in from
     # the sidebar: every other layer is pure Python and free, and this is the
     # one that spends an LLM call, so it should never switch itself on. See

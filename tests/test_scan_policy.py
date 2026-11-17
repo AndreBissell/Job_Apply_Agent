@@ -163,6 +163,18 @@ def test_backend_daily_cap_is_bounded():
     assert availability.MISSES_TO_EXPIRE >= 2  # one miss is never enough to flag a job
 
 
+def test_fast_runs_are_capped_and_at_most_hourly():
+    """Fast mode (docs/availability-fast-mode-plan.md D3, D8): the backend decides it and holds
+    its caps, so a panel bug can't lift them. At most 15 pages a run, one run an hour."""
+    from datetime import timedelta
+
+    from app import availability
+
+    assert 1 <= availability.FAST_RUN_PAGE_CAP <= 15
+    assert availability.FAST_RUN_EVERY >= timedelta(hours=1)
+    assert availability.FAST_TARGET <= availability.FAST_RUN_PAGE_CAP
+
+
 def test_checks_open_only_background_tabs_for_stored_listings():
     text = _sources()["sidebar_availability.js"]
     calls = [_call_args(text, m.end() - 1) for m in re.finditer(r"chrome\.tabs\.create\(", text)]

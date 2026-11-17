@@ -1291,6 +1291,15 @@
    },
    "Verdict": {
     "properties": {
+     "mode": {
+      "default": "background",
+      "enum": [
+       "fast",
+       "background"
+      ],
+      "title": "Mode",
+      "type": "string"
+     },
      "verdict": {
       "enum": [
        "live",
@@ -1317,7 +1326,7 @@
  "paths": {
   "/availability/next": {
    "get": {
-    "description": "The next listing to re-check, or ``job: null``.\n\n``exclude`` is a comma-separated list of internal job ids the panel already looked at\nthis session. ``remaining_today`` is the rolling 24-hour allowance left; at 0 (or with\nthe checks switched off) no job is offered.",
+    "description": "The next listing to re-check and the mode to check it in, or ``job: null``.\n\n``mode`` is ``fast`` (pace 5 s: getting the top jobs seen live again after time away) or\n``background`` (pace 15 s, the trickle), null with no job. Asking never changes anything:\na fast run starts when its first verdict is recorded. ``exclude`` is a comma-separated\nlist of internal job ids the panel already looked at this session (they count towards the\nfast run's pages). ``remaining_today`` is the rolling 24-hour allowance left; at 0 (or\nwith the checks switched off) no job is offered in either mode.",
     "operationId": "next_check_availability_next_get",
     "parameters": [
      {
@@ -1370,7 +1379,7 @@
   },
   "/availability/{job_id}": {
    "post": {
-    "description": "Record what a re-check found: ``live``, ``missing`` (no description) or ``unknown``.\n\nThe second ``missing`` in a row flags the job expired; ``live`` un-expires it. An applied\njob is never flagged (the response carries ``note: \"applied\"``).",
+    "description": "Record what a re-check found: ``live``, ``missing`` (no description) or ``unknown``,\nand the ``mode`` the page was opened in.\n\nThe second ``missing`` in a row flags the job expired; ``live`` un-expires it. An applied\njob is never flagged (the response carries ``note: \"applied\"``). The first ``fast``\nverdict with no fast run this hour starts one.",
     "operationId": "record_check_availability__job_id__post",
     "parameters": [
      {
@@ -1379,6 +1388,16 @@
       "required": true,
       "schema": {
        "title": "Job Id",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "profile_id",
+      "required": false,
+      "schema": {
+       "default": 1,
+       "title": "Profile Id",
        "type": "integer"
       }
      }
