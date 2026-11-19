@@ -779,6 +779,11 @@ log). Owner's manual checks passed 2026-10-15.
   page without opening one. It now lists only jobs with ad text, a score, or a closed flag.
 - 1753 tests; `tests/e2e/dashboard_e2e.py` 197/197, `sidebar_load_e2e.py` 59/59.
 
+✅ COMPLETED: Availability fast mode + value-first queue — 2026-11-17, owner's manual checks passed
+2026-11-20 (branch `avaliability-check`; docs/availability-fast-mode-plan.md, policy text above).
+Follow-up logged there: recognise Seek's "This job is no longer advertised" banner so closed ads
+don't count towards the 6 h pause.
+
 ✅ COMPLETED: Availability checks + freshness gate — 2026-10-13 (branch `centrelink-ease-apply`)
 
 Closed Seek ads now drop out of the list without a button, and no AI money is spent on one.

@@ -1,8 +1,8 @@
 # Plan: availability checks, fast mode and a value-first queue
 
 Status: BUILT 2026-11-17 on branch `avaliability-check` (commits `9ce9b1a` queue, `e7a769d` daily
-cap, `9d85868` backend fast mode, `dafa0e1` panel, `24d777b` e2e); awaiting the owner's manual
-checks (end of this file). Choices made while building: the Implementation log below.
+cap, `9d85868` backend fast mode, `dafa0e1` panel, `24d777b` e2e); the owner's manual
+checks PASSED 2026-11-20 (end of this file). Choices made while building: the Implementation log below.
 
 ## Why
 
@@ -200,17 +200,30 @@ mode against a real backlog; what a closed Seek ad looks like (D7's risk).
 
 - **First-strike display.** Mark or hide a Keep Applying job on its first "missing" result
   (not flagged, just "may have closed"), so a closed ad doesn't look ready for a day.
+- **Recognise Seek's closed-ad banner** (from manual check 6). A closed ad and a blocked page
+  look the same to the check today (no description), so closed ads count towards D7's 5-in-a-row
+  pause. On 2026-11-20, 3 of the first 5 pages were closed ads in a row; two more would have
+  paused checks for 6 h for nothing, and the risk grows with time away. A page on the job's own
+  URL showing "This job is no longer advertised" is a confident miss: don't count it towards D7.
+  Keep the two-visit rule for flagging.
 - **Letter-unlock target.** Under D1 fast mode spends its pages on jobs that already have a
   letter; with 10+ of those it unlocks no new letters. If that bites, add a second target
   ("at least N jobs without a letter checked").
 
 ## Manual checks (owner, at the end, in their own Chrome)
 
-- [ ] After a few days away, open the panel: fast mode starts, the console shows 5 s spacing
-      and it stops within 15 pages.
-- [ ] The letter jobs come first in the console log, by score.
-- [ ] "+ letters" / "Write a letter" works on the newly checked no-letter jobs.
-- [ ] Reopen the panel within the hour: no second fast mode.
-- [ ] No Cloudflare challenge during or after fast mode.
-- [ ] Open a closed Seek ad you know of: note what it shows (blank, redirect, banner) and
+All passed 2026-11-20 on REAL, after a couple of days away (one fast run: 12 pages, 8 live, 4 missing,
+0 challenges).
+
+- [x] After a few days away, open the panel: fast mode starts, the console shows 5 s spacing
+      and it stops within 15 pages. (12 pages, page opens ≥5 s apart; it stopped because no
+      group 1-2 job was left due, before either cap.)
+- [x] The letter jobs come first in the console log, by score. (95, 95, 90, 90, then no-letter
+      68 down to 60; equal scores lower id first.)
+- [x] "+ letters" / "Write a letter" works on the newly checked no-letter jobs.
+- [x] Reopen the panel within the hour: no second fast mode.
+- [x] No Cloudflare challenge during or after fast mode.
+- [x] Open a closed Seek ad you know of: note what it shows (blank, redirect, banner) and
       which result the console logs for it. Decides whether D7's limit needs tuning.
+      (Same `/job/{id}` URL, same page title, no description, banner "This job is no longer
+      advertised"; logged as `missing`, correctly. D7 needs the banner follow-up above.)
