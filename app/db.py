@@ -44,15 +44,25 @@ engine = create_engine(DATABASE_URL, echo=False, future=True)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
 
+# How long a SQLite write waits for another connection's write to commit before it fails
+# with "database is locked". The driver's default is 5 s. Two worker threads plus the
+# request threads can now write at once (docs/second-worker-plan.md D4), so it is raised to
+# 30 s. Writers hold the lock for milliseconds, so this is headroom, not an expected wait.
+SQLITE_LOCK_WAIT_MS = 30_000
+
+
 @event.listens_for(Engine, "connect")
 def _enable_sqlite_foreign_keys(dbapi_connection, connection_record) -> None:
-    """Turn on foreign-key enforcement for SQLite connections.
+    """Configure every new SQLite connection: foreign keys on, and a 30 s lock wait.
 
     SQLite ships with FK enforcement *off* by default, but the schema relies on
-    ``ON DELETE CASCADE`` / ``SET NULL`` behaviour. This listener is a no-op on
-    every other dialect (Postgres enforces FKs natively).
+    ``ON DELETE CASCADE`` / ``SET NULL`` behaviour. ``busy_timeout`` is
+    ``SQLITE_LOCK_WAIT_MS`` (above). The journal mode is left at SQLite's default (no WAL).
+    This listener is a no-op on every other dialect (Postgres enforces FKs natively and
+    makes writers wait for row locks on its own).
     """
     if isinstance(dbapi_connection, sqlite3.Connection):
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.execute(f"PRAGMA busy_timeout={SQLITE_LOCK_WAIT_MS:d}")
         cursor.close()
