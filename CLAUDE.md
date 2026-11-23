@@ -197,8 +197,14 @@ Cost control (all in client.py + app/llm/usage.py):
 
 Rate-limit handling: on HTTP 429, client.py backs off and retries (max 3);
 delays > 300s are treated as daily exhaustion → DailyQuotaError. The idle loop
-(_processing_idle_loop in app/api/idle_loop.py) serialises LLM work through a single-worker
-executor and backs off 3 minutes when extraction fails. Local throttle: LLM_RPM=8.
+(_processing_idle_loop in app/api/idle_loop.py) runs two loops (docs/second-worker-plan.md):
+letters one at a time on `worker._bg_executor` (also /regenerate, band letters, Write a letter),
+and scoring (quick screen, extract, match) one job at a time on `worker._score_executor`, so new
+jobs are scored while a letter is written. Each has its own pauses: the budget pause stops only
+letters; the scorer backs off 3 minutes when extraction fails. A job both reach is guarded by
+app/job_claims.py (the scorer skips it, /regenerate waits up to 120 s then goes ahead with a
+WARNING). SQLite waits 30 s for the write lock (`busy_timeout`, app/db.py). Both loops share
+the local throttle: LLM_RPM=8.
 
 Env vars (gitignored .env): LLM_PROVIDER=gemini, GOOGLE_GENAI_USE_VERTEXAI=true,
 GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_LOCATION=global, GEMINI_MODEL_SMALL/_MID/
@@ -228,8 +234,9 @@ job-app-assistant/
       deps.py          # get_db, the one session dependency
       paths.py         # static + screenshots folders
       events.py        # SSE broadcaster + GET /events
-      worker.py        # the ONE background worker thread + _process_listing
-      idle_loop.py     # the idle loop, the letters phase and their helpers
+      worker.py        # the TWO worker threads (_bg_executor letters, _score_executor scoring) + _process_listing
+      idle_loop.py     # the idle loop: the letter loop and the scoring loop, one-pass functions and helpers
+      (app/job_claims.py: which jobs a worker is scoring right now; the scorer skips, /regenerate waits)
       health.py ingest.py evidence.py search.py job_actions.py jobs.py profile.py   # routers
       (app/evidence_pdf.py: the Centrelink upload PDFs; app/screenshots.py: evidence file layout)
       (app/letter_bands.py: the Overview's bands + one-job letters; app/skill_gaps.py: the Pipeline's skills ads ask for)
@@ -693,6 +700,19 @@ The real profile is frozen as of 2026-10-20. Strong fit = score 85+ and
 no must-have GAP (`Requirement.needs_user`); partials are allowed (owner, 2026-10-20). Main metric:
 the relevant score (Would apply = Yes ads).
 
+🔄 BUILT, AWAITING THE USER'S MANUAL CHECKS: Second worker for scoring — 2026-11-23 (branch `avaliability-check`)
+
+docs/second-worker-plan.md (D1–D6 approved; Implementation log; manual checks at its end, TEST only,
+about $0.25 with the go-ahead first). New jobs are quick-screened, extracted and scored WHILE a letter
+is written: `worker._score_executor` (second single-thread pool, scoring only) beside `_bg_executor`
+(letters only); `_processing_idle_loop` gathers `_letter_loop` and `_scoring_loop`, each built from a
+one-pass function (`_letter_pass` / `_scoring_pass`, returns its wait) with its own error guard.
+`app/job_claims.py` (in memory, one process): the scorer `try_claim`s and skips held jobs (candidate
+queries leave them out); `/regenerate`'s extract+match waits (`_process_listing`, `already_claimed`
+for the scorer), D6: after 120 s a WARNING and it goes ahead. SQLite `busy_timeout` 30 s, no WAL.
+Letters, prompts, models, `LLM_RPM`, the API and the extension are unchanged. Tests guard the rule:
+exactly two pools, both `max_workers=1`, `_score_executor` used only in worker.py / idle_loop.py.
+
 🔄 BUILT, AWAITING THE USER'S MANUAL CHECKS: Rewrite letter + letter date — 2026-10-20 (branch `eval-set-creation`)
 
 docs/letter-rewrite-plan.md (D1–D3 approved; manual checks at its end). `cover_letters.generated_at`
@@ -825,8 +845,8 @@ index on `matches.created_at`). Full reasoning in docs/database-schema.md
   weight 0.35 in the miner (baseline weighted too) — but only when a fresh
   match exists to prefer (`relative_weights`); uniform discounting re-ordered
   the live suggestions with no new information.
-- The sweep runs at the TOP of `_processing_idle_loop` (not the tail — LLM
-  phases `continue` and would starve it), once/24h, on the single worker.
+- The sweep runs at the top of every letter pass (`idle_loop._letter_pass`, not only
+  when idle — a letter backlog would starve it), once/24h, on the letter worker.
 Not built: the "re-score against updated profile" button (item 10), and
 nothing yet bumps `profiles.profile_revised_at` on a deletion because no
 profile-edit endpoint exists for experiences/skills. Tunables live in

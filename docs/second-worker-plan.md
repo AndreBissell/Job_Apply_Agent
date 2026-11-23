@@ -1,6 +1,7 @@
 # Plan: a second worker for scoring
 
-Status: APPROVED by the owner 2026-11-23, in progress (Step 0 done; next: Step 1). Branch `avaliability-check`
+Status: BUILT 2026-11-23 (Steps 0-8 done; full suite and e2e green), AWAITING THE OWNER'S MANUAL
+CHECKS (end of this file). Approved by the owner 2026-11-23. Branch `avaliability-check`
 (to be built before that branch's PR). Source: Part 1 of `future_work/second-worker-and-faster-letters.md`.
 Part 2 of that file (faster letters) is OUT of scope; it stays in future_work.
 
@@ -190,17 +191,17 @@ file DB.
 
 ## Done when
 
-- [ ] `python -m pytest -q` passes in full: zero failures, zero errors, no new skips or xfails;
+- [x] `python -m pytest -q` passes in full: zero failures, zero errors, no new skips or xfails;
       passed count = baseline (Step 0) + the new tests.
-- [ ] Every `tests/e2e/*.py` suite passes at its baseline count or higher.
-- [ ] Test diff reviewed against the Test rules: no test removed or loosened; every changed
+- [x] Every `tests/e2e/*.py` suite passes at its baseline count or higher.
+- [x] Test diff reviewed against the Test rules: no test removed or loosened; every changed
       test listed in the Implementation log with its reason.
-- [ ] Every test in "New tests" exists and passes.
-- [ ] `tests/fixtures/route_table.txt` and `openapi.json` unchanged (`git diff` shows nothing).
-- [ ] No file outside the Steps' list changed (in particular: no `app/llm/letter/`, no prompts,
+- [x] Every test in "New tests" exists and passes.
+- [x] `tests/fixtures/route_table.txt` and `openapi.json` unchanged (`git diff` shows nothing).
+- [x] No file outside the Steps' list changed (in particular: no `app/llm/letter/`, no prompts,
       no `extension/`, no `alembic/`).
-- [ ] Docs updated (Step 7); the future_work file holds Part 2 only.
-- [ ] Each commit's staged diff checked for personal data.
+- [x] Docs updated (Step 7); the future_work file holds Part 2 only.
+- [x] Each commit's staged diff checked for personal data.
 - [ ] The owner's manual checks below passed.
 
 ## Manual checks (owner, at the end)
@@ -258,3 +259,74 @@ checked ("your edits end up gone") is exactly as strict; 40 s, not the default 2
 D4 the second commit can wait up to 30 s on the write lock. Evidence: 5/5 passes; with a
 temporary 3 s sleep between the two commits (removed), the new test passed 35/35 and the old one
 failed this check (34/35). The baseline stays 35/35.
+
+**Steps 1-7, built 2026-11-23 (owner: "just do the implementation", no stop between steps).**
+One commit per step: `7262950` Step 1, `849ac8c` Step 2, `9484c46` Step 3, `4f1502d` Step 4,
+`10eabbd` Step 6, then the docs commit (Step 7). Step 5 needed no change (below).
+
+| Suite | Baseline | Now |
+|---|---|---|
+| `python -m pytest -q` | 2065 passed | 2104 passed, 0 failed, 0 skipped, 0 xfail |
+| `tests/e2e/sidebar_load_e2e.py` | 67/67 | 67/67 |
+| `tests/e2e/dashboard_e2e.py` | 199/199 | 199/199 |
+| `tests/e2e/pipeline_e2e.py` | 86/86 | 86/86 |
+| `tests/e2e/settings_e2e.py` | 47/47 | 47/47 |
+| `tests/e2e/availability_e2e.py` | 70/70 | 70/70 |
+| `tests/e2e/apply_sent_e2e.py` | 51/51 | 51/51 |
+| `tests/e2e/letter_rewrite_e2e.py` | 35/35 | 35/35 |
+| `tests/e2e/quick_apply_e2e.py` | 124/124 | 124/124 |
+
+2104 = 2065 + 3 (`tests/test_db_lock_wait.py`) + 15 (`tests/test_job_claims.py`) + 20
+(`tests/test_two_workers.py`) + 1 (the pool guard is now two tests, below). No "database is locked"
+in any e2e log. `tests/fixtures/route_table.txt` and `openapi.json` unchanged. Nothing changed in
+`app/llm/`, `extension/` or `alembic/`.
+
+Evidence that the new tests test something (each change made temporarily, then reverted):
+- Lock wait at 0 ms: the second-writer test fails with "database is locked".
+- The scoring pass on `_bg_executor` (one shared worker, the old design): the goal test fails
+  (the scoring pass waits behind the held letter until the test's 10 s limit).
+- The new concurrency tests passed 5 runs out of 5.
+
+**Changed existing tests (the only one):** `tests/test_route_table.py::test_there_is_one_worker_thread_pool`
+is now `test_there_are_exactly_two_worker_thread_pools` plus `test_only_the_scoring_loop_reaches_the_scoring_pool`
+(Test rules, allowed change 2). At least as strict as before: it scans all of `app/` (was `app/api/`),
+with `ast`, counts every pool made anywhere (assigned or not, `ThreadPoolExecutor(` or
+`futures.ThreadPoolExecutor(`), and requires exactly `_bg_executor` and `_score_executor` in
+`worker.py`, both `max_workers=1`; `_score_executor` may be named only in `worker.py` and
+`idle_loop.py` (`app/` and `scripts/` searched).
+
+**Step 5: no change needed.** Every existing test that fakes `worker._bg_executor` does so for
+letter work (`/regenerate`, band letters, "Write a letter", `_letters_phase`): `test_letter_bands`,
+`test_letter_phase8_api`, `test_letter_rewrite`, `test_origin_guard`, `test_pipeline_api`. None
+fakes it for scoring (no test ran the old loop), so none needed `_score_executor`. The four
+fixtures that replace `idle_loop._processing_idle_loop` still stop both loops (choice 1 below).
+
+Choices made while building:
+1. **Lifespan unchanged; `_processing_idle_loop` runs both loops** (`asyncio.gather(_letter_loop(),
+   _scoring_loop())`). Lifespan still starts one task and cancels it on shutdown, and cancelling it
+   cancels both loops (tested). Why not two tasks in `lifespan`: four existing fixtures replace
+   `_processing_idle_loop` so no loop runs against their test DB; with two tasks in lifespan that
+   protection would silently stop working, without any test changing. Each loop catches every
+   `Exception` itself, so gather never sees one loop's failure.
+2. **`_process_listing(..., *, already_claimed=False)`.** By default the caller (`/regenerate`) waits
+   for the claim; the scorer claims first and passes `already_claimed=True`. Waiting is the safe
+   default for any future caller. `_rewrite_letter` passes nothing new, so
+   `test_letter_rewrite.py`'s exact-kwargs assertion is untouched.
+3. **`job_claims.claim(job_id, wait=None)`**, a context manager over `try_claim` / `wait_claim`:
+   releases in a `finally`, and never releases a claim it did not take, so `/regenerate` going ahead
+   after the D6 timeout cannot free the scorer's claim (tested). `held_for` feeds the D6 WARNING.
+4. **The claim covers extraction + matching only**, not `/regenerate`'s letter (minutes long), so the
+   scorer is never kept off a job by a letter (tested).
+5. **A job claimed between the query and the claim** returns "claimed" and the pass ends with a 0 s
+   wait; the next query leaves it out. In `_match_attempt` "claimed" is not counted as a failure.
+6. **`worker.py` refactor, same behaviour:** extraction + matching and the letter step moved into
+   `_extract_and_match` / `_write_letter` so the claim can wrap exactly the first; the existing
+   `_process_listing` tests pass unchanged.
+7. **Pass functions return their wait** (`_scoring_pass`, `_letter_pass`; `_run_passes` sleeps it),
+   so a test can call one pass with no sleeping. `_letters_phase` is unchanged (it still sleeps
+   `_IDLE_INTERVAL_S` after a letter, as its tests expect); `_letter_pass` then returns 0.
+8. **Thread names** `letters_0` / `scoring_0` (`thread_name_prefix`), so log lines show which worker.
+9. **Step 6 wording left as is, on purpose:** endpoint docstrings in `job_actions.py` (the quick-screen
+   endpoint still says "the idle loop's shared _bg_executor") and `jobs.py` ("on the single worker")
+   are part of the OpenAPI fixture, which must not change; `app/llm/letter/` is off limits and what
+   it says about letters ("the single worker runs a pipeline") is still true.
