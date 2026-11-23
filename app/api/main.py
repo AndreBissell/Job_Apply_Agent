@@ -2,9 +2,9 @@
 
 Receives job listings the user's *real* browser scraped from Seek pages they
 opened themselves (POST /ingest) and upserts them into ``job_listings``. /ingest
-makes no LLM call: the idle loop (``_processing_idle_loop``) does the AI work one
-job at a time on a single worker thread, in this order: retention sweep, cover
-letters, quick screen, extraction + matching. Also serves everything the side panel
+makes no LLM call: the idle loop (``_processing_idle_loop``) does the AI work in two
+loops, each on its own worker thread: the retention sweep and cover letters, one at a
+time; and beside them the quick screen, extraction + matching, one job at a time. Also serves everything the side panel
 and profile editor read and write (/jobs, /profile, /obligation, letters, screening).
 
 Run it with ``python scripts/run_api.py real|test`` (uvicorn on 127.0.0.1, port
@@ -14,8 +14,8 @@ This file only wires the app together; the code lives in app/api/:
   deps.py        get_db, the one database-session dependency
   paths.py       the static and screenshots folders
   events.py      the SSE broadcaster and GET /events
-  worker.py      the one background worker thread and _process_listing
-  idle_loop.py   the idle loop, the letters phase and their helpers
+  worker.py      the two worker threads (letters, scoring) and _process_listing
+  idle_loop.py   the idle loop's letter and scoring loops and their helpers
   health.py      /health, /llm/usage
   ingest.py      POST /ingest
   availability.py the side panel's background availability checks

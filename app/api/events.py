@@ -1,7 +1,7 @@
 """Server-Sent Events: the broadcaster and GET /events.
 
-The sidebar keeps one /events stream open; background work (the idle loop and the
-single worker thread) pushes events to it with ``broadcast_from_thread``.
+The sidebar keeps one /events stream open; background work (the idle loop and its two
+worker threads) pushes events to it with ``broadcast_from_thread``.
 
 ``_sse_clients`` and ``_event_loop`` live here and nowhere else. Other modules reach
 them (and the functions) as ``events.<name>`` at call time, never with

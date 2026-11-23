@@ -1,7 +1,10 @@
-"""The single background worker, and the job pipeline it runs for /regenerate and the idle loop.
+"""The two background worker threads, and the job pipeline they run for /regenerate and the idle loop.
 
-``_bg_executor`` is THE one worker thread: every LLM chain (the idle loop's work and
-/regenerate) runs on it, so two chains never run at once. Other modules reach it, and
+``_bg_executor`` is the letter worker: every letter (the idle loop's, /regenerate, band
+letters, "Write a letter") runs on it, so two letters never run at once.
+``_score_executor`` is the scoring worker: the idle loop's quick screen, extraction and
+matching, one job at a time (docs/second-worker-plan.md). A job both reach at once is
+guarded by app/job_claims.py. Other modules reach them, and
 ``_process_listing``, as ``worker.<name>`` at call time, never with
 ``from app.api.worker import ...``, so a test that patches this module is seen by every
 caller (plan rule M1).
@@ -9,12 +12,14 @@ caller (plan rule M1).
 
 from __future__ import annotations
 
+import contextlib
 import logging
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 
 from sqlalchemy import select
 
-from app import letter_bands
+from app import job_claims, letter_bands
 from app.api import events
 from app.db import SessionLocal
 from app.llm.client import BudgetExceededError, DailyQuotaError
@@ -26,8 +31,17 @@ from app.preferences import letter_settings
 
 logger = logging.getLogger(__name__)
 
-# One worker thread so LLM calls don't block the event loop.
-_bg_executor = ThreadPoolExecutor(max_workers=1)
+# Two worker threads, so LLM calls don't block the event loop (docs/second-worker-plan.md D1).
+# _bg_executor: every letter (the idle loop's letters, /regenerate, band letters, "Write a
+# letter") and the retention sweep, one at a time.
+# _score_executor: the idle loop's scoring only (quick screen, extraction, matching; all
+# `small` tier). Nothing letter-related is ever submitted to it.
+_bg_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="letters")
+_score_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="scoring")
+
+# How long a user's /regenerate waits for the scorer to finish THIS job before it goes
+# ahead anyway (docs/second-worker-plan.md D6). Not the wait in the letter queue.
+_CLAIM_WAIT_S = 120.0
 
 
 def _process_listing(
@@ -37,6 +51,8 @@ def _process_listing(
     with_cover_letter: bool = False,
     bypass_threshold: bool = False,
     force: bool = False,
+    *,
+    already_claimed: bool = False,
 ) -> None:
     """Background task: extract + match (+ optionally cover letter) a listing.
 
@@ -47,48 +63,87 @@ def _process_listing(
     scraped listing. ``force=True`` (also set by /regenerate) re-runs extraction and
     matching even if they already ran — e.g. to override a quick-screen auto-skip;
     this path never calls quick_screen, it goes straight to extraction+matching.
+
+    Extraction and matching run under the job's claim (app/job_claims.py). The scorer
+    claims the job itself and passes ``already_claimed=True``; any other caller
+    (/regenerate) waits here for the scorer to finish the job first (see
+    ``_wait_for_scorer``). The letter is written after the claim is released.
     """
-    if has_description:
-        # A daily-quota or budget stop applies to the whole account, so the later
-        # steps would only make more doomed requests: tell the sidebar and stop.
-        # (Any other failure is per-job and keeps going, as before.)
-        try:
-            extract_job(job_id, force=force)
-        except (DailyQuotaError, BudgetExceededError) as exc:
-            logger.warning("job %s: %s — stopping this job's processing", job_id, exc)
-            events.broadcast_from_thread("llm_budget_blocked", {"reason": str(exc)})
-            return
-        except Exception:  # noqa: BLE001 — a bad extraction must not kill the task
-            logger.exception("extract_job failed for job %s", job_id)
-        try:
-            match_job(job_id, profile_id, force=force)
-            events.broadcast_from_thread("job_processed", {"job_id": job_id})
-        except (DailyQuotaError, BudgetExceededError) as exc:
-            logger.warning("job %s: %s — stopping this job's processing", job_id, exc)
-            events.broadcast_from_thread("llm_budget_blocked", {"reason": str(exc)})
-            return
-        except Exception:  # noqa: BLE001 — a per-job failure is logged; quota/budget stops are caught above
-            logger.exception("match_job failed for job %s", job_id)
-        if with_cover_letter:
-            try:
-                with SessionLocal() as db:
-                    landed = letter_production.generate_for(
-                        db, job_id, profile_id, events.broadcast_from_thread, bypass_threshold=bypass_threshold,
-                    )
-                if landed is not None and landed.account_limit:
-                    events.broadcast_from_thread("llm_budget_blocked", {"reason": landed.account_limit})
-            except (DailyQuotaError, BudgetExceededError) as exc:
-                logger.warning("job %s: %s — stopping this job's processing", job_id, exc)
-                events.broadcast_from_thread("llm_budget_blocked", {"reason": str(exc)})
-                return
-            except Exception:  # noqa: BLE001 — a per-job failure is logged; quota/budget stops are caught above
-                logger.exception("cover letter failed for job %s", job_id)
-    else:
+    if not has_description:
         logger.info(
             "Job %s stored as card only (no description) — deferring extraction/"
             "matching until a detail page is ingested.",
             job_id,
         )
+        return
+    claim = contextlib.nullcontext() if already_claimed else _wait_for_scorer(job_id)
+    with claim:
+        if not _extract_and_match(job_id, profile_id, force):
+            return
+    if with_cover_letter:
+        _write_letter(job_id, profile_id, bypass_threshold)
+
+
+@contextlib.contextmanager
+def _wait_for_scorer(job_id: int) -> Iterator[None]:
+    """Hold the job's claim for the block, waiting first if the scorer has it (D3).
+
+    After ``_CLAIM_WAIT_S`` the block runs anyway, without the claim, and a WARNING says
+    how long the scorer had held it (D6): a leaked claim or a hung model call must not
+    block the user's letter, and the cost of going ahead is at most a repeated small call.
+    """
+    with job_claims.claim(job_id, wait=_CLAIM_WAIT_S) as claimed:
+        if not claimed:
+            held = job_claims.held_for(job_id)
+            logger.warning(
+                "job %s: still being scored after waiting %.0f s (claim held %s) — going ahead anyway",
+                job_id, _CLAIM_WAIT_S, "until just now" if held is None else f"{held:.0f} s",
+            )
+        yield
+
+
+def _extract_and_match(job_id: int, profile_id: int, force: bool) -> bool:
+    """Extract, then match. False when the whole account is stopped (daily quota or the
+    USD budget): the later steps would only make more doomed requests, so the sidebar is
+    told and the caller stops. Any other failure is per-job, logged, and the next step
+    still runs (True)."""
+    try:
+        extract_job(job_id, force=force)
+    except (DailyQuotaError, BudgetExceededError) as exc:
+        _account_stopped(job_id, exc)
+        return False
+    except Exception:  # noqa: BLE001 — a bad extraction must not kill the task
+        logger.exception("extract_job failed for job %s", job_id)
+    try:
+        match_job(job_id, profile_id, force=force)
+        events.broadcast_from_thread("job_processed", {"job_id": job_id})
+    except (DailyQuotaError, BudgetExceededError) as exc:
+        _account_stopped(job_id, exc)
+        return False
+    except Exception:  # noqa: BLE001 — a per-job failure is logged; quota/budget stops are caught above
+        logger.exception("match_job failed for job %s", job_id)
+    return True
+
+
+def _account_stopped(job_id: int, exc: Exception) -> None:
+    logger.warning("job %s: %s — stopping this job's processing", job_id, exc)
+    events.broadcast_from_thread("llm_budget_blocked", {"reason": str(exc)})
+
+
+def _write_letter(job_id: int, profile_id: int, bypass_threshold: bool) -> None:
+    """The letter step of ``_process_listing`` (/regenerate): never raises; a daily-quota,
+    budget or account-limit stop is broadcast to the sidebar."""
+    try:
+        with SessionLocal() as db:
+            landed = letter_production.generate_for(
+                db, job_id, profile_id, events.broadcast_from_thread, bypass_threshold=bypass_threshold,
+            )
+        if landed is not None and landed.account_limit:
+            events.broadcast_from_thread("llm_budget_blocked", {"reason": landed.account_limit})
+    except (DailyQuotaError, BudgetExceededError) as exc:
+        _account_stopped(job_id, exc)
+    except Exception:  # noqa: BLE001 — a per-job failure is logged; quota/budget stops are caught above
+        logger.exception("cover letter failed for job %s", job_id)
 
 
 def _rewrite_letter(job_id: int, profile_id: int, has_description: bool, discard_edits: bool = False) -> None:

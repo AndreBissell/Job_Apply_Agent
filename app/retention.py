@@ -63,7 +63,7 @@ DEFAULT_STALE_WEIGHT = 0.35
 SWEEP_INTERVAL = timedelta(hours=24)
 
 # Matches deleted per sweep run — keeps a large first-time backlog from holding
-# the single worker thread for long. A full batch means "more to do", and the
+# the letter worker thread (it runs the sweep) for long. A full batch means "more to do", and the
 # sweep is then not marked complete so the next loop iteration continues it.
 PURGE_BATCH = 500
 

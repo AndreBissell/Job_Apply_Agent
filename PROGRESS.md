@@ -5,6 +5,25 @@ one block per milestone.
 
 ---
 
+## 2026-11-23 — Second worker for scoring — DONE (manual checks passed 2026-11-24)
+
+- Branch `avaliability-check`. Plan `docs/second-worker-plan.md` (D1–D6, Implementation log, manual checks at its end).
+- New jobs are quick-screened, extracted and scored while a letter is written, instead of after the letter queue is empty. `7262950` SQLite `busy_timeout` 30 s. `849ac8c` `app/job_claims.py` (in-memory claims). `9484c46` the scorer skips a claimed job, `/regenerate` waits (120 s, then a WARNING and it goes ahead). `4f1502d` `worker._score_executor` + the letter loop and the scoring loop. `10eabbd` wording.
+- Letters, prompts, models, `LLM_RPM`, the API, the extension and the schema are unchanged.
+- Tests: pytest 2104 (baseline 2065); every e2e suite at its baseline. One existing test rewritten to the new rule (the pool guard: exactly two single-thread pools). A flaky check in `letter_rewrite_e2e.py` was fixed first (`99d717d`).
+- Manual checks PASSED 2026-11-24 (TEST; details in the plan): jobs scored while a letter was written, the letter landed, a hard kill mid-letter and mid-scoring recovered (orphaned run marked failed and retried after its cooldown, the half-scored job picked up again), no "database is locked". $0.72 of real model calls.
+
+---
+
+## 2026-11-17 — Availability fast mode + value-first queue — DONE (manual checks passed 2026-11-20)
+
+- Branch `avaliability-check`. Plan `docs/availability-fast-mode-plan.md` (D1–D8, Implementation log, manual checks at its end).
+- `9ce9b1a` one queue: letter jobs (any score) > no-letter 60+ > unscored, recheck after 24 h (`RECHECK_AFTER = FRESH_FOR`). `e7a769d` daily cap 24 → 100 (pin + policy text). `9d85868` backend fast mode (`mode` from `/availability/next`, 10 live or 15 pages, once an hour, run start in preferences). `dafa0e1` panel: 5 s fast / 15 s background, fast on panel ready, D7 counts missing + unknown, 25-page hard limit. `24d777b` e2e.
+- Tests: pytest 2065 (baseline 2041); availability e2e 70/70 (baseline 48).
+- Owner's manual checks PASSED 2026-11-20 on REAL (one fast run, 12 pages, 8 live / 4 missing; details in the plan). A closed ad keeps its URL and title, has no description and shows "This job is no longer advertised"; follow-up logged: recognise that banner so closed ads don't count towards the 6 h pause.
+
+---
+
 ## 2026-10-16 — ⚙ Settings simplified — BUILT, manual checks pending
 
 - Branch `centrelink-ease-apply`. Plan `docs/settings-simplify-plan.md` (D1–D8 approved; manual checks at its end). UI only: no preference key, default or API bound changed.

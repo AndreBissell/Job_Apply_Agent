@@ -298,8 +298,11 @@ def run(headed: bool, keep: bool = False) -> int:
                     f"card: one POST, with discard_edits ({posts})")
             landed = wait_until(lambda: letter(J_A)[0] == REWRITTEN, timeout_s=40)
             c.check(landed, f"card: the new letter landed ({letter(J_A)[0][:40]!r})")
+            # The edits are cleared in a second commit after the new letter (worker._rewrite_letter),
+            # so wait for it rather than reading once: a single read can land between the two.
+            cleared = wait_until(lambda: letter(J_A)[1] is None, timeout_s=40)
             row = letter(J_A)
-            c.check(row[1] is None, "card: your edits were replaced (D1)")
+            c.check(cleared, "card: your edits were replaced (D1)")
             c.check(row[2] and row[2] > OLD, f"card: generated_at moved ({row[2]})")
             new_card = side.locator("#ov-scroller .mini-card", has_text="Graduate Engineer")
             c.check(wait_until(lambda: new_card.locator(".mc-written-when").count() == 1 and

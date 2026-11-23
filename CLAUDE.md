@@ -100,9 +100,17 @@ Caps, all in code and pinned by tests/test_scan_policy.py: side panel only (neve
 background.js); one background tab at a time (`active: false`) and one Seek page at a time across
 scans and checks together (`seekPace`); ≥ `CHECK_DELAY_MS` (15s, never below `SCAN_DELAY_MS`) apart;
 ≤ `CHECK_SESSION_CAP` (8) pages per session, one session per 30 min while the panel is open and
-≤ `DAILY_CAP` (24, app/availability.py) per rolling 24 hours; never while a scan runs (a scan
+FAST MODE (2026-11-17, docs/availability-fast-mode-plan.md): automatic, the backend decides it
+(`/availability/next` `mode`) and holds its caps; only the top jobs (letter / scored 60+), only ones
+not checked or seen live in 24 h; ≥ `CHECK_FAST_DELAY_MS` (5s, = `SCAN_DELAY_MS`) apart, starts as
+soon as the panel is ready; stops at 10 seen live or `FAST_RUN_PAGE_CAP` (15) pages; at most one run
+per `FAST_RUN_EVERY` (1 h); ≤ `CHECK_SESSION_HARD_LIMIT` (25) pages a session in the panel whatever
+the backend says; and
+≤ `DAILY_CAP` (100, app/availability.py; 24 until 2026-11-17, docs/availability-fast-mode-plan.md
+D5) per rolling 24 hours, all checks together; never while a scan runs (a scan
 cancels the check in flight); a toggle in ⚙ Settings (`availability_checks_enabled`). Hard stop:
-a challenge page, or `CHECK_MISS_STREAK_LIMIT` (5) empty pages in a row, pauses checks for 6 hours.
+a challenge page, or `CHECK_MISS_STREAK_LIMIT` (5) pages opened in a row that were not live
+(missing or unknown, since 2026-11-17), pauses checks for 6 hours (fast mode too).
 A closed ad is never concluded from one empty page: it takes two separate visits (≥1 day apart)
 and a live page seen in the same session each time, so a blocked or logged-out browser cannot flag
 anything. Applied jobs are never re-checked or flagged. The same freshness (`FRESH_FOR`, 24h)
@@ -189,8 +197,14 @@ Cost control (all in client.py + app/llm/usage.py):
 
 Rate-limit handling: on HTTP 429, client.py backs off and retries (max 3);
 delays > 300s are treated as daily exhaustion → DailyQuotaError. The idle loop
-(_processing_idle_loop in app/api/idle_loop.py) serialises LLM work through a single-worker
-executor and backs off 3 minutes when extraction fails. Local throttle: LLM_RPM=8.
+(_processing_idle_loop in app/api/idle_loop.py) runs two loops (docs/second-worker-plan.md):
+letters one at a time on `worker._bg_executor` (also /regenerate, band letters, Write a letter),
+and scoring (quick screen, extract, match) one job at a time on `worker._score_executor`, so new
+jobs are scored while a letter is written. Each has its own pauses: the budget pause stops only
+letters; the scorer backs off 3 minutes when extraction fails. A job both reach is guarded by
+app/job_claims.py (the scorer skips it, /regenerate waits up to 120 s then goes ahead with a
+WARNING). SQLite waits 30 s for the write lock (`busy_timeout`, app/db.py). Both loops share
+the local throttle: LLM_RPM=8.
 
 Env vars (gitignored .env): LLM_PROVIDER=gemini, GOOGLE_GENAI_USE_VERTEXAI=true,
 GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_LOCATION=global, GEMINI_MODEL_SMALL/_MID/
@@ -220,8 +234,9 @@ job-app-assistant/
       deps.py          # get_db, the one session dependency
       paths.py         # static + screenshots folders
       events.py        # SSE broadcaster + GET /events
-      worker.py        # the ONE background worker thread + _process_listing
-      idle_loop.py     # the idle loop, the letters phase and their helpers
+      worker.py        # the TWO worker threads (_bg_executor letters, _score_executor scoring) + _process_listing
+      idle_loop.py     # the idle loop: the letter loop and the scoring loop, one-pass functions and helpers
+      (app/job_claims.py: which jobs a worker is scoring right now; the scorer skips, /regenerate waits)
       health.py ingest.py evidence.py search.py job_actions.py jobs.py profile.py   # routers
       (app/evidence_pdf.py: the Centrelink upload PDFs; app/screenshots.py: evidence file layout)
       (app/letter_bands.py: the Overview's bands + one-job letters; app/skill_gaps.py: the Pipeline's skills ads ask for)
@@ -685,6 +700,18 @@ The real profile is frozen as of 2026-10-20. Strong fit = score 85+ and
 no must-have GAP (`Requirement.needs_user`); partials are allowed (owner, 2026-10-20). Main metric:
 the relevant score (Would apply = Yes ads).
 
+✅ COMPLETED: Second worker for scoring — 2026-11-23, owner's manual checks passed 2026-11-24 (branch `avaliability-check`)
+
+docs/second-worker-plan.md (D1–D6, Implementation log, manual-check results at its end). New jobs are quick-screened, extracted and scored WHILE a letter
+is written: `worker._score_executor` (second single-thread pool, scoring only) beside `_bg_executor`
+(letters only); `_processing_idle_loop` gathers `_letter_loop` and `_scoring_loop`, each built from a
+one-pass function (`_letter_pass` / `_scoring_pass`, returns its wait) with its own error guard.
+`app/job_claims.py` (in memory, one process): the scorer `try_claim`s and skips held jobs (candidate
+queries leave them out); `/regenerate`'s extract+match waits (`_process_listing`, `already_claimed`
+for the scorer), D6: after 120 s a WARNING and it goes ahead. SQLite `busy_timeout` 30 s, no WAL.
+Letters, prompts, models, `LLM_RPM`, the API and the extension are unchanged. Tests guard the rule:
+exactly two pools, both `max_workers=1`, `_score_executor` used only in worker.py / idle_loop.py.
+
 🔄 BUILT, AWAITING THE USER'S MANUAL CHECKS: Rewrite letter + letter date — 2026-10-20 (branch `eval-set-creation`)
 
 docs/letter-rewrite-plan.md (D1–D3 approved; manual checks at its end). `cover_letters.generated_at`
@@ -771,6 +798,11 @@ log). Owner's manual checks passed 2026-10-15.
   page without opening one. It now lists only jobs with ad text, a score, or a closed flag.
 - 1753 tests; `tests/e2e/dashboard_e2e.py` 197/197, `sidebar_load_e2e.py` 59/59.
 
+✅ COMPLETED: Availability fast mode + value-first queue — 2026-11-17, owner's manual checks passed
+2026-11-20 (branch `avaliability-check`; docs/availability-fast-mode-plan.md, policy text above).
+Follow-up logged there: recognise Seek's "This job is no longer advertised" banner so closed ads
+don't count towards the 6 h pause.
+
 ✅ COMPLETED: Availability checks + freshness gate — 2026-10-13 (branch `centrelink-ease-apply`)
 
 Closed Seek ads now drop out of the list without a button, and no AI money is spent on one.
@@ -812,8 +844,8 @@ index on `matches.created_at`). Full reasoning in docs/database-schema.md
   weight 0.35 in the miner (baseline weighted too) — but only when a fresh
   match exists to prefer (`relative_weights`); uniform discounting re-ordered
   the live suggestions with no new information.
-- The sweep runs at the TOP of `_processing_idle_loop` (not the tail — LLM
-  phases `continue` and would starve it), once/24h, on the single worker.
+- The sweep runs at the top of every letter pass (`idle_loop._letter_pass`, not only
+  when idle — a letter backlog would starve it), once/24h, on the letter worker.
 Not built: the "re-score against updated profile" button (item 10), and
 nothing yet bumps `profiles.profile_revised_at` on a deletion because no
 profile-edit endpoint exists for experiences/skills. Tunables live in
