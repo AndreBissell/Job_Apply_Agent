@@ -5,12 +5,13 @@ one block per milestone.
 
 ---
 
-## 2026-11-23 — Second worker for scoring — BUILT, manual checks pending
+## 2026-11-23 — Second worker for scoring — DONE (manual checks passed 2026-11-24)
 
 - Branch `avaliability-check`. Plan `docs/second-worker-plan.md` (D1–D6, Implementation log, manual checks at its end).
 - New jobs are quick-screened, extracted and scored while a letter is written, instead of after the letter queue is empty. `7262950` SQLite `busy_timeout` 30 s. `849ac8c` `app/job_claims.py` (in-memory claims). `9484c46` the scorer skips a claimed job, `/regenerate` waits (120 s, then a WARNING and it goes ahead). `4f1502d` `worker._score_executor` + the letter loop and the scoring loop. `10eabbd` wording.
 - Letters, prompts, models, `LLM_RPM`, the API, the extension and the schema are unchanged.
 - Tests: pytest 2104 (baseline 2065); every e2e suite at its baseline. One existing test rewritten to the new rule (the pool guard: exactly two single-thread pools). A flaky check in `letter_rewrite_e2e.py` was fixed first (`99d717d`).
+- Manual checks PASSED 2026-11-24 (TEST; details in the plan): jobs scored while a letter was written, the letter landed, a hard kill mid-letter and mid-scoring recovered (orphaned run marked failed and retried after its cooldown, the half-scored job picked up again), no "database is locked". $0.72 of real model calls.
 
 ---
 

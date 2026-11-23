@@ -1,7 +1,7 @@
 # Plan: a second worker for scoring
 
-Status: BUILT 2026-11-23 (Steps 0-8 done; full suite and e2e green), AWAITING THE OWNER'S MANUAL
-CHECKS (end of this file). Approved by the owner 2026-11-23. Branch `avaliability-check`
+Status: DONE. Built 2026-11-23 (Steps 0-8; full suite and e2e green); the owner's manual checks
+PASSED 2026-11-24 (end of this file). Approved by the owner 2026-11-23. Branch `avaliability-check`
 (to be built before that branch's PR). Source: Part 1 of `future_work/second-worker-and-faster-letters.md`.
 Part 2 of that file (faster letters) is OUT of scope; it stays in future_work.
 
@@ -202,7 +202,7 @@ file DB.
       no `extension/`, no `alembic/`).
 - [x] Docs updated (Step 7); the future_work file holds Part 2 only.
 - [x] Each commit's staged diff checked for personal data.
-- [ ] The owner's manual checks below passed.
+- [x] The owner's manual checks below passed (2026-11-24).
 
 ## Manual checks (owner, at the end)
 
@@ -210,14 +210,32 @@ Run on the TEST environment only (`python scripts/run_api.py test`), never real.
 use the real model on the test profile: about one pipeline letter plus a few small calls,
 roughly $0.25; get the go-ahead before running them.
 
-- [ ] With a letter being written (server log shows `Idle: cover letter (...)`), scan a Seek
+- [x] With a letter being written (server log shows `Idle: cover letter (...)`), scan a Seek
       search page: the log shows `Idle: quick-screen` / `extract+match` lines for the new jobs
       BEFORE the letter's `letter_run_done`, and their scores appear in the Pipeline tab.
-- [ ] The letter that was running lands as normal (Keep Applying card, no "Writing…" stuck).
-- [ ] Stop the server mid-letter and mid-scoring, start it again: the letter run is marked
+- [x] The letter that was running lands as normal (Keep Applying card, no "Writing…" stuck).
+- [x] Stop the server mid-letter and mid-scoring, start it again: the letter run is marked
       failed and retried later as before; the job being scored is picked up again; no job
       stays stuck.
-- [ ] No "database is locked" in the server log during any of the above.
+- [x] No "database is locked" in the server log during any of the above.
+
+**Results (2026-11-23/24, PASSED).** The owner checked 1 and 2 in their own Chrome on TEST. Claude
+ran all four on a scratch copy of app.db (`run_api.py test --db`, availability checks off in the copy
+so the fake jobs could never send the panel to Seek; fake ads POSTed to `/ingest`, as a scan does),
+with the real model, $0.72 in all:
+- Three new jobs sent at 18:19:50, during job 99's letter: quick-screened from 18:20:15, all three
+  extracted and scored (95 / 95 / 68) by 18:22:43, during job 111's letter (18:21:19-18:22:54). Logs
+  show `scoring_0` and `letters_0` side by side.
+- Job 182's pipeline letter landed clean (`letter_run_done`, in `GET /jobs?ready=true`,
+  `letter_queued` false). Two earlier letters ended `waiting_user` (the fake profile's gaps), as before.
+- Hard kill (`taskkill /F /T`) at 18:33:57, 3 s into job 184's extract+match and 2.5 min into job
+  181's letter. On restart: "Marked 1 orphaned letter run(s) failed" on `letters_0` first, job 184
+  picked up again and scored 95, the letter loop moved on to job 185. Next day (after the 30 min
+  cooldown) job 181's letter was retried and finished `done` (run 10).
+- 0 "database is locked" and 0 errors in all server logs.
+- Seen on the way, not changed (owner: leave it): plain `run_api.py` shows WARNING lines only; the
+  app configures no logging, so the `Idle: ...` INFO lines in check 1 appear only with a log config
+  that sets `app` to INFO (the scratch launcher passed one to uvicorn). This was so before this plan.
 
 ## Implementation log
 

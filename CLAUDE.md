@@ -700,10 +700,9 @@ The real profile is frozen as of 2026-10-20. Strong fit = score 85+ and
 no must-have GAP (`Requirement.needs_user`); partials are allowed (owner, 2026-10-20). Main metric:
 the relevant score (Would apply = Yes ads).
 
-🔄 BUILT, AWAITING THE USER'S MANUAL CHECKS: Second worker for scoring — 2026-11-23 (branch `avaliability-check`)
+✅ COMPLETED: Second worker for scoring — 2026-11-23, owner's manual checks passed 2026-11-24 (branch `avaliability-check`)
 
-docs/second-worker-plan.md (D1–D6 approved; Implementation log; manual checks at its end, TEST only,
-about $0.25 with the go-ahead first). New jobs are quick-screened, extracted and scored WHILE a letter
+docs/second-worker-plan.md (D1–D6, Implementation log, manual-check results at its end). New jobs are quick-screened, extracted and scored WHILE a letter
 is written: `worker._score_executor` (second single-thread pool, scoring only) beside `_bg_executor`
 (letters only); `_processing_idle_loop` gathers `_letter_loop` and `_scoring_loop`, each built from a
 one-pass function (`_letter_pass` / `_scoring_pass`, returns its wait) with its own error guard.
