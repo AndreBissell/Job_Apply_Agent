@@ -1,7 +1,7 @@
 """The job write endpoints: quick screen, status, Quick Apply sent, expired, cover letter,
 regenerate, delete.
 
-``regenerate`` queues its work on the single worker as ``worker._bg_executor.submit(
+``regenerate`` queues its work on the letter worker as ``worker._bg_executor.submit(
 worker._rewrite_letter, ...)`` (looked up at call time, plan rule M1). ``delete_job`` reads the
 screenshots folder as ``paths._screenshots_dir``. Applied jobs are Centrelink evidence:
 ``delete_job`` refuses them with a 409 unless told otherwise, and bulk hide is a soft delete.
@@ -250,8 +250,8 @@ def regenerate(
     if not letter_bands.claim_rewrite(job_id):
         return {"status": "writing"}
 
-    # On the single worker, behind whatever the idle loop is running: a full letter run
-    # takes minutes, and two LLM jobs must not write the DB or hit the rate limit together.
+    # On the letter worker, behind whatever letter is running: letters are written one at a
+    # time. Its re-extract + re-score waits for the scorer if it holds this job (job_claims).
     try:
         worker._bg_executor.submit(
             worker._rewrite_letter, job_id, profile_id, job.raw_description is not None, discard_edits,

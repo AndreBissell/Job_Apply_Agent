@@ -1,4 +1,4 @@
-"""The idle loop: the single background loop that does all AI work, and its helpers.
+"""The idle loop: the letter loop and the scoring loop that do all background AI work.
 
 Moved out of app/api/main.py (refactor steps 9.5 and 9.6). main's lifespan starts
 ``_processing_idle_loop`` as ``idle_loop._processing_idle_loop()``, looked up at start-up so
@@ -44,7 +44,7 @@ def _match_attempt(job_id: int) -> str:
     Returns "ok" (scored), "failed" (will be retried), "gave_up" (the last attempt
     failed and a terminal 0 row was recorded), "quota" (daily quota / budget stop;
     not counted against the job) or "claimed" (another worker holds the job: nothing
-    ran, nothing counted). Sync: the loop runs it on the worker.
+    ran, nothing counted). Sync: the scoring loop runs it on ``_score_executor``.
     """
     with job_claims.claim(job_id) as claimed:
         if not claimed:
@@ -119,8 +119,8 @@ def _raw_relevance_score(job: JobListing, skill_names: list[str]) -> int:
 
     Not a gate — every job still gets extracted+matched regardless of this
     score (see app/llm/prefilter.py's "no silent gate" rule). It only decides
-    which pending job the idle loop picks next, so likely-relevant jobs reach
-    the front of the single-worker LLM queue before likely-irrelevant ones,
+    which pending job the scoring loop picks next, so likely-relevant jobs reach
+    the front of the scoring queue before likely-irrelevant ones,
     without spending an extra LLM call to find out.
     """
     text = f"{job.title or ''} {job.raw_description or ''}".lower()
@@ -145,7 +145,7 @@ async def _letters_phase() -> bool:
     What runs is decided in app/llm/letter/production.py (``next_work``): a run the user
     has finished answering resumes first, then the best-scored match without a letter
     gets the full pipeline (score at or above the bar) or the one-shot. A run waiting on
-    the user is NOT work, so it never blocks the loop. The work itself runs on the single
+    the user is NOT work, so it never blocks the loop. The work itself runs on the letter
     worker, and reports progress as SSE events (letter_run_started / _waiting / _done /
     _failed, plus cover_letter_ready when a letter lands).
     """

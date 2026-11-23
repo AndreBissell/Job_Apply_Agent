@@ -4,7 +4,7 @@ Scored jobs below the auto-letter bar get no letter from the idle loop. The Over
 them as 5-point score bands anchored on that bar (bar 80 -> 79-75, 74-70, ...; bar 77 ->
 76-72, 71-67, ...), the 6 highest non-empty bands, highest first. The top band's
 "+ cover letters" queues one-shot letters for its best jobs (at most ``WRITE_CAP`` a click)
-on the single worker (``worker._write_band_letters``).
+on the letter worker (``worker._write_band_letters``).
 
 Pure queries and band maths, plus ``queued``: the in-process set of job ids waiting for that
 worker. A queued job leaves the bands and shows in Keep Applying as being written (GET /jobs

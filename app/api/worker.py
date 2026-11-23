@@ -1,7 +1,10 @@
-"""The single background worker, and the job pipeline it runs for /regenerate and the idle loop.
+"""The two background worker threads, and the job pipeline they run for /regenerate and the idle loop.
 
-``_bg_executor`` is THE one worker thread: every LLM chain (the idle loop's work and
-/regenerate) runs on it, so two chains never run at once. Other modules reach it, and
+``_bg_executor`` is the letter worker: every letter (the idle loop's, /regenerate, band
+letters, "Write a letter") runs on it, so two letters never run at once.
+``_score_executor`` is the scoring worker: the idle loop's quick screen, extraction and
+matching, one job at a time (docs/second-worker-plan.md). A job both reach at once is
+guarded by app/job_claims.py. Other modules reach them, and
 ``_process_listing``, as ``worker.<name>`` at call time, never with
 ``from app.api.worker import ...``, so a test that patches this module is seen by every
 caller (plan rule M1).
