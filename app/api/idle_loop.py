@@ -15,9 +15,9 @@ import functools
 import logging
 import time
 
-from sqlalchemy import select
+from sqlalchemy import select, true
 
-from app import availability, retention
+from app import availability, job_claims, retention
 from app.api import events, paths, worker
 from app.db import SessionLocal
 from app.llm.client import BudgetExceededError, DailyQuotaError
@@ -41,24 +41,54 @@ def _match_attempt(job_id: int) -> str:
     """One idle-loop scoring attempt for an extracted, unmatched job.
 
     Returns "ok" (scored), "failed" (will be retried), "gave_up" (the last attempt
-    failed and a terminal 0 row was recorded) or "quota" (daily quota / budget stop;
-    not counted against the job). Sync: the loop runs it on ``_bg_executor``.
+    failed and a terminal 0 row was recorded), "quota" (daily quota / budget stop;
+    not counted against the job) or "claimed" (another worker holds the job: nothing
+    ran, nothing counted). Sync: the loop runs it on the worker.
     """
-    failures = _match_failures.get(job_id, 0)
-    last_try = failures + 1 >= _MATCH_MAX_ATTEMPTS
-    try:
-        match_job(job_id, 1, record_failure=last_try)
-    except (DailyQuotaError, BudgetExceededError):
-        return "quota"
-    except Exception:  # noqa: BLE001 — match_job already logged the traceback
-        _match_failures[job_id] = failures + 1
-        return "failed"
-    _match_failures.pop(job_id, None)
-    with SessionLocal() as db:
-        recorded = db.scalar(
-            select(Match.reasoning).where(Match.user_id == 1, Match.job_id == job_id)
-        )
-    return "gave_up" if recorded == "Parse error" else "ok"
+    with job_claims.claim(job_id) as claimed:
+        if not claimed:
+            return "claimed"
+        failures = _match_failures.get(job_id, 0)
+        last_try = failures + 1 >= _MATCH_MAX_ATTEMPTS
+        try:
+            match_job(job_id, 1, record_failure=last_try)
+        except (DailyQuotaError, BudgetExceededError):
+            return "quota"
+        except Exception:  # noqa: BLE001 — match_job already logged the traceback
+            _match_failures[job_id] = failures + 1
+            return "failed"
+        _match_failures.pop(job_id, None)
+        with SessionLocal() as db:
+            recorded = db.scalar(
+                select(Match.reasoning).where(Match.user_id == 1, Match.job_id == job_id)
+            )
+        return "gave_up" if recorded == "Parse error" else "ok"
+
+
+def _screen_job(job_id: int) -> str:
+    """Phase 0's work on the worker: ``quick_screen``'s outcome, or "claimed" when another
+    worker holds the job (nothing ran). Sync."""
+    with job_claims.claim(job_id) as claimed:
+        if not claimed:
+            return "claimed"
+        return quick_screen(job_id, 1)
+
+
+def _extract_and_match_job(job_id: int) -> str:
+    """Phase 1's work on the worker: "done" (extraction and matching ran; the caller checks
+    whether extraction succeeded), or "claimed" when another worker holds the job. Sync."""
+    with job_claims.claim(job_id) as claimed:
+        if not claimed:
+            return "claimed"
+        worker._process_listing(job_id, 1, True, already_claimed=True)
+        return "done"
+
+
+def _unclaimed():
+    """A WHERE clause leaving out the jobs a worker holds right now (app/job_claims.py),
+    so the scorer moves on to the next job instead of stopping on a held one."""
+    held = job_claims.held_ids()
+    return JobListing.id.notin_(held) if held else true()
 
 
 def _retention_tick() -> None:
@@ -197,6 +227,7 @@ async def _processing_idle_loop() -> None:
                     .where(availability.llm_gate(db, 1))
                     .where(JobListing.extracted_at.is_(None))
                     .where(JobListing.quick_screen_at.is_(None))
+                    .where(_unclaimed())
                     .order_by(JobListing.date_scraped.asc())
                     .limit(1)
                 )
@@ -208,8 +239,10 @@ async def _processing_idle_loop() -> None:
                 try:
                     outcome = await loop.run_in_executor(
                         worker._bg_executor,
-                        functools.partial(quick_screen, screen_id, 1),
+                        functools.partial(_screen_job, screen_id),
                     )
+                    if outcome == "claimed":
+                        continue  # taken since the query: the next query leaves it out
                     if outcome == "skipped":
                         # A skip writes a terminal Match row right away — the only
                         # quick-screen outcome the sidebar has anything new to show
@@ -245,6 +278,7 @@ async def _processing_idle_loop() -> None:
                     .where(JobListing.extracted_at.is_(None))
                     .where(JobListing.quick_screen_at.isnot(None))
                     .where(~JobListing.matches.any())
+                    .where(_unclaimed())
                     .order_by(JobListing.date_scraped.asc())
                     .limit(50)
                 ).all()
@@ -254,10 +288,12 @@ async def _processing_idle_loop() -> None:
 
             if pending_id is not None:
                 logger.info("Idle: extract+match job %s", pending_id)
-                await loop.run_in_executor(
+                outcome = await loop.run_in_executor(
                     worker._bg_executor,
-                    functools.partial(worker._process_listing, pending_id, 1, True),
+                    functools.partial(_extract_and_match_job, pending_id),
                 )
+                if outcome == "claimed":
+                    continue  # taken since the query: the next query leaves it out
                 # If extraction failed (Gemini still rate-limited), extracted_at stays
                 # NULL and we'd immediately retry the same job. Back off 3 min instead.
                 with SessionLocal() as db:
@@ -278,6 +314,7 @@ async def _processing_idle_loop() -> None:
                     .where(JobListing.extracted_at.isnot(None))
                     .where(availability.llm_gate(db, 1))
                     .where(~JobListing.matches.any())
+                    .where(_unclaimed())
                     .order_by(JobListing.date_scraped.asc())
                     .limit(1)
                 )
@@ -289,6 +326,8 @@ async def _processing_idle_loop() -> None:
                 outcome = await loop.run_in_executor(
                     worker._bg_executor, functools.partial(_match_attempt, unmatched_id),
                 )
+                if outcome == "claimed":
+                    continue  # taken since the query: the next query leaves it out
                 if outcome in ("failed", "quota"):
                     logger.warning(
                         "Idle: scoring job %s: %s — pausing %ds",
