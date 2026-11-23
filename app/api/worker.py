@@ -28,8 +28,13 @@ from app.preferences import letter_settings
 
 logger = logging.getLogger(__name__)
 
-# One worker thread so LLM calls don't block the event loop.
-_bg_executor = ThreadPoolExecutor(max_workers=1)
+# Two worker threads, so LLM calls don't block the event loop (docs/second-worker-plan.md D1).
+# _bg_executor: every letter (the idle loop's letters, /regenerate, band letters, "Write a
+# letter") and the retention sweep, one at a time.
+# _score_executor: the idle loop's scoring only (quick screen, extraction, matching; all
+# `small` tier). Nothing letter-related is ever submitted to it.
+_bg_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="letters")
+_score_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="scoring")
 
 # How long a user's /regenerate waits for the scorer to finish THIS job before it goes
 # ahead anyway (docs/second-worker-plan.md D6). Not the wait in the letter queue.

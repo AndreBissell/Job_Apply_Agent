@@ -71,15 +71,47 @@ def test_there_is_one_get_db():
     assert main.get_db is profile_ui.get_db is deps.get_db
 
 
-def test_there_is_one_worker_thread_pool():
-    """Every LLM chain runs on worker._bg_executor; a second pool would let two run at once
-    (step 9.4)."""
-    found = [
-        p.name
-        for p in sorted((ROOT / "app" / "api").glob("*.py"))
-        for _ in re.finditer(r"\bThreadPoolExecutor\(", p.read_text(encoding="utf-8"))
+def test_there_are_exactly_two_worker_thread_pools():
+    """Two single-thread pools, both in worker.py (docs/second-worker-plan.md D1): letters on
+    ``_bg_executor``, scoring on ``_score_executor``. A third pool, or a second thread in
+    either, would let two letters or two scoring chains run at once (was step 9.4's one-pool
+    rule). Scans all of app/, read with ast: nothing is imported."""
+    import ast
+
+    def is_pool(call: ast.Call) -> bool:  # ThreadPoolExecutor(...) or futures.ThreadPoolExecutor(...)
+        return (getattr(call.func, "id", None) or getattr(call.func, "attr", None)) == "ThreadPoolExecutor"
+
+    pools = []  # (file, names it is assigned to, max_workers): one entry per pool made anywhere
+    for path in sorted((ROOT / "app").rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        assigned_to = {
+            id(n.value): [t.id for t in n.targets if isinstance(t, ast.Name)]
+            for n in ast.walk(tree) if isinstance(n, ast.Assign)
+        }
+        for call in (n for n in ast.walk(tree) if isinstance(n, ast.Call) and is_pool(n)):
+            workers = next((k.value for k in call.keywords if k.arg == "max_workers"), None)
+            pools.append((
+                str(path.relative_to(ROOT)).replace("\\", "/"),
+                assigned_to.get(id(call), []),
+                workers.value if isinstance(workers, ast.Constant) else None,
+            ))
+    assert sorted(pools) == [
+        ("app/api/worker.py", ["_bg_executor"], 1),
+        ("app/api/worker.py", ["_score_executor"], 1),
     ]
-    assert found == ["worker.py"]
+
+
+def test_only_the_scoring_loop_reaches_the_scoring_pool():
+    """Letters stay on one thread: ``_score_executor`` is named only where it is made
+    (worker.py) and where the scoring loop uses it (idle_loop.py), so no letter path
+    (/regenerate, band letters, "Write a letter") can submit to it."""
+    users = sorted(
+        str(p.relative_to(ROOT)).replace("\\", "/")
+        for folder in ("app", "scripts")
+        for p in (ROOT / folder).rglob("*.py")
+        if "_score_executor" in p.read_text(encoding="utf-8")
+    )
+    assert users == ["app/api/idle_loop.py", "app/api/worker.py"]
 
 
 def test_openapi_unchanged():
