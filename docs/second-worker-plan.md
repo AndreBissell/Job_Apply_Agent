@@ -245,5 +245,16 @@ Two notes from the baseline run, neither caused by this work:
   runs (34/35), passed the other two. Cause: `worker._rewrite_letter` commits the new letter,
   then clears `edited_content` in a second commit; the test waits for the new letter and reads
   the edits straight away, so it can read between the two commits. A race in the test, not the
-  app. Left as is (the Test rules forbid changing it here). If it fails at Step 8, rerun it; a
-  pass on rerun with only this check failing counts as the baseline.
+  app.
+
+**Flake fixed before Step 1 (owner's choice, 2026-11-23, its own commit outside the Steps).**
+Options weighed: (A) wait for the `letter_rewrite_done` SSE event, (B) poll for the end state,
+(C) clear the edits in the same commit as the letter. Chose B: one line in the test's existing
+`wait_until` pattern; C changes the letter path (off limits here) to fix a window users don't
+see, and A's event plumbing could flake itself. The check now waits up to 40 s (as the line
+before it does) for `edited_content` to be NULL instead of reading once. Changed existing test,
+and why it is not a loosening: the app never promised both commits land together, and the claim
+checked ("your edits end up gone") is exactly as strict; 40 s, not the default 20, because after
+D4 the second commit can wait up to 30 s on the write lock. Evidence: 5/5 passes; with a
+temporary 3 s sleep between the two commits (removed), the new test passed 35/35 and the old one
+failed this check (34/35). The baseline stays 35/35.
