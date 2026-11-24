@@ -1,0 +1,19 @@
+#!/bin/sh
+# private-data guard (installed by scripts/install_hooks.py; source: hooks/commit-msg).
+# Blocks a commit whose MESSAGE contains the owner's private data. See
+# docs/private-data-guard-plan.md. Fails closed, like hooks/pre-commit.
+hook_dir=$(dirname "$0")
+checker="$hook_dir/check_private_data.py"
+if [ ! -f "$checker" ]; then
+    echo "private-data guard: commit BLOCKED, $checker is missing." >&2
+    echo "  Run: python scripts/install_hooks.py" >&2
+    exit 1
+fi
+for py in python py python3; do
+    if command -v "$py" >/dev/null 2>&1 &&
+        "$py" -c "import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)" >/dev/null 2>&1; then
+        exec "$py" "$checker" --message "$1"
+    fi
+done
+echo "private-data guard: commit BLOCKED, no working Python 3.8+ was found on PATH." >&2
+exit 1

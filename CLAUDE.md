@@ -34,6 +34,12 @@ screening answers, screenshots, databases, API keys or GCP project ids.
   add it to .gitignore first.
 - Before every commit, check the staged diff (`git diff --cached`) for personal
   data; if unsure whether something counts, ask the owner before committing.
+- ENFORCED by git hooks (docs/private-data-guard-plan.md): pre-commit + commit-msg run
+  scripts/check_private_data.py against the owner's list `.git/private-data.txt` and block
+  added lines that match it, binary files and the list itself. Install once per clone:
+  `python scripts/install_hooks.py` (`--check` after hooks/ or the checker change). Never
+  read, edit or print the list; never `--no-verify`. The list only knows what's on it, so
+  the staged-diff check above still applies.
 - Already in history and accepted by the owner: the name, the old commit email, and
   the existing references to the real CV in tests/test_style_lint.py and a few docs.
   Don't add more.
