@@ -1,25 +1,54 @@
-CLAUDE.md — Job Application Assistant
-
+# CLAUDE.md — Job Application Assistant
 
 Project context for Claude Code. Read this first every session.
 docs/database-schema.md is the source of truth for the data model. If
 anything here conflicts with that file, the schema doc wins.
 
 
+## How this file works
 
-What this project is
+- This file holds **permanent rules** plus ONE short **Now** section (about 15 lines at most).
+  Nothing else: no build logs, no finished-task blocks.
+- **History goes in PROGRESS.md** (newest on top, one slim block per milestone). Step-by-step
+  detail goes in the plan doc's Decision log (docs/<task>-plan.md).
+- **When a task finishes:** (1) add its PROGRESS.md entry, (2) delete its lines from Now,
+  (3) move any rule that must outlive it into the permanent sections below, (4) put any open
+  manual check on the "Open manual checks" list.
+- Deferred ideas go in future_work/ (one file each, indexed in its README), not here.
+
+
+## What this project is
 
 A tool that helps a job seeker find suitable roles on Seek and drafts tailored
 cover letters from the user's own profile (qualifications, experience, skills).
 The user reviews and submits every application manually — the tool never
 auto-submits. It starts as a local single-user app and is designed to grow
-into a multi-user hosted app later.
+into a multi-user hosted app later. It also keeps the user's Centrelink job-search
+evidence (applied dates, Quick Apply screenshots, upload-ready PDFs).
 
-Full feature plan: docs/job-application-assistant-plan.md
-Full DB design: docs/database-schema.md
+It is also the owner's practice project for agent engineering: learning where an
+LLM agent's cost and quality bottlenecks are and how to optimise them.
+
+Overview: README.md. Architecture: docs/ARCHITECTURE.md. DB design: docs/database-schema.md.
 
 
-PUBLIC REPO — nothing private gets committed (owner, 2026-10-22)
+## Now (updated 2026-11-24)
+
+- **Stage: optimising the cover-letter agent** — higher judge-v1 scores, lower cost per letter.
+  Plan: docs/agent-optimisation-plan.md (DRAFT v0.1, branch `cost_perform_analysis`). Every
+  paid experiment (Gemini calls, judge runs) needs the owner's go-ahead first; free analysis
+  of existing data is fine. Measure on the eval set's dev split with judge v1 (rules below).
+- **Deadlines:** the Gemini trial ends **2026-12-30** (Flash intro prices double 2027-01-01);
+  OpenAI gpt-5-mini (a dormant fallback) shuts down 2026-12-11.
+
+Open manual checks (the owner drives them; each list is at the end of its plan):
+- Letter rewrite + letter date — docs/letter-rewrite-plan.md
+- ⚙ Settings simplified — docs/settings-simplify-plan.md
+- Pipeline tab — docs/pipeline-tab-plan.md
+- Centrelink-ready PDFs (Quick Apply evidence part 2) — docs/centrelink-ease-apply-plan.md
+
+
+## PUBLIC REPO — nothing private gets committed (owner, 2026-10-22)
 
 This repo is PUBLIC on GitHub and is cloned by scrapers. The owner's name (Andre
 Bissell) and the commit email are fine to appear. NOTHING ELSE personal may be
@@ -45,136 +74,113 @@ screening answers, screenshots, databases, API keys or GCP project ids.
   Don't add more.
 
 
-SEEK ACCESS POLICY — how this app is allowed to touch Seek
+## SEEK ACCESS POLICY — how this app is allowed to touch Seek
 
+All Seek traffic comes from the Chrome extension in the user's own signed-in browser,
+on the user's real IP. The backend never requests Seek. (The Playwright scraper was
+abandoned: Cloudflare loops the challenge on any automated browser. The dormant proxy
+code, `require_proxy()` etc., stays in the repo; nothing depends on it.)
 
-No proxy required (2026-06-17). The Playwright scraper is abandoned
-(Cloudflare loops the challenge on any automated browser — see PROGRESS.md). The
-active pipeline is a Chrome extension running in the user's own signed-in
-browser, on the user's real IP. There are no backend/server-side automated
-requests to Seek, so the old "all scrape-target traffic must go through a proxy"
-rule no longer applies and is removed. The proxy code (require_proxy() etc.) stays
-in the repo dormant and optional — do not delete it, but nothing depends on it.
+**What the extension IS allowed to do — the 1-hop rule:**
+- Read the DOM of any Seek page the user themselves opened.
+- Open job links that already appear on a page the user opened, one at a time in a
+  background tab (`chrome.tabs.create({active: false})`), read it, then close it. This is
+  1 hop: the page the user opened → the listings linked from it.
+- Paced and capped so it stays a trickle, not a crawl: ≥5s between pages
+  (`SCAN_DELAY_MS = 5000`) and a per-scan cap, user-tunable in ⚙ Settings (`scan_max_pages`,
+  default 10) but hard-bounded at 25 by both the API (`PreferencesUpdate le=25`) and the
+  sidebar (`SCAN_PAGES_CEILING`). That ceiling is the policy cap: raise it deliberately if
+  needed, don't remove it. Both constants and the scan code (`scanPage`,
+  `pageCollectJobLinks`, `pageScrapeDetail`) live in extension/sidebar_scan.js;
+  tests/test_scan_policy.py checks them wherever they are.
+- Scan more (docs/overview-applied-rework-plan.md D7/D8): the Overview lists the top 3
+  suggested searches, each with its own button. A click opens ONE Seek search page, that
+  row's search (`seekSearchUrl`), in a FOREGROUND tab (`active: true`), then runs the same
+  `scanPage` on THAT tab, read by its id (`chrome.tabs.get(tabId)`). The user's click opened
+  it, so it is the page the user opened. The header's Scan Page still reads the active tab. A
+  click never moves on to another suggestion or to Seek's page 2 (pinned by
+  tests/test_scan_policy.py).
 
+**The hard line — no second hop:**
+- Never follow links found on the pages the scan itself visited. Links come only from a
+  page the user opened (`parseSearchPage()` / `COLLECT_LINKS`), never from the detail pages
+  the scan navigates to. No recursion, no crawler. One hop, full stop.
+- No backend/agent-side requests to Seek. Do NOT use WebFetch or any server-side fetch
+  against Seek; if you ever need a Seek page agent-side (e.g. au.seek.com/robots.txt),
+  STOP and ask the user first.
+- Keep it paced and capped. If the scan ever draws Cloudflare / anti-bot attention, pull it
+  back to user-initiated opens only.
 
-
-What the extension IS allowed to do — the 1-hop rule (standing behaviour):
-
-
-Read the DOM of any Seek page the user themselves opened.
-Open job links that already appear on a page the user opened, one at a time in a
-background tab (`chrome.tabs.create({active: false})`), read it, then close it — i.e.
-links on the opened search-results page are fair game. This is
-1 hop: the page the user opened → the listings linked from it.
-Paced and capped so it stays a trickle, not a crawl: ≥5s between pages
-(SCAN_DELAY_MS = 5000), and a per-scan cap. The cap is now user-tunable in the
-sidebar's ⚙ Settings view (`scan_max_pages`, default 10) but hard-bounded at 25
-by both the API (PreferencesUpdate le=25) and the sidebar (SCAN_PAGES_CEILING) —
-that ceiling is the policy cap: raise it deliberately if needed, don't remove it.
-Both constants and the scan code (scanPage, pageCollectJobLinks, pageScrapeDetail)
-live in extension/sidebar_scan.js; tests/test_scan_policy.py checks them wherever they are.
-Scan more (2026-10-15, docs/overview-applied-rework-plan.md D7/D8, owner-updated the same day): the
-Overview lists the top 3 suggested searches, each with its own Scan more button. A click opens ONE
-Seek search page, that row's search (`seekSearchUrl`), in a FOREGROUND tab (`active: true`), then
-runs the same scanPage on THAT tab, read by its id (`chrome.tabs.get(tabId)`), so the user may move
-to another tab while it loads. The user's click opened it, so it is the page the user opened. The
-header's Scan Page still reads the active tab. The 1-hop rule, SCAN_DELAY_MS, the cap and the
-no-second-hop line are unchanged; a click never moves on to another suggestion or to Seek's page 2
-(pinned by tests/test_scan_policy.py).
-
-
-The hard line that still holds — no second hop:
-
-
-Never follow links found on the pages the scan itself visited. Links come only
-from a page the user opened (parseSearchPage() / COLLECT_LINKS), never from the
-detail pages the scan navigates to. No recursion, no crawler. One hop, full stop.
-No backend/agent-side requests to Seek. All Seek traffic comes from the user's
-browser. Do NOT use WebFetch or any server-side fetch against Seek; if you ever need
-a Seek page agent-side (e.g. au.seek.com/robots.txt), STOP and ask the user first.
-Keep it paced and capped. If the scan ever draws Cloudflare / anti-bot attention,
-pull it back to user-initiated opens only.
-
-
-Availability re-checks (2026-10-13, owner-accepted): the side panel may re-visit the
+**Availability re-checks** (owner-accepted 2026-10-13): the side panel may re-visit the
 `/job/{id}` page of a listing already stored in the database, to see whether it is still
-advertised. This is a second kind of traffic, so it has its own caps; the 1-hop rule is unchanged.
-Every stored URL came from a page the user opened (or the 1-hop scan from one); a re-check
-opens only that listing's own page, rebuilt from its id on Seek's own host (`checkUrlFor`), and reads only whether the description is
-there and the page title. It never reads or follows a link found on it: no second hop.
-Caps, all in code and pinned by tests/test_scan_policy.py: side panel only (never the backend, never
-background.js); one background tab at a time (`active: false`) and one Seek page at a time across
-scans and checks together (`seekPace`); ≥ `CHECK_DELAY_MS` (15s, never below `SCAN_DELAY_MS`) apart;
-≤ `CHECK_SESSION_CAP` (8) pages per session, one session per 30 min while the panel is open and
-FAST MODE (2026-11-17, docs/availability-fast-mode-plan.md): automatic, the backend decides it
-(`/availability/next` `mode`) and holds its caps; only the top jobs (letter / scored 60+), only ones
-not checked or seen live in 24 h; ≥ `CHECK_FAST_DELAY_MS` (5s, = `SCAN_DELAY_MS`) apart, starts as
-soon as the panel is ready; stops at 10 seen live or `FAST_RUN_PAGE_CAP` (15) pages; at most one run
-per `FAST_RUN_EVERY` (1 h); ≤ `CHECK_SESSION_HARD_LIMIT` (25) pages a session in the panel whatever
-the backend says; and
-≤ `DAILY_CAP` (100, app/availability.py; 24 until 2026-11-17, docs/availability-fast-mode-plan.md
-D5) per rolling 24 hours, all checks together; never while a scan runs (a scan
-cancels the check in flight); a toggle in ⚙ Settings (`availability_checks_enabled`). Hard stop:
-a challenge page, or `CHECK_MISS_STREAK_LIMIT` (5) pages opened in a row that were not live
-(missing or unknown, since 2026-11-17), pauses checks for 6 hours (fast mode too).
-A closed ad is never concluded from one empty page: it takes two separate visits (≥1 day apart)
-and a live page seen in the same session each time, so a blocked or logged-out browser cannot flag
-anything. Applied jobs are never re-checked or flagged. The same freshness (`FRESH_FOR`, 24h)
-gates all LLM work: no matching, ranking or letter for a job not seen live recently.
+advertised. It opens only that listing's own page, rebuilt from its id on Seek's own host
+(`checkUrlFor`), reads only whether the description is there and the page title, and never
+reads or follows a link on it. Caps, all in code and pinned by tests/test_scan_policy.py:
+- Side panel only (never the backend, never background.js); one background tab at a time
+  (`active: false`); one Seek page at a time across scans and checks together (`seekPace`).
+- Background mode: ≥ `CHECK_DELAY_MS` (15s, never below `SCAN_DELAY_MS`) apart;
+  ≤ `CHECK_SESSION_CAP` (8) pages per session; one session per 30 min while the panel is open.
+- Fast mode (docs/availability-fast-mode-plan.md): automatic, the backend decides it
+  (`/availability/next` `mode`) and holds its caps; only the top jobs (letter / scored 60+)
+  not checked or seen live in 24 h; ≥ `CHECK_FAST_DELAY_MS` (5s, = `SCAN_DELAY_MS`) apart;
+  stops at 10 seen live or `FAST_RUN_PAGE_CAP` (15) pages; at most one run per
+  `FAST_RUN_EVERY` (1 h).
+- Always: ≤ `CHECK_SESSION_HARD_LIMIT` (25) pages a session in the panel whatever the backend
+  says; ≤ `DAILY_CAP` (100, app/availability.py) per rolling 24 hours, all checks together;
+  never while a scan runs (a scan cancels the check in flight); a toggle in ⚙ Settings
+  (`availability_checks_enabled`).
+- Hard stop: a challenge page, or `CHECK_MISS_STREAK_LIMIT` (5) pages in a row that were not
+  live (missing or unknown), pauses checks for 6 hours (fast mode too).
+- A closed ad is never concluded from one empty page: it takes two separate visits (≥1 day
+  apart) and a live page seen in the same session each time, so a blocked or logged-out
+  browser cannot flag anything. Applied jobs are never re-checked or flagged.
+- The same freshness (`FRESH_FOR`, 24h) gates all LLM work: no matching, ranking or letter
+  for a job not seen live recently.
 
-Extension permissions (2026-10-14): the manifest has `<all_urls>` ONLY so `captureVisibleTab` can
-screenshot Seek's Quick Apply "application sent" page automatically. It changes no Seek traffic:
-content scripts still match Seek only and the extension makes no request it didn't make before.
+**Extension permissions:** the manifest has `<all_urls>` ONLY so `captureVisibleTab` can
+screenshot Seek's Quick Apply "application sent" page automatically. It changes no Seek
+traffic: content scripts still match Seek only and the extension makes no other request.
 Don't use the grant for anything else; tests/test_extension_permissions.py pins this.
 
-Why this is defensible at this volume: it runs in the user's real browser/session
-for their own personal job search, opens a handful of listings the user could have
-clicked themselves, spaced like normal browsing. It is low-volume, non-commercial, and
-the data is used only for the user's own applications. Seek's ToS does prohibit
-automated access in general (clause 9b), so this is a deliberate, owner-accepted
-personal-use trade-off — kept small on purpose. The line that keeps it bounded is the
-no-second-hop rule above; do not cross it.
-
-Normal downloads are unaffected: PyPI (pip install), package registries, docs,
-etc. were never the concern and go direct as usual.
-
-Tech stack
+**Why this is defensible at this volume:** it runs in the user's real browser/session for
+their own personal job search, opens a handful of listings the user could have clicked
+themselves, spaced like normal browsing. It is low-volume, non-commercial, and the data is
+used only for the user's own applications. Seek's ToS does prohibit automated access in
+general (clause 9b), so this is a deliberate, owner-accepted personal-use trade-off — kept
+small on purpose. The line that keeps it bounded is the no-second-hop rule; do not cross it.
 
 
-Language: Python 3.11+
-ORM: SQLAlchemy 2.0 (typed, declarative mapped style)
-Migrations: Alembic
-API: FastAPI + uvicorn (local backend for the extension)
-LLM: Gemini on Vertex AI (small/mid/strong tiers) — see the LLM Layer section below
-Deps/CI: exact versions in requirements-lock.txt (frozen from .venv; regenerate with
-pip freeze from Git Bash); GitHub Actions (.github/workflows/tests.yml) runs pytest and
-node --check on windows-latest, with no secrets.
-Config: python-dotenv — app/db.py loads .env so DATABASE_URL (and
-later secrets) can live in a gitignored .env file.
-DB: SQLite for local dev, Postgres-ready for hosting. The database URL
-comes from a DATABASE_URL env var, defaulting to sqlite:///app.db, so the
-SQLite → Postgres move is a config change, not a code change.
-Do not write SQLite-only SQL or rely on SQLite-specific behaviour. Keep
-everything portable so a Postgres DATABASE_URL works with no code changes.
+## Tech stack
+
+- Language: Python 3.11+
+- ORM: SQLAlchemy 2.0 (typed, declarative mapped style). Migrations: Alembic.
+- API: FastAPI + uvicorn (local backend for the extension)
+- LLM: Gemini on Vertex AI (small/mid/strong tiers) — see the LLM layer section below
+- Deps/CI: exact versions in requirements-lock.txt (frozen from .venv; regenerate with
+  pip freeze from Git Bash); GitHub Actions (.github/workflows/tests.yml) runs pytest and
+  node --check on windows-latest, with no secrets.
+- Config: python-dotenv — app/db.py loads .env so DATABASE_URL (and secrets) can live in a
+  gitignored .env file.
+- DB: SQLite for local dev, Postgres-ready for hosting. The database URL comes from a
+  DATABASE_URL env var, defaulting to sqlite:///app.db, so the SQLite → Postgres move is a
+  config change, not a code change. Do not write SQLite-only SQL or rely on SQLite-specific
+  behaviour. Keep everything portable so a Postgres DATABASE_URL works with no code changes.
 
 
-
-🤖 LLM LAYER
+## LLM layer
 
 Active provider: **Gemini on Vertex AI**, authenticating with Application Default
-Credentials (no API key — the $300 trial project's org disallows keys). Trial
-window 2026-10-01 → 2026-12-30; Flash intro prices double 2027-01-01, so re-check
-prices (and the plan's cost tables) before running past the trial. OpenAI
-(gpt-5-nano / gpt-5-mini, mini shuts down 2026-12-11) and Groq remain as dormant
-fallbacks in client.py. Switched 2026-10-01 (Phase 1 of
-docs/cover-letter-loop-plan.md); see that file for the model-choice reasoning.
+Credentials (no API key — the trial project's org disallows keys). Trial ends 2026-12-30;
+Flash intro prices double 2027-01-01, so re-check prices (and the plan's cost tables)
+before running past the trial. OpenAI (gpt-5-nano / gpt-5-mini) and Groq remain as dormant
+fallbacks in client.py. Model-choice reasoning: docs/cover-letter-loop-plan.md.
 
 Callers name a **tier**, never a model:
   small  (GEMINI_MODEL_SMALL,  default gemini-3.1-flash-lite) — quick-screen,
          extract, match, search_refine. `complete_json` defaults to this.
   mid    (GEMINI_MODEL_MID,    default gemini-3.8-flash) — letter analysis and
-         checking: analyze_job, match_profile, check_claims (moved up from small
-         2026-10-03: small passed real overclaims); the orchestrator later.
+         checking: analyze_job, match_profile, check_claims (small passed real
+         overclaims), the agent's orchestrator turns.
   strong (GEMINI_MODEL_STRONG, default gemini-3.1-pro-preview) — cover letters.
          `complete_text` defaults to this. A *preview* model: may change; falling
          back is one env var.
@@ -196,136 +202,134 @@ Cost control (all in client.py + app/llm/usage.py):
     (`GET /llm/usage`, SSE `llm_budget_blocked`). The guard fails open if the
     usage table is unreadable. Don't add FKs from llm_usage (spend log must
     outlive the rows it describes) or purge it without keeping a running total.
+  * Per-run limits (`letter_max_drafts` 3, `letter_max_tool_calls` 15,
+    `llm_run_budget_usd` $0.50) are code defaults with no sidebar input; the API still
+    takes them, and a run copies them into its own `state.budget`.
   * Thinking tokens bill as output and dominate small calls: GEMINI_THINKING_*
     sets the level per tier (default low/medium/high).
   * Gemini 3 is called WITHOUT `temperature` (Google: leave it at 1.0, lowering
     risks looping); the `temperature` argument is ignored there, like GPT-5.
 
-Rate-limit handling: on HTTP 429, client.py backs off and retries (max 3);
+Rate limits and workers: on HTTP 429, client.py backs off and retries (max 3);
 delays > 300s are treated as daily exhaustion → DailyQuotaError. The idle loop
-(_processing_idle_loop in app/api/idle_loop.py) runs two loops (docs/second-worker-plan.md):
+(`_processing_idle_loop` in app/api/idle_loop.py) runs two loops (docs/second-worker-plan.md):
 letters one at a time on `worker._bg_executor` (also /regenerate, band letters, Write a letter),
 and scoring (quick screen, extract, match) one job at a time on `worker._score_executor`, so new
 jobs are scored while a letter is written. Each has its own pauses: the budget pause stops only
 letters; the scorer backs off 3 minutes when extraction fails. A job both reach is guarded by
 app/job_claims.py (the scorer skips it, /regenerate waits up to 120 s then goes ahead with a
 WARNING). SQLite waits 30 s for the write lock (`busy_timeout`, app/db.py). Both loops share
-the local throttle: LLM_RPM=8.
+the local throttle: LLM_RPM=8. Exactly two pools, both `max_workers=1` (a test guards this).
+
+Letter engines: `letter_engine` defaults to `agent` (owner's decision, for the agent
+experience); `workflow` is the fallback and must keep working through the same gap-policy
+hook. Production entry points: app/llm/letter/production.py and engines.py. A run's best
+draft lands in `generated_content`, clean or flagged. Pipeline settings: `letter_loop_enabled`,
+`letter_loop_min_score`; the effective bar is the HIGHER of it and `auto_cover_letter_min_score`.
 
 Env vars (gitignored .env): LLM_PROVIDER=gemini, GOOGLE_GENAI_USE_VERTEXAI=true,
 GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_LOCATION=global, GEMINI_MODEL_SMALL/_MID/
 _STRONG, GEMINI_THINKING_SMALL/_MID/_STRONG (optional), LLM_RPM. The old
 GEMINI_MODEL is still read as the small model. Verify with
 `python scripts/check_llm.py` (every tier + a tool call + usage logging).
+Test-only: `LLM_PROVIDER=stub` (LLM_STUB_RESPONSES / LLM_STUB_LOG) answers without a model.
 
 Data privacy: profile data goes to Google. Verify the paid-tier / Vertex data-use
 terms if it matters (not used for training at the time of writing).
 
 
-Repo layout (actual)
+## Repo map
 
-job-app-assistant/
-  CLAUDE.md
-  README.md
-  PROGRESS.md
-  docs/
-    database-schema.md
-    job-application-assistant-plan.md
-  app/
-    __init__.py
-    db.py              # engine + session factory; reads DATABASE_URL
-    models.py          # SQLAlchemy models
-    api/
-      main.py          # wires the FastAPI app together: lifespan, Origin guard, ordered routers, static mounts
-      deps.py          # get_db, the one session dependency
-      paths.py         # static + screenshots folders
-      events.py        # SSE broadcaster + GET /events
-      worker.py        # the TWO worker threads (_bg_executor letters, _score_executor scoring) + _process_listing
-      idle_loop.py     # the idle loop: the letter loop and the scoring loop, one-pass functions and helpers
-      (app/job_claims.py: which jobs a worker is scoring right now; the scorer skips, /regenerate waits)
-      health.py ingest.py evidence.py search.py job_actions.py jobs.py profile.py   # routers
-      (app/evidence_pdf.py: the Centrelink upload PDFs; app/screenshots.py: evidence file layout)
-      (app/letter_bands.py: the Overview's bands + one-job letters; app/skill_gaps.py: the Pipeline's skills ads ask for)
-      letters.py obligation.py profile_ui.py screening.py origin_guard.py          # (older routers)
-      Patch the module that OWNS a name (worker._bg_executor, idle_loop._letters_phase, ...), never main;
-      main re-exports only app and get_db. GET /jobs/{job_id} (jobs.py) must be matched after every other
-      GET /jobs/<literal> router; tests/test_route_table.py guards the route table and OpenAPI schema.
-    llm/
-      client.py        # provider abstraction: tiers, tool calling, usage log, budget guard — ONE place
-      usage.py         # spend totals + budget cap status (reads llm_usage)
-      extract.py       # job → structured fields (DONE 2026-06-23)
-      prefilter.py     # cheap pre-LLM match signals (DONE 2026-06-23)
-      match.py         # job vs profile → score/reasoning/gaps (DONE 2026-06-23)
-      cover_letter.py  # match → cover-letter draft (DONE 2026-06-27)
-    scraper/           # RETAINED but not in the active pipeline (selector logic reused)
-  extension/           # Manifest V3 Chrome extension
-    content_script.js background.js popup.js config.js selectors.js screening_assist.js
-    apply_flow.js      # Quick Apply "application sent" page: auto-register + screenshot
-    sidebar.html       # side panel; its <script> tags load the panel's CLASSIC scripts in order:
-    sidebar_shared.js sidebar_jobs.js sidebar_skills.js sidebar_letter_notes.js sidebar_letter_card.js
-    sidebar_evidence.js sidebar_scan.js sidebar_personalise.js
-    sidebar_profile.js sidebar_seek_import.js sidebar_events.js
-    applied_record.js  # Applied tab: one application's read-only record (ad, match, letter)
-    sidebar.js         # env pill, zoom, startup
-    dashboard.js       # Overview + Applied tabs; loaded last
-      They share one global scope, so load order is the contract: no top-level name in two
-      files, nothing used at load time from a later file. Check with
-      `python scripts/js_globals.py --check` (also in pytest) and tests/e2e/sidebar_load_e2e.py.
-  alembic/
-  alembic.ini
-  scripts/
-    run_api.py
-    seed_saved_search.py
-    seed_profile.py    # richer profile-1 test data for matching
-    seed_test_jobs.py  # 5 known test jobs (source="test") for scoring validation
-    run_extraction.py  # batch LLM extraction
-    run_matching.py    # batch LLM matching/scoring
-    run_cover_letters.py  # batch cover-letter generation (dev/testing only)
-    letter_lab.py      # cover-letter eval harness (evals/rubric.md); analyze = Phase 3 hand-check pack; loop-report = revisions
-    grading_panel.py   # blind Opus grading panel: pack / disagreements / merge; v2-* per-letter judges (evals/grading-panel.md)
-    screening_eval.py  # Quick Apply question-help eval: build-set / sort / labels / drafts / report (Phase 9c)
-    eval_pool.py       # eval set: sorts real.db's ads into the scenarios (docs/eval-set-plan.md), read-only
-    eval_draw.py       # eval set: seeded draw of the candidates -> evals/candidates/candidates.csv
-    check_matching.py  # scoring diagnostic report vs expected bands
-    check_llm.py       # validate the LLM key before a batch
-    smoke_test.py
-    explore_seek.py    # dev-only selector cache tool
-    js_globals.py      # side-panel scripts: shared-name map; --check guards the load-order contract
-  requirements.txt
-  .env.example
-  .gitignore
+- `app/` — backend. db.py (engine; reads DATABASE_URL), models.py, preferences, retention,
+  availability, obligation, letter_bands, skill_gaps, gaps, job_claims, evidence_pdf,
+  screenshots, search_suggest.
+  - `app/api/` — main.py wires the app (lifespan, Origin guard, ordered routers, static
+    mounts); deps.py (`get_db`); events.py (SSE); worker.py (the two worker threads +
+    `_process_listing`); idle_loop.py; one router module per area.
+  - `app/llm/` — client.py, usage.py, quickscreen, extract, prefilter, match, cover_letter
+    (one-shot), search_refine; `letter/` (the cover-letter agent and workflow: state,
+    guardrails, registry, agent, workflow, production, tools/); `skills/` (style skill).
+  - `app/screening/` — Quick Apply question bank, sorting, assist, drafts.
+  - `app/scraper/` — RETAINED, not in the active pipeline (selector logic reused).
+- `extension/` — Manifest V3 Chrome extension: content_script.js, background.js,
+  apply_flow.js (Quick Apply "application sent"), screening_assist.js, config.js,
+  selectors.js (mirrors app/scraper/selectors.py), and the side panel (sidebar.html).
+- `scripts/` — run_api.py, check_llm.py, letter_lab.py (letter eval harness),
+  grading_panel.py (judges), eval_*.py (eval set), letter_metrics.py / letter_points.py,
+  check_private_data.py + install_hooks.py, seed/backfill/report tools. `ls scripts`.
+- `tests/` — pytest suite; `tests/e2e/` Playwright suites against a scratch DB.
+- `evals/` — rubrics, grading standards, eval sets (real data is gitignored).
+- `docs/` — plans (one per task, each with a Decision log), schema, architecture.
+- `future_work/` — deferred tasks, one file each, indexed in its README.
 
-Key schema decisions to respect (do not "improve" these away)
+Code gotchas:
+- Patch the module that OWNS a name (`worker._bg_executor`, `idle_loop._letters_phase`, ...),
+  never main; main re-exports only `app` and `get_db`.
+- `GET /jobs/{job_id}` (jobs.py) must be matched after every other `GET /jobs/<literal>`
+  route; tests/test_route_table.py guards the route table and OpenAPI schema.
+- The side panel loads CLASSIC scripts in sidebar.html's order (config, selectors,
+  screening_assist, sidebar_shared … sidebar_events, applied_record, sidebar, dashboard
+  last). They share one global scope, so load order is the contract: no top-level name in
+  two files, nothing used at load time from a later file. Check with
+  `python scripts/js_globals.py --check` (also in pytest) and tests/e2e/sidebar_load_e2e.py.
+
+Docs to read for each area:
+| Area | Doc |
+|---|---|
+| Data model (wins over everything) | docs/database-schema.md |
+| How the whole system fits together | docs/ARCHITECTURE.md |
+| Cover-letter agent: design + Decision log | docs/cover-letter-loop-plan.md |
+| Cover-letter agent in plain language | docs/cover-letter-agent-explained.md |
+| Current stage: agent optimisation | docs/agent-optimisation-plan.md |
+| Eval set v2 / letter metrics | docs/eval-set-plan.md, docs/letter-metrics-plan.md |
+| Judge procedure and grading standard | evals/grading-panel.md, evals/grading-standard-v2.md |
+| AI screeners' biases (lines we never cross) | docs/ai-recruitment-research.md |
+| Quick Apply markup samples | docs/quick-apply-samples.md |
+| Any finished feature | its docs/<name>-plan.md, and PROGRESS.md |
+
+
+## Key schema decisions to respect (do not "improve" these away)
 
 These were deliberate; the schema doc explains the reasoning:
 
+- experience_skills is a pure junction (composite PK of the two FKs). It has
+  no strength/relevance column — relevance depends on the job and is judged
+  by the LLM at generation time, not stored.
+- matches.score (0–100) is the single source of truth. There is no tier
+  column — strong/medium/reach buckets are derived at display time.
+- job_skills is NOT foreign-keyed to skills. Job skills are extracted from
+  listings independently and matched to user skills by name at match time.
+- CV lives at user level (user_cvs), never per-job. Cover letters are one
+  row per match (cover_letters.match_id unique), holding both generated_content
+  and edited_content with a status of draft/edited/final.
+- Generation writes `generated_content` only; `edited_content` is the user's. The ONE
+  exception: Rewrite (`/regenerate` with `discard_edits=true`) clears the edits once the
+  new letter has landed. `cover_letters.generated_at` is never stamped by saving edits.
+- Passwords are stored hashed (profiles.password_hash). Do not implement auth
+  logic — just the column.
+- Uniqueness constraints that must exist: profiles.email,
+  skills (user_id, name), job_listings (source, source_job_id),
+  matches (user_id, job_id), cover_letters.match_id.
+- FK delete behaviour: ON DELETE CASCADE for user-owned and job-owned children;
+  matches.cv_used_id is ON DELETE SET NULL. See schema doc per-table.
+- Portability mechanics (don't "fix" these back): integer PKs use
+  BigInteger().with_variant(Integer, "sqlite"); boolean server defaults use
+  text("false") / text("true") (NOT 0/1, which break on a Postgres
+  BOOLEAN, nor false()/true(), which don't exist in SQLite). ORM
+  relationships set passive_deletes=True so deletes rely on DB-level cascade.
+- "Applied" = `matches.applied_at` set (counted on its LOCAL date); `applied_via` is
+  `auto` (Quick Apply sent page) or `manual` (Mark Applied). Applied matches are
+  Centrelink evidence: never deleted, never hidden by bulk hide, never re-checked.
+- Retention deletes by AGE, never by score (age is uncorrelated with score, so the
+  suggestion miner's baseline survives). One `effective_cutoff` (122-day window +
+  150-match floor) is shared by the sweep and the miner. Only `status='new'` with
+  `applied_at IS NULL` is purgeable — a whitelist.
+- Bulk hide is a SOFT delete (`matches.hidden_at`). Don't turn it into a real DELETE:
+  hard-deleting the low scorers once moved the baseline 69.4 → 82.5 and flattened the
+  search-suggestion ranking. Hidden matches still feed the baseline and yield stats.
 
-experience_skills is a pure junction (composite PK of the two FKs). It has
-no strength/relevance column — relevance depends on the job and is judged
-by the LLM at generation time, not stored.
-matches.score (0–100) is the single source of truth. There is no tier
-column — strong/medium/reach buckets are derived at display time.
-job_skills is NOT foreign-keyed to skills. Job skills are extracted from
-listings independently and matched to user skills by name at match time.
-CV lives at user level (user_cvs), never per-job. Cover letters are one
-row per match (cover_letters.match_id unique), holding both generated_content
-and edited_content with a status of draft/edited/final.
-Passwords are stored hashed (profiles.password_hash). Do not implement auth
-logic in this task — just the column.
-Uniqueness constraints that must exist: profiles.email,
-skills (user_id, name), job_listings (source, source_job_id),
-matches (user_id, job_id), cover_letters.match_id.
-FK delete behaviour: ON DELETE CASCADE for user-owned and job-owned children;
-matches.cv_used_id is ON DELETE SET NULL. See schema doc per-table.
-Portability mechanics (don't "fix" these back): integer PKs use
-BigInteger().with_variant(Integer, "sqlite"); boolean server defaults use
-text("false") / text("true") (NOT 0/1, which break on a Postgres
-BOOLEAN, nor false()/true(), which don't exist in SQLite). ORM
-relationships set passive_deletes=True so deletes rely on DB-level cascade.
 
-
-
-TWO ENVIRONMENTS — real vs test (2026-09-21)
+## TWO ENVIRONMENTS — real vs test
 
 `python scripts/run_api.py real|test` (the argument is required). Each environment
 is a separate SQLite file, screenshots folder and port, and holds exactly ONE
@@ -342,713 +346,63 @@ DELETE /profile-ui/data is a 403 (applied matches are Centrelink evidence), and
 scripts/load_test_profile.py refuses to run unless /health says env=test.
 Extension: extension/config.js defines BACKEND from chrome.storage.local
 (`backendEnv`, default real); every context awaits `backendReady` first. The
-sidebar's REAL/TEST pill flips it and reloads. Not verified in a loaded Chrome.
+sidebar's REAL/TEST pill flips it and reloads.
 
-🔄 CURRENT TASK: Cover-letter agent + Gemini migration
-
-Living plan: docs/cover-letter-loop-plan.md (DRAFT v0.4, a tool-calling agent
-with a shared state object and code-enforced guardrails; workflow baseline
-first, then agent, compared on an eval set. Expect it to change; update its
-Decision log when it does).
-
-Phases 0–2 are DONE (2026-10-01). Phase 0/1: trial confirmed to 2026-12-30,
-model IDs verified on Vertex, client.py has tiers, `complete_tools`,
-`llm_usage` logging and the budget guard (see the LLM Layer section). Phase 2:
-`app/llm/letter/state.py` (LetterState + pointer resolver), `rubric.py`, and the
-eval harness `scripts/letter_lab.py` (snapshot → prepare → run → report; see
-evals/rubric.md). Evals use the REAL profile in a scratch `evals/eval.db` copied
-read-only from real.db; ads/letters/eval.db are gitignored. The one-shot baseline
-run is `baseline-oneshot`; it needs the user's grades in
-evals/runs/baseline-oneshot/grades.csv, then `letter_lab.py report`.
-Phase 3 is DONE (built 2026-10-02; hand-check adjudicated by the user and fixed
-2026-10-03, ANALYSIS_VERSION 2, stays on mid; see the plan's Decision log): `analyze_job`
-(requirements checklist; each item has `importance` essential/important/
-nice_to_have AND `letter_role` headline/mention/implied/not_for_letter, plus
-theme, tone, keywords, screening questions, company_facts; cached on
-`job_listings.requirements_checklist`), `match_profile` (per-requirement evidence
-pointers, validated in code), `app/llm/letter/runner.py` (logs every tool call to
-`letter_run_steps`, persists `letter_runs.state`, costs from `llm_usage.run_id`),
-migration `c7a3e1f5d284`. Not-for-letter items (work rights etc.) surface as
-`eligibility_notes` on GET /jobs; sidebar display waits for Phase 8. Hand-check:
-`python scripts/letter_lab.py analyze` -> evals/runs/<run>/review.md + checks.csv,
-then `analysis-report`. Company-name bug FIXED 2026-10-02 (detail-page JSON-LD capture,
-/ingest backfill of card fields, employer name recovered from ad text at
-extraction; `scripts/backfill_company.py` repairs old rows). Unverified in a live
-Chrome; also no Seek row has a location/discovered_query, which suggests the
-search-card capture path may not be firing (check the console on a search page).
-Phase 4 is BUILT (2026-10-03): `profiles.writing_sample` (migration `e8b4f2a61c93`;
-"Your writing" box in both profile editors; PUT only writes it when the request
-includes the key, so the sidebar can't wipe it), the style skill folder
-`app/llm/skills/cover_letter_style/` (SKILL.md, banned_phrases.txt, us_to_au.txt),
-`app/llm/letter/style.py` (style guide + voice as prompt text; voice falls back to
-summary/experience text), and `app/llm/letter/tools/style_lint.py` (code-only
-check; rubric.py now imports its helpers; one em dash allowed, same as the eval).
-`cover_letter.py` got an eval-only `styled=True` path (`letter_lab.py run --engine
-oneshot-styled`); production letters are unchanged. Early result in
-evals/results/styled-oneshot.md; grading it is deferred to future_work/voice-toggle-and-comparison.md (voice on/off, compared on the finished agent).
-The real profile's writing_sample is set (921 words, 3 samples).
-Phase 5 is DONE (2026-10-03; details in the plan's Decision log): `app/llm/letter/
-guardrails.py` (THE one definition of must_cover / may_use / do_not_claim, plus the
-gates: no drafting with an undecided must-have gap, generate = draft 1 only, revise
-needs all 3 checks run and one failed, draft cap, can_finish), tools `generate.py`,
-`revise.py`, `check_claims.py` (stage 1 code pointer check + stage 2 judge on MID;
-undeclared-but-backed claims only warn), `check_requirements.py` (small; partial-aware,
-quotes verified in code). Eval: `letter_lab.py run --engine tools` (run `tools-v1`:
-$0.165/letter, 6/9 pass all checks within 2 drafts) and `letter_lab.py plant`
-(planted-claim test: small 35/36, mid 36/36; mid chosen because small missed real
-overclaims; evals/results/plant-tools-v1.md). Both commands save per job and
-`--resume`. Production letters are still the one-shot `cover_letter.py`.
-Phase 6 is DONE (2026-10-03; details in the plan's Decision log): `app/llm/letter/
-workflow.py` `run_workflow(db, job_id, profile_id, gap_policy=leave_out_gaps)`:
-analyze -> match -> gap policy -> generate -> 3 checks -> revise the LATEST draft <=2
-times -> finish. Never crashes on a limit: returns `guardrails.best_draft` (claims
-passed > fewest missing must-covers > style passed > later) with `open_issues`, and
-`clean` only if all 3 checks passed on it; `letter_runs.final_draft_version` is the
-draft handed back. `account_limit` is set when the USD guard / daily quota stopped it
-(stop the batch). The gap policy is the Phase 7 hook for `ask_user` (open questions ->
-`waiting_user`). Eval set: 15 ads (8 at 85+, 4 at 75,
-3 below; eval.db scores, which moved up to 50 points from real.db's), and NONE of them
-triggers a pending must-have gap, so ask_user never fires on it.
-Follow-up done the same day (commit 907fe81): a must-have backed only by listed
-skills (`guardrails.listing_only`) is may_use, never must_cover; the writer and the
-claims judge treat a listing as "skills in", never experience; style_lint warns on
-gap-led sentences. check_claims stage 1 also blocks invented links/emails in code.
-THE BASELINE FOR PHASE 7 IS `workflow-v2`: $0.184/letter, 15/15 clean, 0 dropped
-must-covers, 0 gap-led sentences. Judgement items are graded by a blind Opus panel
-(evals/grading-panel.md + scripts/grading_panel.py; standard evals/grading-standard.md;
-grades in evals/runs/<run>/grades-<tag>.csv, user's own grades never overwritten).
-Panel opus-v2, v2 vs v1: claims 13 vs 6, musts 14 vs 15, detail 12 vs 13, would_send
-0 vs 1; the panel re-grades consistently (57/60) but is stricter than the user (8/15
-on held-out letters). Every v2 would_send fail: body paragraphs recite the profile
-without applying it to this employer's work, plus generic closes; that is the next
-writer lever. Eval spend 2026-10-03 is in the plan's Decision log.
-Phase 7 is split into 7a / 7b / 7c, each committed, with the user's go-ahead between.
-Phase 7a is DONE (2026-10-03): `app/llm/letter/registry.py` (tool -> function +
-model-facing ToolSpec + a guardrail gate; descriptions say when NOT to use each tool),
-`agent.py` (`run_agent`: stateless mid-tier turns on `complete_tools`; refusals cost
-no tool call and go back as the next turn's result, capped at 4; finish is code;
-orchestrator spend counts towards the run budget), and `outcome.py` (`open_run` /
-`conclude` / `LetterResult` / `GapPolicy` / `leave_out_gaps`), now shared by the
-workflow so the engines end a run in one place. `letter_lab.py run --engine agent`,
-`loop-report` (agent path/refusals/overhead) and the new `cost-report` (per-task cost,
-tokens and time). Result `agent-v1`: $0.178/letter, 182 s, 15/15 clean, the SAME tool
-path as the workflow on 15/15 jobs, 0 refusals; panel opus-v3 (re-graded workflow-v2
-at 57/60): musts 15 vs 15, claims 12 vs 13, detail 12 vs 12, would_send 0 vs 0.
-Claude recommended the workflow (agency added +$0.013 and +40 s/letter and nothing
-else); USER DECISION: `letter_engine` defaults to `agent` (agent experience for their
-next job; ~$0.26/month at 20 letters). The workflow stays as the fallback; build 7b/7c
-agent-first, with the workflow still working through the same gap-policy hook. Thinking tokens are
-71% of a letter's cost; the Pro draft call is 61% (evals/results/cost-*.md).
-Phase 7b is DONE (2026-10-03, API only): migration `f6a9c3d8e217` (`gap_decisions`,
-`gap_sightings`, an `origin` column on experiences/skills/qualifications), `app/gaps.py`
-(remembered "no"s + the to-work-on list, code only), `app/llm/letter/gap_policy.py`
-(`apply_remembered` runs at the end of `match_profile`; `ask_user_gaps` is the production
-policy, `leave_out_gaps` stays for evals), `answers.py` (No / Yes -> proposed rows on
-small -> one-click confirm, Q11; rows tagged `origin='ask_user'`, Q12), run status
-`answered`, `resume_workflow` / `resume_agent` / `engines.py` (`run_letter`,
-`resume_letter`, `answered_runs`), `analyze_job` `skill` field (ANALYSIS_VERSION 3, so
-cached checklists are rebuilt), API `app/api/letters.py` (/letter-runs/waiting, answers,
-confirm, /gaps/to-work-on, /gaps/{id}/clear), `scripts/gap_report.py` ->
-reports/to-work-on.md (gitignored). PUT /profile-ui/data carries `origin` over by natural
-key (the editors don't send it) and auto-clears matching "no"s. NOT built/verified: the
-sidebar question card and the idle loop resuming `answered` runs (both Phase 8, below).
-Writer v3 is DONE (2026-10-04): `_WRITER_RULES` in generate.py now asks the writer to
-apply each piece of evidence to the employer's work from the ad (select, don't recite; the
-connecting sentence adds no new facts), bans stock bridges and stock closes, and asks for a
-specific close; `style_lint` warns (doesn't block) on `stock_close` / `stock_bridge`.
-`workflow-v3`: $0.213/letter like for like (+16%), 15/15 clean, stock closes 13/15 -> 0/15,
-verbatim profile copying 36% -> 18%. Panel opus-v4 (57/60 consistent): musts 15 vs 15, claims
-12 vs 11, detail 13 vs 13, would_send 0 vs 0. The writer swapped the old habits for new
-formulas ("prepares me to", "exactly the kind of"). Kept. USER DECISION 2026-10-04: don't
-iterate on letter wording now; polish later. The agent was NOT re-run on v3.
-Phase 8 is DONE (2026-10-04; details in the plan's Decision
-log): `app/llm/letter/production.py` (`next_work`: answered runs resume first, then the
-best-scored match without a letter; `run_work`; `generate_for` = /regenerate; `land_letter`;
-`recover_orphaned_runs`) and `view.py` (`latest_runs`, `letter_info`). The idle loop's
-`_letters_phase` runs it on the single worker (budget guard / account limit pauses letters 10
-min as before; a `waiting_user` run is never work). Per §6: master switch `letter_loop_enabled`
-(off = one-shot for all), bar `letter_loop_min_score` 85 (scores from `auto_cover_letter_min_score`
-up to it get the one-shot; the effective bar is the HIGHER of the two), `letter_engine` agent|
-workflow. Retries: skipped while a run is live, after 2 failures, 30 min cooldown. New `letter_runs`
-status `cancelled` (no DDL). A run's best draft lands in `generated_content` (clean or flagged);
-`edited_content` is never written. SSE: `letter_run_started/_waiting/_done/_failed`. API: `/jobs`
-has `letter_run`; `GET /jobs/{id}/letter-info`. Sidebar: "Needs Your Answer" group + question card
-(Yes + text -> editable proposed rows -> confirm; No), open issues / "left out" / eligibility /
-application-instruction notes, Personalise controls, To work on + origin tags in both profile
-editors. 846 tests. Verified by driving the real sidebar page against a scratch DB with no LLM
-(35 checks), then LIVE ($0.14): the loaded extension against a scratch test DB running the real idle
-loop; ask_user fired on a real ad, Yes/confirm and No worked, the loop resumed the answered run and
-the letter landed, all over live SSE (plan Decision log 2026-10-04). CAUTION: `scripts/run_api.py` runs uvicorn with reload=True, so a running
-real server picks up code edits; with real.db's `auto_cover_letter_min_score` at 94 it starts the
-pipeline (~20-25¢ each) for matches at the bar, so keep the code importable at all times.
-Phase 7c is DONE (2026-10-04; details in the plan's Decision log): side-output tools
-`answer_screening` (mid; screening questions in the ad text only, Q10; code checks pointers/quotes/
-links, no judge), `suggest_learning` (small; only gaps the USER confirmed, ordered by the to-work-on
-rank) and `suggest_resume_tweaks` (mid; reads the FINAL draft, `guardrails.letter_final`; default
-`user_cvs` row else the profile; code drops unbacked items). Rules in `app/llm/letter/side_outputs.py`:
-each behind a toggle (`screening_answers_enabled` / `learning_suggestions_enabled` /
-`resume_advice_enabled`, default True; off = not offered, all off = the Phase 8 run), once per run,
-failures shown never fatal, NOT charged to `max_tool_calls` (`budget.side_calls`; the USD cap still
-applies), the agent's finish refused while one is due, the workflow runs them in a fixed order after
-the letter. Stored in `letter_runs.state.side_outputs` (no DDL); sidebar shows collapsed sections
-(Copy on screening answers) + 3 Personalise checkboxes. Quick-Apply overlay skipped. `view.not_claimed`
-no longer lists skill-less gaps nobody asked about. 1008 tests at 7c (1126 after the limits wiring); sidebar checked with no LLM (27 checks).
-Eval `agent-v2-side` ($3.41): $0.227/letter, 229 s, 15/15 clean, same path as the workflow 15/15,
-0 refusals; résumé notes ran 15/15 as the last tool on the final draft ($0.012/letter). The eval set
-has no screening questions, confirmed gaps or CVs, so the other two never fired: untested on a model.
-Per-run limits WIRED (2026-10-04): `letter_max_drafts` (1-5, 3), `letter_max_tool_calls` (6-40, 15),
-`llm_run_budget_usd` (0.05-5, $0.50) -> `letter_settings()["limits"]` -> `open_run` copies them into
-`state.budget` (a resumed run keeps its own); workflow revisions = max_drafts - 1; code defaults with
-NO sidebar input since 2026-10-16 (docs/settings-simplify-plan.md D3; the API still takes them). Live gap run ($0.20, scratch copy of real.db, Tabcorp ad + 3 appended screening
-questions): screening found and answered honestly (all three "answer this yourself"), résumé notes
-fine, but match_profile rated React Native/Flutter *partial* (React.js), so ask_user and
-suggest_learning were still not exercised on a model. The real profile's summary is "s" and its
-visa/work status is empty. Deferred tasks live in future_work/ (one file per task, indexed in its
-README): voice toggle, check_claims leaks, Gemini prompt caching, company research, letter
-framing/addressing, learn-from-edits.
-Phase 9 (rescoped 2026-10-04, plan §10.1; evidence in docs/quick-apply-samples.md, 5 real
-questionnaires) is ONE item: help with the live Quick Apply questions. Each question is `user`
-(work rights, salary, notice, identity, how you heard, motivation: no AI help, never sent to
-the LLM) or `assisted` (relates to the ad): an answering strategy shows what the employer wants
-(checklist) beside what the profile backs (evidence); wanted-but-missing skills go through the
-gap memory. Every captured question goes into a QUESTION BANK (new tables) so repeats need no
-model call. 9a capture + bank / 9b assist / 9c drafts + evals.
-9a is DONE (2026-10-04, no LLM; plan Decision log): migration `b4d8e2f6a913` (`screening_questions`
-global bank + `job_screening_questions`), `app/screening/` (identity / sort layers 2-4 / bank),
-`app/api/screening.py`, capture + overlay in content_script.js (apply pages no longer run the
-detail-page branch, which could mark the job expired), review list in the profile editor,
-`scripts/export_question_bank.py`, `tests/e2e/quick_apply_e2e.py` (56/56, scrubbed fixtures,
-scratch DB via `run_api.py test --db`). Run `alembic upgrade head` (run_api does it) before use.
-NOT verified on a live Seek page; Chrome may ask once for local-network access on Seek.
-9b is DONE (2026-10-04, no DDL; plan §10.1 + Decision log): `app/screening/assist.py` (gating
-full/one_shot/no_letter/letter_pending via `view.letter_run`; strategies in code; labels need a
-pointer resolving in the CURRENT profile; `norm_skill` folds spellings only, NOT prefilter's broad
-HTML=CSS / MySQL=PostgreSQL aliases), `classify.py` (layer 5, small, only from the assist view for
-full jobs, never at capture, per-row lock), run-less gap path in `answers.py` (sighting source
-`quick_apply`), API `GET /jobs/{id}/screening-assist`, `POST /jobs/{id}/screening-gaps` (+`/confirm`),
-`extension/screening_assist.js` (overlay + sidebar card), test-only `LLM_PROVIDER=stub`
-(LLM_STUB_RESPONSES / LLM_STUB_LOG). 1394 tests; e2e 97/97. NOT verified live on Seek.
-9b/9c scope (user, 2026-10-04; plan §10.1): help ONLY for jobs with a full-pipeline letter
-(agent/workflow). ONE-SHOT LETTERS GET NO QUESTION ASSISTANCE (no on-demand analysis); no
-letter -> overlay offers "create a cover letter". Choice questions show what the job wants and
-what the profile has, user picks (honour system, never recommend an option). A "Yes" only offers
-to add the skill to the profile, never reopens the letter. Motivation stays `user`. 9c: a
-Personalise toggle, off = no help at all on open-ended questions. The questions-step markup is
-settled from the samples; anything else still needs a live check the user drives (parked
-fast-follow 1 below; don't guess selectors). The "Polish" button is
-already Regenerate (Phase 8). Vertex batch inference was checked (plan §10.2): possible on the
-trial and our models, but ~$0.001/job saved and scores a day late, so NOT built.
-9c is DONE (2026-10-05, branch `centerlink-preperation`; plan §10.1 + Decision log). Toggle
-`screening_question_help_enabled` (default on; USER: off covers ALL assisted questions, help
-`off` before any gating, no model call). Drafts: `app/screening/drafts.py` + `POST
-/jobs/{id}/screening-drafts {bank_id}`, ONE question per click (mid, task `quick_apply_draft`),
-only assisted free-text `years_skill_text` / `free_text_describe` on a full-pipeline job, refused
-in code first; the GET view never drafts. Writer = `answer_screening.draft_answers` (run-less
-core; the letter-run tool is unchanged). Per-part evidence/years for compound skills; code checks
-flag a duration above the dates, a missing part named, a listed skill as experience, and a note
-for the candidate inside the answer. Stored on `job_screening_questions.draft` (migration
-`a9e3c5d7f142`) with a fingerprint: profile / question sorting / letter run changed -> "redraft".
-Overlay + sidebar: Draft / Redraft / Copy only. Eval `scripts/screening_eval.py` (scratch copy of
-eval.db; `evals/screening/set.json` adjudicated) -> `evals/results/screening-v1.md` ($0.196).
-1465 tests; e2e 120/120. The test suite no longer makes a paid call (one leaking test fixed).
-LIVE CHECK PASSED 2026-10-05 (TEST backend, job 57 Pitch Black, 7 questions: capture, sorting,
-live layer 5, the 9b views, side panel, help-off switch, nothing touched on Seek's form); it found
-and fixed two 9b display defects (gap card "wanted" for a skill only the form asks about ->
-`wanted_by_ad`; duplicate evidence rows -> `assist.compact`) and the panel jumping to the top on
-Seek's re-renders (content script now recaptures only when the question ids change). Drafts are
-still unseen on a live page (that form had no free-text question). 1468 tests; e2e 123/123. Follow-ups:
-future_work/quick-apply-user-keywords.md, future_work/quick-apply-draft-followups.md.
-Centrelink dashboard DONE (2026-10-05, docs/centrelink-dashboard-plan.md + its Decision log). The
-side panel opens on an **Overview** tab (extension/dashboard.js): x / target applied this period, the
-period and days left, letters waiting on you, a "Keep applying" row of jobs with a letter ready (Open ad
-/ copy letter / Mark applied, two clicks) and the next 3 suggested searches. The **Applied** tab is one
-`<details>` per monthly period (newest first, current open): applied/target, estimated AI cost, rows with
-date, score and **+ Interview**, per-period and full CSV. Backend: prefs `obligation_target` (20) /
-`obligation_cycle_start` ("YYYY-MM-DD"; periods run monthly from it in both directions, day clamped;
-calendar months until set), `app/obligation.py` (pure date maths), `GET /obligation` (one payload for
-both tabs), `PATCH /jobs/{id}/interview` -> `matches.interview_at` (migration `d5f1b8c3e9a2`; status
-stays 'applied'), `GET /jobs?ready=true`. "Applied" = `applied_at` set, on its LOCAL date, hidden
-matches included; cost per job = ALL `llm_usage` for that job_id (null = before logging -> "not
-costed"). What + Interview triggers is not built yet. 1497 tests; e2e `tests/e2e/dashboard_e2e.py`
-77/77 (scratch DB, stub LLM). E2E RULE: stub the panel's `chrome.tabs.create`; a real tab it opens can
-load before Playwright's routing attaches and reach Seek (it did once, ~2 page loads). Not verified in
-the user's own Chrome.
-Next: whatever the user names. Known follow-ups (plan
-Decision log 2026-10-04): check_claims passes "I have included a link to a video"
-(invented attachment), "daily" frequency claims and "apply my skills in X" on a listing;
-style_lint's gap-led pattern misses "While my X rather than Y"; Gemini implicit caching
-never hits (cached_tokens 0); the writer still copies one stock line from the writing
-sample (future_work/voice-toggle-and-comparison.md).
-
-Parked fast-follows. Both need a live Seek session rather than guesswork:
-1. §5.2's apply-flow detection (see the extension-revamp entry below). The Apply button,
-   review step and "application sent" page are now settled from real samples and used by
-   Quick Apply evidence (2026-10-14, above); auto-FILLING Seek's form stays out of scope.
-2. Verify the classification capture added 2026-09-21. readJsonLdJobPosting()
-   is the primary source and should work, but SELECTORS.DETAIL_CLASSIFICATION /
-   DETAIL_SUBCLASSIFICATION (the fallback) are UNVERIFIED guesses. Open a real
-   job page, check job_listings.classification is populated, and fix the
-   selectors if the JSON-LD path ever stops covering it.
+**CAUTION:** run_api.py runs uvicorn with reload=True, so a running REAL server picks up
+every code edit and can start the letter pipeline (~20–25¢ a letter) for matches at the
+bar. Keep the code importable at all times. run_api.py runs `alembic upgrade head` on
+start; scripts that touch a DB need it run first.
 
 
-🔄 BUILT, AWAITING THE USER'S LIVE CHECK: Quick Apply evidence — 2026-10-14 (branch `centrelink-ease-apply`)
+## Testing rules
 
-docs/centrelink-ease-apply-plan.md (design, samples, Decision log, live-check steps). The detail
-page's Apply button text sets `job_listings.apply_type` ("Quick apply" = quick, "Apply" = external,
-else NULL; the href is the SAME `/job/{id}/apply` for both, so the bare `/apply` URL is never proof).
-`extension/apply_flow.js`: on `/job/{id}/apply/success` with `h1#applicationSent` (its text greets
-the user by name: never read), `POST /jobs/{id}/quick-apply-sent` records `applied_at` with
-`matches.applied_via='auto'` (creating an unscored match if the job was never scored), then the page
-is screenshotted BEFORE the panel is drawn and stored in the app (no Downloads copy; Retake on the
-panel). Mark Applied records `'manual'` and takes no screenshot; external ads stay manual. Migration
-`c4e8a2f6b913`; SSE `job_applied`; `APP_SCREENSHOTS_DIR` moves the TEST screenshots folder only.
-The manifest now has `<all_urls>` (owner decision 2026-10-14) because Chrome refuses
-`captureVisibleTab` without it or a toolbar click: it is for the screenshot only, pinned by
-tests/test_extension_permissions.py (content scripts Seek-only, relay localhost-only). The old
-screenshot code had never had that permission, so it most likely never saved anything. LIVE CHECK
-PASSED 2026-10-14 (a real Quick Apply on REAL was recorded and screenshotted).
-Part 2, Centrelink-ready PDFs (2026-10-14, same plan doc): Centrelink takes one file (<3 MB) per
-upload, so the Overview's "Centrelink evidence" card collates every UNREPORTED Quick Apply screenshot
-into one PDF (captioned pages, Pillow, NO LLM), saved in `<screenshots>/centrelink_ready/
-ddmmyyJOBSn.pdf` (letters and digits only, V2 on a clash; kept forever) and downloaded; two-click Undo. Screenshots are stored ONCE
-in `evidence/<YYYY-MM>/(time)_(date)_(company).png`; "reported" is the `evidence_bundle_items` table
-(migration `d8f3b6a1c527`), not a second folder. `screenshot_ttl_days` 30 -> 150, and an unreported
-screenshot never expires. Endpoints `/evidence/status|bundles|bundles/{id}/download`, SSE
-`evidence_changed`. 1655 tests; e2e `apply_sent_e2e.py` 51/51 (+ dashboard 92, sidebar_load 58).
-Part 2 NOT yet checked in the user's own Chrome.
-
-🔄 IN PROGRESS: Eval set, dev 20 / test 15 from real Seek ads — 2026-10-20 (branch `eval-set-creation`)
-
-docs/eval-set-plan.md (stages, the scenarios with their rules, Decision log; screening-questions
-scenario dropped: no real Seek ad asks questions in its own text). Stage 1 is DONE (145 usable ads;
-`scripts/eval_pool.py` tags them, `scripts/eval_draw.py` drew 49 candidates, seed 20261020). The 49 are
-FROZEN (2026-10-21, no LLM) in `evals/sets/v2/` (ads + profile.db + committed MANIFEST.json;
-`python scripts/eval_freeze.py --verify`; `--add` for reserves; never rewrite a frozen file).
-`scripts/eval_split.py` applies the near-duplicate rules (plan Decision log 2026-10-21); dry run by
-default, `--write` only once the real tags and the owner's labels exist. DONE 2026-10-22:
-`letter_lab.py --set v2` (default v1 unchanged; working files in gitignored `evals/work/v2/`, results
-in `evals/results/v2/`; v2 `prepare` verifies, builds once, scores only unscored ads) and the paid
-stage-3 analysis ($1.235, run `stage3`). The scenario rule lives once in `scripts/eval_tags.py`
-(eval_pool.py + `scripts/eval_tag.py` use it); final tags are in candidates.csv (`final_scenario`,
-`eval_score`, `why`; `none` = fits no scenario).
-Scenario 4 now has a 60 floor (owner, 2026-10-22): counts 1:12 2:4 3:7 4:5 6:6 7:7 none:8.
-ALL 49 LABELLED (2026-10-23; plan Decision log): Would apply = sent hoping to get the job
-(Centrelink-count-only = N); scenario_ok N on #11, #82, #186 only. SPLIT FINAL (2026-10-23, owner:
-no more ads): dev 17 (10 relevant) / test 14 (11 relevant) in `evals/sets/v2/split.json`; at most
-one ad per near-duplicate family (#122, #152 out); #12 pinned to test, #157 to dev (`PINS`).
-Scenario 1 dev short by 2, scenario 2 has 3 ads. Runs pick a side with `letter_lab.py run|analyze
---set v2 --split dev|test` (a v2 run refuses without --split or --only; set.json stays all 49). Stage 5 APPROVED 2026-10-23 (docs/letter-metrics-plan.md, 22
-metrics, M2 weights 4/2/1): owner grade = 4-level send-readiness + untrue Y/N + reason ticks; honest requirement
-coverage against a fixed reference checklist; yes/no recruiter checklist; code signals; judge
-calibrated on half the dev grades. Build steps in its §7, each with a go-ahead. Step 1 DONE
-2026-10-26 (`scripts/eval_reference.py`: the owner-corrected reference checklist, the answer key).
-Step 2 BUILT 2026-10-26: `evals/grading-standard-v2.md` (approved; frozen after stage 8) and
-`grading_panel.py v2-*` (ONE FRESH OPUS SUBAGENT PER LETTER per grader A/B, a fresh adjudicator per
-split letter, pairwise in both orders, agreement with the owner; procedure and prompts in
-evals/grading-panel.md). The owner's answer key is the truth; judges' `checklist_doubts` go to
-panels/<tag>/checklist-doubts.md for a recheck. Step 3 BUILT 2026-10-26 (no LLM): `letter_lab.py
-grade-sheet --set v2 <run>` (blind HTML sheet + blank CSV in evals/work/v2/grading/<S####>/, key kept in
-grading-keys/; `--unblind <S####>` -> runs/<run>/grades-owner.csv, never overwrites a graded row),
-`scripts/letter_metrics.py` (G1, C3 incl. writing-sample copy, C4, C5, C6, C7, M1-M4, honest coverage,
-checklist score, `scorecard`) and `report --set v2 <run> [--judge TAG] [--picks TAG]` -> committed
-evals/results/v2/<run>.md (numbers + ad keys only) + gitignored runs/<run>/report-detail.md. Stage 6 DONE
-2026-10-27: run `dev-agent-v1` (agent, 17 dev letters, $4.39, 15/17 clean; eval-set plan Decision log).
-Stage 7 DONE 2026-10-28, rechecked 2026-10-29 (sheet S1674, owner grades in
-runs/dev-agent-v1/grades-owner.csv; eval-set plan Decision log has the final table): relevant
-send-readiness 2.30, 3 of 10 send-ready (all 2.35, 6/17); untrue 1/17 (0 relevant), a run
-check_claims passed. Ticks (all 17): generic 11, missed_important 11 (rechecked row by row: backed
-rows only, a gap is never a miss; hard skills named, traits named or shown; notes start "Missed R_"),
-weak_example 9, sounds_ai 13, no_personal_reason 11, too_long 7 (all owner-confirmed). sounds_ai is a COUNT RULE: Y when
-`letter_metrics.stock_phrases` (C5b) finds more than `STOCK_LIMIT` 8 hits; the list and the limit
-never go in the grading standard, which the judge reads, and the judge never gets the repo.
-`no_real_reason` became `no_personal_reason` = new item D4b (19 checklist items): a reason for
-applying tied to the candidate's own experience, study or goals, not the ad's blurb restated and
-not experience offered as a skill to apply (C5c `motivation` is a helper). Code checks after
-grading: G1 flags 4+ mentions outside the employer's name and the ad's title (14/17 pass); C4 skips
-the profile's employers, institutions and project titles (98 phrases); C7 unchanged. Stage 8 judge: two backends,
-`claude-cli` (owner's subscription, default) and `vertex`, one prompt builder, every rating names its
-backend (eval-set plan Decision log 2026-10-28). Stage 8 approach agreed 2026-10-29 (split by grade,
-derived ticks, D2d/D2e + relevance rule, probes, pass bar; 10 steps). Step 1 DONE: `grading_panel.py
-v2-run` (claude-cli; set JUDGE_CLAUDE_BIN to a claude.exe >= 2.1.280, npm's 2.1.128 shim is refused).
-Steps 2-4 built (split, derived ticks + pass-bar report, D2d/D2e + relevance rule, draft worked
-examples in gitignored evals/work/v2/calibration/). Step 5 DONE 2026-10-29: runs cal-bare..cal-ex5, owner
-regrades and rules (additive tiers, floor 2, example rungs, thin extra line = tier 3); cal-ex5 PASS
-6/8 exact on the rescored owner grades (eval-set plan Decision log 2026-10-29). Step 7 RUN 2026-10-29
-(panel `check-v1`, the final v1 text): FAIL on exact 3/9 (always-2 6), ready 3/9 and missed rows 4/10;
-±1 9/9 and D4b 8/9 pass; the judge grades 2s as 3s because its grade counts only must-cover misses
-and it credits partial rows on loose quotes (plan Decision log). POINTS SCHEME DECIDED 2026-11-03 (replaces
-the 1-4 grade): 0-10, the judge finds problems and sets low / high, code deducts (values, cap and rules in
-evals/results/v2/points-severity-guide.md; owner labels evals/results/v2/points-labels-dev-agent-v1.json, the
-scrubbed copy of gitignored evals/work/v2/points-draft/labels.json, which is the truth for agreement). The
-standard was rewritten for it 2026-11-04 (§4.1, §5, §7 issue list, §8, §9 "v2-points", §10). Stage 8 restarts on
-the same 8 / 9 split. Built 2026-11-04 (plan Decision log): `scripts/letter_points.py` (the one scorer, owner labels
-and judge alike), grading_panel.py's points answer / checks / A/B cells / merge (`judge-<tag>.json` has `points`,
-`issues`, `by_metric`) / `v2-agreement` vs labels.json; pass bar on points FIXED (±1 on n-1, mean gap below the
-constant guess, 80% of missed rows, all untrue + probes); worked examples in gitignored
-evals/work/v2/calibration/examples-points.md. `pts-cal-1` FAIL -> owner rules -> `pts-cal-2` PASS (7/8, gap 0.60);
-probes `probe-pts-1` 8/8 pass; check half `pts-check-1` FAIL (±1 6/9 vs 8, gap 0.84 vs the guess's 0.76), then the
-owner's two-way review (2026-11-05: 20 items, 15 Change / 4 Keep / 1 rule question; plus one calibration label by the
-same reasons) -> re-scored with no judge runs: PASS (±1 9/9, gap 0.03; cal half still PASS 7/8, gap 0.56). The pass means
-"the judge applies the standard as the owner reads it", not agreement with the first labels; fresh test-split letters are
-the real test. Rule questions for the next version: future_work/grading-standard-next-version.md. JUDGE V1 FROZEN
-2026-11-05 (evals/results/v2/judge-v1.json: CLI 2.1.317, standard a1b0d9de, instructions 2ddb9aa8, examples f78725e7;
-Vertex skipped). Always run `v2-run <tag> --judge v1` (refuses on any difference) with JUDGE_CLAUDE_BIN set to the
-pinned copy evals/work/v2/judge-bin/2.1.317/claude.exe (gitignored). `v2-agreement` now also lists untrue flags one
-by one (matched by quote; reported, not gated). ALL 17 JUDGED 2026-11-05 (panel `v1-dev`, $18.58 notional): FAIL
-on ±1 only (14/17; gap 0.53 vs 0.90, missed rows 13/14, untrue 6/6 after one accepted flag); the cause is the
-judge's own run-to-run noise (up to 1.5 points on one letter), and the owner kept v1 as is (Option A: trust split
-means, never one letter). Answer key: supported = every part backed, partial = some; 7 rows corrected, corrections
-may now set `note`. Next (owner's choice): improve the writer on dev scored by judge v1, the test set graded once
-at the end (plan order), or test the judge on the test split first. NEVER edit the
-standard or the examples while a judge run is going: each judge reads them when its prompt is built. Evidence behind it:
-docs/ai-recruitment-research.md (AI screeners' biases, rated by strength; lines we never cross).
-The real profile is frozen as of 2026-10-20. Strong fit = score 85+ and
-no must-have GAP (`Requirement.needs_user`); partials are allowed (owner, 2026-10-20). Main metric:
-the relevant score (Would apply = Yes ads).
-
-✅ COMPLETED: Second worker for scoring — 2026-11-23, owner's manual checks passed 2026-11-24 (branch `avaliability-check`)
-
-docs/second-worker-plan.md (D1–D6, Implementation log, manual-check results at its end). New jobs are quick-screened, extracted and scored WHILE a letter
-is written: `worker._score_executor` (second single-thread pool, scoring only) beside `_bg_executor`
-(letters only); `_processing_idle_loop` gathers `_letter_loop` and `_scoring_loop`, each built from a
-one-pass function (`_letter_pass` / `_scoring_pass`, returns its wait) with its own error guard.
-`app/job_claims.py` (in memory, one process): the scorer `try_claim`s and skips held jobs (candidate
-queries leave them out); `/regenerate`'s extract+match waits (`_process_listing`, `already_claimed`
-for the scorer), D6: after 120 s a WARNING and it goes ahead. SQLite `busy_timeout` 30 s, no WAL.
-Letters, prompts, models, `LLM_RPM`, the API and the extension are unchanged. Tests guard the rule:
-exactly two pools, both `max_workers=1`, `_score_executor` used only in worker.py / idle_loop.py.
-
-🔄 BUILT, AWAITING THE USER'S MANUAL CHECKS: Rewrite letter + letter date — 2026-10-20 (branch `eval-set-creation`)
-
-docs/letter-rewrite-plan.md (D1–D3 approved; manual checks at its end). `cover_letters.generated_at`
-(migration `e3a7c1d9f264`, backfilled from `llm_usage`) is stamped by both write paths, never by
-saving edits. `GET /jobs` rows: `letter_written_at`, `letter_outdated` (older than
-`retention.profile_revised_at`), `letter_edited`; `GET /jobs/{id}`'s `cover_letter`: `generated_at`,
-`outdated`, `queued`, `edited`, `rewrite_est_usd`; `GET /jobs/letter-bands`: `rewrite_est_usd`
-(`letter_bands.rewrite_cost_estimate`: mean cost per pipeline run from `llm_usage.run_id`, else the
-one-pass estimate while the loop is off). The Rewrite is `/regenerate` (now `worker._rewrite_letter`):
-it claims the job in `letter_bands.queued` (cards show "✍ Writing…"; a second call returns
-`"writing"`), refuses applied jobs (409), and with `discard_edits=true` (the Rewrite's D1, the ONE
-exception to "generation never clears edited_content") clears the edits only once a new letter has
-landed; it always releases and sends SSE `letter_rewrite_done`. UI: Keep Applying card ("Written 14
-Oct", amber "before profile update", two-click "⟳ Rewrite") and the Quick Apply panel on the ad (same,
-polls the local API every 15 s and puts the new letter in its box; none on applied jobs). D4 (owner):
-ONLY an outdated letter offers Rewrite; /regenerate itself still takes any job (Try again now). The stub
-LLM now answers `complete_text` too (a string in LLM_STUB_RESPONSES). pytest 1813; e2e new
-`letter_rewrite_e2e.py` 35/35, apply_sent 51, dashboard 199, sidebar_load 67, pipeline 86, quick_apply
-124. Not checked in the user's own Chrome yet; real.db migrates on the next `run_api.py real`.
-
-🔄 BUILT, AWAITING THE USER'S MANUAL CHECKS: Settings simplified — 2026-10-16 (branch `centrelink-ease-apply`)
-
-docs/settings-simplify-plan.md (D1–D8 approved; manual checks at its end). Side-panel UI only: every
-preference key, default and API bound is unchanged. ⚙ Settings is two groups (Cover letters, Finding
-jobs), 9 controls, no Save buttons (each saves on change; a number out of range snaps back), and an (i)
-per row that opens its note. "Fact-check & revise" (`#letter-quality`) replaces the pipeline checkbox and
-score: Every letter = `letter_loop_enabled` true + `letter_loop_min_score` 0 (0, so it stays "every" if
-the auto score moves); Score N+ = true + N; Never = false. Options at or below the auto score are never
-offered (the backend's bar is `max(auto, pipeline)`), and a stored non-preset score keeps its own option.
-The hint's quick-pass figure comes from `GET /jobs/letter-bands`. Letter engine and the three per-letter
-limits have no UI any more (D3). Search performance moved to the Overview's Scan more jobs card ("How past
-searches did", `#ov-search-perf`). e2e new `tests/e2e/settings_e2e.py` 46/46; sidebar_load 66, dashboard
-199, pipeline 86, availability 48, quick_apply 124 (its S5 sort check failed once on timing, then passed
-twice); pytest 1794. E2E NOTE: a context that routes
-through a Python predicate pauses every request until the sync API is pumped, so poll the DB with
-`side.wait_for_timeout`, never `time.sleep` (settings_e2e `wait_db`).
-
-🔄 BUILT, AWAITING THE USER'S MANUAL CHECKS: Pipeline tab — 2026-10-16 (branch `centrelink-ease-apply`)
-
-docs/pipeline-tab-plan.md (D1–D14, approved; Decision log per step; the manual-check list is at the
-end of the plan). The Jobs tab is now **Pipeline** (its ids still say `jobs`):
-- Top: "Needs your answer", one question card per letter run waiting on the user (the Overview's ❓
-  link scrolls here). Then every scored job NOT applied for (`GET /jobs?applied=false&limit=500`;
-  `limit` is 1–500, default still 50) as one-click rows (score, title, company, one status label)
-  in a box that shows 7.5 rows and scrolls; filter chips with counts, search, sort (remembered in
-  chrome.storage.local). A row opens a drill-in detail view (← All jobs / Esc): why it scored, the
-  scorer's gaps, the letter, and actions: Open ad, Write a letter (one job, one-shot, the band
-  rules: `POST /jobs/{id}/write-letter`, `letter_bands.claim_job`), Mark applied, Delete (two
-  clicks each). The two-click tidy-up (bulk hide) moved here from settings.
-- Below: "Skills ads ask for that you don't list" (`app/skill_gaps.py`, `GET /gaps/market`, code
-  only): hard job_skills of jobs scored in the last 90 days, matched to the profile by WHOLE PHRASE
-  both ways, because the real profile's Seek-imported names ("Typescript Programming") made
-  prefilter's exact match call TypeScript/React/Docker gaps. I have it / Not yet / ignore
-  (`POST /gaps/market/{have,not-yet,ignore,unignore}`; ignored keys in `profiles.preferences.gap_ignored`).
-  To work on moved here from Profile (`extension/sidebar_skills.js`).
-- Settings: the old Personalise panel is a full-panel view behind ⚙ in the header (same ids).
-  The budget banner sits under the tab bar (every tab). The suggestion banner and
-  sidebar_suggest.js are gone (`seekSearchUrl` is in sidebar_shared.js).
-- Follow-up logged, NOT done: prefilter's exact-name matching feeds false "Gaps:" lines into the
-  match prompt for Seek-style names; fixing it changes scores, so measure it first.
-- 1794 tests; e2e `pipeline_e2e.py` 86/86, dashboard 199, sidebar_load 66, availability 48,
-  apply_sent 51, quick_apply 124. Not checked in the user's own Chrome yet.
-
-✅ COMPLETED: Overview/Applied rework — 2026-10-15 (branch `centrelink-ease-apply`)
-
-docs/overview-applied-rework-plan.md (D1–D8 plus the owner's same-day updates, all in its Decision
-log). Owner's manual checks passed 2026-10-15.
-- Applied tab: a row click opens a read-only record in place (`extension/applied_record.js`): the
-  ad as captured, the match, the letter as last saved; "Open ad on Seek ↗" is its first button.
-  `GET /jobs/{id}` returns the record fields (aware-UTC datetimes). Bulk hide (`DELETE /jobs?below_score=`)
-  now skips applied jobs: it used to null their ad text.
-- Overview "No letter yet": scored, letter-less jobs below the auto-letter score in 5-point bands
-  anchored on it (`app/letter_bands.py`, `GET /jobs/letter-bands`), one row that scrolls sideways.
-  "+ letters" sits on the highest band with jobs it can write now; two clicks queue at most 10
-  ONE-SHOT letters (`POST /jobs/letter-bands/write`, `worker._write_band_letters`; `Work.below_bar`
-  lets the one-shot skip only its score gate). The estimate comes from `llm_usage` (one-pass
-  letters, else the pipeline's draft call, ≈12¢ on REAL), not a constant. The freshness gate holds
-  back stale ads. Queued jobs leave the bands and show in Keep Applying as "✍ Writing…" cards
-  (`GET /jobs` `letter_queued`; `ready=true` also returns jobs being written).
-- Keep Applying cards have a two-click bin (the Jobs tab's DELETE /jobs/{id}; none while writing).
-- Scan more: the top 3 suggested searches, each with its own button; see the Seek Access Policy.
-  BUG FIXED on the way (Step 0, found by the owner): `GET /jobs/known-ids` counted card-only rows
-  (the content script stores every search card on page load), so Scan Page skipped every job on a
-  page without opening one. It now lists only jobs with ad text, a score, or a closed flag.
-- 1753 tests; `tests/e2e/dashboard_e2e.py` 197/197, `sidebar_load_e2e.py` 59/59.
-
-✅ COMPLETED: Availability fast mode + value-first queue — 2026-11-17, owner's manual checks passed
-2026-11-20 (branch `avaliability-check`; docs/availability-fast-mode-plan.md, policy text above).
-Follow-up logged there: recognise Seek's "This job is no longer advertised" banner so closed ads
-don't count towards the 6 h pause.
-
-✅ COMPLETED: Availability checks + freshness gate — 2026-10-13 (branch `centrelink-ease-apply`)
-
-Closed Seek ads now drop out of the list without a button, and no AI money is spent on one.
-Backend: `app/availability.py` (candidate choice, verdicts, `llm_ready` gate), `app/api/availability.py`
-(`GET /availability/next`, `POST /availability/{id}`), migration `b7e2d9a4c601`
-(`job_listings.last_seen_live_at` / `availability_checked_at` / `availability_misses`). Side panel:
-`extension/sidebar_availability.js` (paced, capped, scan cancels it; policy in the Seek Access Policy
-above). Rules that matter: a job is flagged only after TWO misses on separate visits, each in a session
-that also saw a live page (canary), so a blocked browser flags nothing; a capture with a description
-(`/ingest`) un-expires; applied jobs are never visited or flagged (also `PATCH /jobs/{id}/expired`);
-quick screen, extraction, matching and `next_work` (letters, resumes) skip flagged jobs and, while
-`availability_checks_enabled` is on, jobs not seen live in 24h (Regenerate and the Scan's own quick
-screen are not gated). `background.js` now mirrors its scan-tab set into `chrome.storage.session`
-so a service-worker restart can't let the content script flag from a check tab. 1600 tests; e2e
-`tests/e2e/availability_e2e.py` 48/48 (tabs and scripting stubbed). NOT verified in the user's own
-Chrome: what a closed Seek ad really looks like (blank, redirect or banner) and the Cloudflare-title
-test; the console logs the evidence for every check.
-
-✅ COMPLETED: Rolling retention + post-profile-update weighting — 2026-09-21
-
-Age-based deletion for the match history the suggestion miner learns from,
-without moving its baseline. New `app/retention.py` + `app/screenshots.py`,
-migration `a7d2c9e15b48` (`matches.scored_at`, `profiles.profile_revised_at`,
-index on `matches.created_at`). Full reasoning in docs/database-schema.md
-(*Retention* under `matches`); the load-bearing decisions:
-- **Delete by age, never by score.** Age is uncorrelated with score so the
-  baseline survives; score-based deletion is what `hidden_at` soft-deletes
-  exist to avoid. Don't turn the bulk hide into a real DELETE.
-- **122-day window + 150-match floor**, one function (`effective_cutoff`)
-  shared by the daily sweep AND the miner's read, so applied matches (kept
-  forever, skew high) can't inflate the baseline. Only `status='new'` with
-  `applied_at IS NULL` is purgeable — a whitelist. Applied = Centrelink
-  evidence, never deleted.
-- **Screenshots**: file deleted 30 days after capture, `screenshot_taken_at`
-  kept ("captured, since expired"); downscaled to 1200px on upload;
-  `GET /jobs/evidence-export` zips CSV + surviving files; Applied cards show
-  the expiry date.
-- **Profile drift**: matches scored before the profile last changed get
-  weight 0.35 in the miner (baseline weighted too) — but only when a fresh
-  match exists to prefer (`relative_weights`); uniform discounting re-ordered
-  the live suggestions with no new information.
-- The sweep runs at the top of every letter pass (`idle_loop._letter_pass`, not only
-  when idle — a letter backlog would starve it), once/24h, on the letter worker.
-Not built: the "re-score against updated profile" button (item 10), and
-nothing yet bumps `profiles.profile_revised_at` on a deletion because no
-profile-edit endpoint exists for experiences/skills. Tunables live in
-`profiles.preferences`; the sidebar does not expose them.
-Verified: `python -m pytest` (175 passed, 43 new in tests/test_retention.py),
-migration applied to the dev DB, live-data ranking unchanged. NOT verified:
-the sweep against a real aged DB (dev data is all <1 day old, so it purged
-nothing), and the sidebar's new expiry note / evidence button in Chrome.
+- The full `python -m pytest` must pass; no test makes a paid model call (use the stub).
+- E2E suites (tests/e2e/) run on a scratch DB (`run_api.py test --db ...`) with the stub LLM.
+- E2E: stub the panel's `chrome.tabs.create`. A real tab it opens can load before
+  Playwright's routing attaches and reach Seek (it happened once).
+- E2E: a context routed through a Python predicate pauses every request until the sync API
+  is pumped, so wait with `side.wait_for_timeout`, never `time.sleep`.
 
 
-✅ COMPLETED: Search-suggestion overhaul — 4-layer pipeline — 2026-09-21
+## Quick Apply rules
 
-Replaced the frequency-based suggested-searches miner, which ranked by how
-often a phrase appeared rather than how well it scored. On the dev profile it
-put "software engineer" top (12 titles, avg 60.9, against a 69.4 baseline) and
-emitted fragments — "Intermediate Software" alongside "Intermediate Software
-Engineer". Four layers, cheapest first; only the last costs money.
-- **Layer 1 — app/search_suggest.py** (new, pure Python): rank by
-  `(shrunk_mean - baseline) * log1p(support)` with a Bayesian shrink (K=3)
-  toward the baseline, so one lucky 92 can't outrank a phrase with real
-  support. Mines only the leading title segment (kills `| I.T Services |
-  5 Days Onsite` junk), drops MODIFIER_TOKENS (seniority is a *filter* on
-  Seek, not a keyword — "Intermediate" in a query shrinks the result set),
-  gates on a phrase ending in a ROLE_NOUNS head noun (deletes essentially
-  every fragment in one rule), then dedups nested phrases and role families.
-  Ranks over the WHOLE score distribution, not just score>=75 — the low
-  scores are what make the baseline mean anything.
-- **Layer 2 — capture what was being thrown away**: `job_listings
-  .discovered_query` (migration `c5b21d7f4e3a`) set from the search page, and
-  classification/subclassification finally populated (the columns and /ingest
-  accepted them since aa057c74b513; the extension never sent them, so all 25
-  rows were NULL). Primary source is the page's schema.org JSON-LD JobPosting
-  block — already-rendered DOM, no extra Seek request. /ingest now backfills
-  any NULL field from a later capture without overwriting, so the card
-  (query) and the detail page (description + taxonomy) complete each other.
-- **Layer 3 — yield feedback**: `GET /jobs/search-performance` reports
-  volume/hits/yield per query; a query with >=5 jobs and <15% yield halves the
-  rank of any phrase it contains. Demotes, never deletes — the same role may
-  still be worth searching under different wording.
-- **Location scoping**: clicking a suggestion opens the search scoped to the
-  profile's target_location, falling back to location, else nationwide
-  (_search_location()). The URL keeps the slug path and puts the place in
-  ?where=, because currentSearchQuery() reads keywords-then-path — so the
-  location never enters the attribution key and Brisbane/Melbourne runs of the
-  same role aggregate under one query in the yield stats.
-- **Bulk hide is now a soft delete** (`matches.hidden_at`, migration
-  `d3f8a1c60b92`). DELETE /jobs?below_score= stamps hidden_at and nulls the
-  job's raw_description to reclaim space, instead of deleting the row. Hidden
-  matches leave every /jobs view but still feed the baseline and the yield
-  stats. This is load-bearing, not tidiness: hard-deleting the low scorers
-  moved the dev baseline 69.4 → 82.5 in one click and flattened the ranking
-  the whole pipeline depends on. Don't "clean this up" back into a real DELETE.
-- **Layer 4 — optional LLM re-rank** (app/llm/search_refine.py), OFF by
-  default behind the `llm_search_suggestions` preference and a checkbox in the
-  sidebar's Personalise panel. One complete_json call on OPENAI_MODEL_SMALL
-  that *picks and generalises among mined candidates* rather than generating
-  freely — a hallucinated search term wastes a whole scan, which costs far
-  more than the call. Debounced (REFRESH_AFTER_NEW_MATCHES=10) and cached in
-  profiles.preferences; any failure falls back to the mined list.
-
-Verified: `python -m pytest` (132 passed, 44 new across
-tests/test_search_suggest.py + tests/test_search_endpoints.py), `node --check`
-on the three edited JS files, and the endpoint run against the live dev DB —
-suggestions went from ["Administration Assistant", "Intermediate Software",
-"Intermediate Software Engineer"] to ["Administration Assistant", "Data
-Analyst", "Software Engineering"].
-Not verified: the sidebar UI in a loaded Chrome extension, and the
-classification selectors against a live Seek page (see CURRENT TASK above).
+- Each screening question is `user` (work rights, salary, notice, identity, how you heard,
+  motivation: never sent to the model) or `assisted` (relates to the ad).
+- Help only for jobs with a full-pipeline letter (agent/workflow); one-shot letters get no
+  question help. `screening_question_help_enabled` off = no help at all, no model call.
+- Choice questions show what the job wants and what the profile has; the user picks.
+  Never recommend an option.
+- Seek markup not covered by docs/quick-apply-samples.md needs a live check the owner
+  drives — don't guess selectors. Auto-FILLING Seek's form is out of scope.
 
 
-Everything in docs/extension-revamp-plan.md landed 2026-09-11 (see the
-✅ COMPLETED entry below) except one deliberate fast-follow: §5.2's
-apply-flow-specific detection (auto-filling Seek's own Apply button/flow).
-That needs a live session where the user clicks through a real Seek Quick
-Apply flow so the real DOM/URL can be inspected — don't guess it. The
-Quick-Apply panel today is keyed off the `/job/{id}` detail page only, which
-is confirmed working. Pick that up next, or a new priority the user names.
+## Eval set and judge rules (docs/eval-set-plan.md)
+
+- Set v2: 49 real ads frozen in evals/sets/v2/ (never rewrite a frozen file;
+  `python scripts/eval_freeze.py --verify`). Split dev 17 / test 14 (`split.json`). A v2
+  run needs `--split dev|test` or `--only`. Working files in gitignored evals/work/v2/,
+  results in evals/results/v2/.
+- **The test split stays closed**: it is graded once, at the end.
+- **Judge v1 is frozen** (evals/results/v2/judge-v1.json). Always run
+  `grading_panel.py v2-run <tag> --judge v1` with JUDGE_CLAUDE_BIN set to the pinned
+  evals/work/v2/judge-bin/2.1.317/claude.exe; it refuses on any difference. Don't change the
+  standard or the worked examples under v1 (rule questions wait in
+  future_work/grading-standard-next-version.md), and never while a judge run is going: each
+  judge reads them when its prompt is built.
+- The owner's labels and answer key are the truth. The judge's run-to-run noise is up to
+  1.5 points per letter: compare split means, never one letter.
+- `sounds_ai` is a code count rule (`letter_metrics.stock_phrases` over `STOCK_LIMIT`); the
+  phrase list and the limit never go into the standard the judge reads, and the judge
+  never gets the repo.
+- Writer rules must target a general failure, not particular dev letters.
+- The real profile is frozen as of 2026-10-20. Strong fit = score 85+ and no must-have gap
+  (`Requirement.needs_user`); partials are allowed. Main metric: the relevant score
+  (Would apply = Yes ads).
 
 
-✅ COMPLETED: Extension revamp — Centrelink-ready application tracking — 2026-09-11
+## Environment note (this machine)
 
-Implemented the full plan in docs/extension-revamp-plan.md (see there for
-the detailed rationale/design) except the §5.2 fast-follow noted above.
-- **Schema**: `matches.applied_at` (migration `60d65ffb16df`), status
-  vocabulary documented in docs/database-schema.md.
-- **Backend**: `PATCH /jobs/{id}/status` (stamps `applied_at` once, on first
-  transition to `applied`), `PATCH /jobs/{id}/cover-letter` (saves
-  `edited_content`, shared by the sidebar and the Quick-Apply overlay),
-  `GET /jobs/suggested-searches` (pure-Python bigram/trigram mining over
-  score>=75 titles, zero LLM calls, excludes phrases already in an active
-  `SavedSearch`), `GET /jobs` gained `top_skills` (top-3 hard job_skills) and
-  an optional `status` filter (switches sort to `applied_at desc` for the
-  Applied tab/CSV export).
-- **Idle loop** (`app/api/idle_loop.py::_processing_idle_loop`): reordered so the
-  cover-letter phase is checked first every iteration; extraction/matching
-  only runs when there's no cover-letter backlog for score>=75 matches.
-- **Sidebar** (`extension/sidebar.html`/`sidebar.js`): client-side score
-  tiering (blue>=90/green>=75/amber 60-74/long-tail<60, long-tail collapsed
-  behind a lazy "N other roles" fold), a third Applied tab (CSV export:
-  Date Applied/Job Title/Employer/Location/Source URL), a per-card "Mark
-  Applied" action, a cover-letter state machine (ready/pending/none) replacing
-  the old always-there ✚ button, an editable cover-letter textarea with
-  Copy/Save wired to the new PATCH endpoint, a dismissible resize hint, and a
-  dismissible suggested-searches banner (7-day cooldown via
-  `chrome.storage.local`). Dropped `pollForCoverLetter` — SSE
-  (`cover_letter_ready` → reload) now drives the ready-state transition.
-- **Quick-Apply overlay** (`extension/content_script.js`): Shadow-DOM floating
-  panel on `/job/{id}` pages when a cover letter already exists for that job —
-  title, editable textarea, Copy/Save edits/Mark Applied. No new
-  `host_permissions`, no second-hop scanning change.
-- **cover_letter.py**: system prompt now asks for a `Sincerely, {name}`
-  sign-off and to foreground degree/university by name for recent grads.
-
-Verified: `python -m pytest` (72 passed), manual TestClient round-trips of
-the new PATCH endpoints against the live dev DB (idempotent `applied_at`,
-then reverted the test writes), `node --check` on all three edited JS files.
-Not verified: the sidebar UI in an actual loaded Chrome extension (no browser
-harness in this session) — recommend the user do a quick visual pass,
-especially the width breakpoint and the Quick-Apply panel on a real Seek job
-page, before relying on it.
-
-
-✅ COMPLETED: Cover-letter generation (app/llm/cover_letter.py) — 2026-06-27
-
-generate_cover_letter(job_id, profile_id, force) — THRESHOLD=75 quality gate,
-single complete_text call (temp 0.7), self-contained prompt with all profile context
-(quals, experiences + experience_skills evidence map) + job fields + match
-reasoning/gaps. Idempotent upsert on UNIQUE match_id; below threshold = no-op.
-Wired into _process_listing(with_cover_letter=True) so /jobs/{id}/regenerate triggers
-generation after extract+match — /ingest never does. scripts/run_cover_letters.py
-for dev/testing (--force flag, DailyQuotaError-stops-batch).
-
-
-✅ COMPLETED: Matching validation + keyword normalisation (2026-06-23)
-
-5 test jobs seeded (test-001 to test-005). normalise_skill() alias map added to
-prefilter.py. check_matching.py diagnostic script built. Score spread: 90 points
-(12→90 pre-retuning, confirmed ≥40 after). 4/5 bands verified live; test-005
-pending (0/3 hard overlap in unrelated field — expected 0–24 band).
-Transient-503 retry fix added to client.py. DailyQuotaError bug fixed in client.py:
-429s now classified by server retryDelay (>300s = daily stop; else back off + retry).
-Free-tier limit is PER-MINUTE, not per-day — daily headroom is fine; see LLM Layer.
-
-
-✅ COMPLETED: LLM matching + scoring (app/llm/match.py) — verified live 2026-06-23
-
-prefilter.py (pure-Python signals: skill match/gap, overlap %, seniority_flag,
-qual_match — context for the LLM, not a gate), match.py (match_job: eager-loads
-profile+job, builds text summaries, complete_json with a Pydantic MatchScore schema +
-new-grad-fair prompt at temp 0.1, clamps 0–100, idempotent upsert on
-UNIQUE(user_id, job_id), gaps as JSON string, status 'new'), scripts/seed_profile.py
-(richer profile-1 seed) + scripts/run_matching.py. /jobs + /jobs/{id} now return gaps
-as a list. Cover letters were scoped OUT of this task (now the CURRENT TASK above). All
-acceptance criteria pass: 3 real jobs scored (Graduate SWE 85 > AI Lead/Engineer 65 —
-new-grad fairness holds), idempotent, /jobs ranks by score. See PROGRESS.md (2026-06-23).
-
-
-✅ COMPLETED: LLM extraction (app/llm/extract.py) — verified live 2026-06-23
-
-Real Gemini extraction via the new app/llm/client.py provider abstraction
-(complete_json/complete_text; RPM throttle, 429 backoff, DailyQuotaError, truststore
-TLS fix), extract.py (Pydantic-schema'd structured output → job_skills + JSON
-requirements + seniority/summary/key_responsibilities/extracted_at, idempotent),
-scripts/run_extraction.py + scripts/check_llm.py. Schema columns added via migration
-f42bcd31e385. All acceptance criteria pass; 3 real jobs extracted. KEY NOTE: Gemini
-access needed the Google Cloud $300 free-trial (the plain free tier was unavailable on
-the user's account; AQ.* keys are ephemeral). See PROGRESS.md (2026-06-23).
-
-
-✅ COMPLETED: Chrome extension + FastAPI capture pipeline (2026-06-17)
-
-Backend (app/api/main.py: /health, /ingest, /jobs, /jobs/{id},
-/jobs/{id}/regenerate, /profile/{id}) built and verified against live uvicorn.
-Manifest-V3 extension (extension/) captures real Seek DOM → /ingest → job_listings
-(first live capture confirmed: 3 detail pages, full descriptions stored). app/llm/*
-were stubs at that point. See PROGRESS.md for the full slim summary, including the
-live-DOM selector fixes (host is au.seek.com; card is [data-testid="job-card"];
-search URLs are SEO slugs) and the 1-hop scan (now standing behaviour — see the Seek
-Access Policy above: links on a page the user opened are fair game, ≥5s apart, capped,
-never a second hop).
-
-✅ COMPLETED: database layer (2026-06-15)
-
-All 11 tables (SQLAlchemy 2.0, portable), Alembic initial migration, smoke test
-(evidence query + cascade delete) passing. See PROGRESS.md.
-
-
-How to use this file (note for the human)
-
-
-Tell Claude Code: "Implement the Current Task section of CLAUDE.md."
-When a task is done, demote it to a one-line ✅ COMPLETED entry here and add the slim
-block to PROGRESS.md; promote the "Next task" into a new CURRENT TASK section.
-Keep the project context, networking policy, LLM layer, and schema decisions above as
-permanent memory.
-
-
-Environment note (this machine): pip is behind a TLS-intercepting cert — installs
-need --trusted-host pypi.org --trusted-host files.pythonhosted.org. Test the API with
-PowerShell Invoke-RestMethod, not curl.exe (PS mangles embedded JSON quotes).
+pip is behind a TLS-intercepting cert — installs need `--trusted-host pypi.org
+--trusted-host files.pythonhosted.org`. Runtime HTTPS uses the Windows cert store via
+`truststore` (client.py). Test the API with PowerShell Invoke-RestMethod, not curl.exe
+(PS mangles embedded JSON quotes).
