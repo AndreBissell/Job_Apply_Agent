@@ -1,6 +1,6 @@
 # Experiment checkpoints and comparison: plan (branch `cost_perform_analysis`)
 
-**Status:** v1.0, APPROVED by the owner 2026-11-25. Steps 0–3 built; step 4 (the history report) is next.
+**Status:** v1.0, APPROVED by the owner 2026-11-25. Steps 0–4 built; step 5 (the `letter_lab.py` commands) is next.
 
 **Where it fits:** row T1 in [optimisation-map.md](optimisation-map.md) ("Comparison tool… build
 before E3"), plus a history log the map did not have. Every pass/fail rule in
@@ -309,7 +309,7 @@ Each step ends with the full test suite passing.
 | 1 | `scripts/eval_checkpoints.py`: build a checkpoint from a run + judging (allowlist, checks of §3.1), append / load the JSONL, parent rule. **BUILT 2026-11-25**: 36 tests, suite 2077 passed | none |
 | 2 | Pairing and stats: paired differences, ads up / down, A/A `s`, T and the labels, cost at today's prices. **BUILT 2026-11-25**: 22 tests (58 in the file), suite 2099 passed; 2 existing tests changed (Decision log) | none |
 | 3 | `compare` report and its terminal headline. **BUILT 2026-11-25**: 12 tests (70 in the file), suite 2111 passed; no existing test changed | none |
-| 4 | `history` report with the Mermaid charts; `checkpoints` list | none |
+| 4 | `history` report with the Mermaid charts; `checkpoints` list. **BUILT 2026-11-25**: 8 tests (78 in the file), suite 2119 passed; no existing test changed | none |
 | 5 | `letter_lab.py` subcommands wired to 1–4; `run` saves `models` / `thinking` / `commit` in `run.json`, `checkpoint --commit / --thinking` for older runs (Decision log D13) | none |
 | 6 | Real data: write **c0** (`dev-agent-v1`, `v1-dev`) and **c1** (A/A of c0: the same letters re-judged, `pts-cal-2` + `pts-check-1`); `compare c0 c1` must give paired SD ≈ 0.65 and mean move ≈ 0.19; c0's cost must match the cost table ($0.258 a letter); check the JSONL by eye for any text | none |
 | 7 | Docs: T1 row in the map set to done with a link here; one line in CLAUDE.md's current task; this plan's Decision log | none |
@@ -502,3 +502,19 @@ Each step ends with the full test suite passing.
   - **Settings table** shows every setting on both sides with a "differs" mark (not only the
     differing ones), so *unknown* and *(typed in)* values are visible; the per-task table has an
     all-steps total row. Numbers: $ to 4 places, seconds whole, the rest to 2.
+- **2026-11-25. Step 4 built** (`render_history`, `render_list`, `summary`, `mermaid_chart` in
+  `scripts/eval_checkpoints.py`; 8 tests, suite 2119 passed, no existing test changed). Choices the
+  plan did not spell out:
+  - **The kept chain** = kept letters checkpoints, oldest first, without A/A checkpoints (they
+    repeat, they change nothing) and without one a later checkpoint `replaces` (the correction
+    stands in its place). Its changes are two tables, from the parent and from the first kept
+    checkpoint, each cell "difference, noise label" over the ads both share; a pair `compare` would
+    refuse says "not comparable (the field)".
+  - **Per-checkpoint means:** cost and time over every letter (a failed letter cost money too),
+    points and problems over the judged letters. This is how c0 comes to $0.258 a letter.
+  - **Charts:** a point without a value (cost unknown at today's prices) is left out of the chart;
+    the points chart runs 0 to 10, the others from 0 to a round ceiling a little above the top value.
+  - **Noise references:** one column per repeat check, one row per measure; a judge-only check's
+    cost / time / drafts read "not a reference (same letters)", an s of 0 "0 (never moved)".
+  - **`checkpoints` list:** a measure checkpoint's numbers go in its note column; a replaced
+    checkpoint is marked "(replaced by cN)".

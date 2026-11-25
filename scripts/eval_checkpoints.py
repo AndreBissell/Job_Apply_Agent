@@ -21,6 +21,7 @@ from __future__ import annotations
 import datetime
 import hashlib
 import json
+import math
 import re
 import sys
 from pathlib import Path
@@ -1088,6 +1089,237 @@ def render_compare(cmp: dict, prices: dict, set_name: str = "v2") -> str:
         return "\n".join(lines + ["", "## Left out", ""] + only) + "\n"
     lines += [""] + _problems_section(cmp) + _tasks_section(cmp) + [""] + _per_letter_section(cmp, prices)
     lines += [""] + _left_out_section(cmp, prices) + [""] + _how_to_read(cmp)
+    return "\n".join(lines) + "\n"
+
+
+# ---------------------------------------------------------------------------
+# The history report and the checkpoints list (plan §5, §2)
+# ---------------------------------------------------------------------------
+HISTORY_MEASURES = ("points", "cost_today", "seconds", "missed_row.n", "untrue.n")
+HISTORY_NAMES = {"points": "Points", "cost_today": "$ / letter", "seconds": "Seconds / letter",
+                 "missed_row.n": "Missed rows / letter", "untrue.n": "Untrue / letter"}
+
+
+def summary(cp: dict, prices: dict) -> dict:
+    """One letters checkpoint's per-letter means. Cost and time over every letter (a failed letter
+    cost money too); points and problems over the judged ones. Cost at today's prices is unknown
+    if any letter's is."""
+    rows = cp["letters"]
+    judged = [r for r in rows if r["points"] is not None]
+
+    def mean(vs):
+        vs = [v for v in vs if v is not None]
+        return sum(vs) / len(vs) if vs else None
+
+    costs = [cost_at(r, prices) for r in rows]
+    out = {"letters": len(rows), "judged": len(judged),
+           "points": mean([r["points"] for r in judged]),
+           "cost_today": None if not rows or any(c is None for c in costs) else sum(costs) / len(rows),
+           "cost_usd": mean([r["cost_usd"] for r in rows]),
+           "seconds": mean([r["seconds"] for r in rows])}
+    for m in lp.METRICS:
+        out[f"{m}.n"] = mean([r["problems"].get(m, {}).get("n") for r in judged])
+    return out
+
+
+def kept_chain(cps: list[dict]) -> list[dict]:
+    """Kept letters checkpoints, oldest first: no A/A (it repeats, it changes nothing) and none that a
+    later checkpoint replaces (the correction stands in its place)."""
+    gone = _replaced(cps)
+    return [c for c in cps if c["kind"] == "letters" and c["kept"] and not c.get("aa_of") and c["id"] not in gone]
+
+
+def _diff_cell(cps: list[dict], a: dict | None, b: dict, measure: str, prices: dict) -> tuple[str, dict | None]:
+    """One "B − A (noise label)" cell of the history tables, over all paired ads."""
+    if a is None:
+        return DASH, None
+    try:
+        st = compare(cps, a, b, prices)["groups"]["all"][measure]
+    except CheckpointError as e:
+        why = str(e).split(": ", 1)[-1].split(" (")[0]
+        return f"not comparable ({_esc(why)})", None
+    return f"{fmt(measure, st['diff'], True)}, {noise_cell(st['noise'], measure)}", st["noise"]
+
+
+def _change_table(cps: list[dict], rows: list[tuple[dict, dict | None]], prices: dict, against: str) -> list[str]:
+    lines = [f"| Checkpoint | {against} | " + " | ".join(HISTORY_NAMES[m] for m in HISTORY_MEASURES) + " |",
+             "|---|---|" + "---|" * len(HISTORY_MEASURES)]
+    noises = []
+    for b, a in rows:
+        cells = []
+        for m in HISTORY_MEASURES:
+            text, nz = _diff_cell(cps, a, b, m, prices)
+            cells.append(text)
+            if nz:
+                noises.append(nz)
+        lines.append(f"| {b['id']} | {a['id'] if a else DASH} | " + " | ".join(cells) + " |")
+    return lines + footnotes(noises)
+
+
+def _nice_max(x: float) -> float:
+    """A round chart ceiling a little above the largest value."""
+    x = max(x, 1e-9) * 1.25
+    step = 10 ** (math.floor(math.log10(x)) - 1)
+    return round(math.ceil(x / step) * step, 10)
+
+
+def mermaid_chart(title: str, y_label: str, points: list[tuple[str, float | None]],
+                  y_max: float | None = None) -> list[str]:
+    """A GitHub Mermaid xychart-beta line chart (plan §5.2). Points without a value are left out."""
+    pts = [(i, v) for i, v in points if v is not None]
+    if not pts:
+        return [f"*{title}: no values yet.*"]
+    top = y_max if y_max is not None else _nice_max(max(v for _, v in pts))
+    return ["```mermaid", "xychart-beta", f'    title "{title}"',
+            "    x-axis [" + ", ".join(f'"{i}"' for i, _ in pts) + "]",
+            f'    y-axis "{y_label}" 0 --> {top:g}',
+            "    line [" + ", ".join(f"{round(v, 4):g}" for _, v in pts) + "]", "```"]
+
+
+def _judge_cell(cp: dict) -> str:
+    backends = cp["settings"].get("judge_backends", [])
+    return f"`{cp['comparable'].get('judge')}` ({', '.join(backends) or UNKNOWN})"
+
+
+def render_history(cps: list[dict], prices: dict, set_name: str = "v2") -> str:
+    """The history report (plan §5): kept chain, trends, not kept, measure checkpoints, noise refs."""
+    by_id, gone = {c["id"]: c for c in cps}, _replaced(cps)
+    chain = kept_chain(cps)
+    sums = {c["id"]: summary(c, prices) for c in cps if c["kind"] == "letters"}
+    lines = [f"# Experiment history (eval set {set_name})", "",
+             f"Written by `letter_lab.py history --set {set_name}` from `evals/results/{set_name}/checkpoints.jsonl`. "
+             "Don't edit it by hand: run the command again. $ are at today's prices (`client.PRICES`); "
+             "differences are over the ads both checkpoints share, with their noise label (a `compare` "
+             "report gives the detail).", ""]
+
+    # 1. Kept chain
+    lines += ["## 1. Kept chain", "",
+              "Every kept checkpoint, oldest first: what is in use now is the last row.", ""]
+    if not chain:
+        lines.append("No kept letters checkpoint yet.")
+    else:
+        lines += ["| Checkpoint | Date | Experiment | Note | Judge | Letters | " +
+                  " | ".join(HISTORY_NAMES[m] for m in HISTORY_MEASURES) + " |",
+                  "|---|---|---|---|---|---|" + "---|" * len(HISTORY_MEASURES)]
+        for c in chain:
+            s = sums[c["id"]]
+            lines.append(f"| {c['id']} | {c['created'][:10]} | {_esc(c['experiment'])} | {_esc(c['note']) or DASH} | "
+                         f"{_judge_cell(c)} | {s['letters']} | " +
+                         " | ".join(fmt(m, s[m]) for m in HISTORY_MEASURES) + " |")
+        first = chain[0]
+        lines += ["", "Change from the parent:", ""]
+        lines += _change_table(cps, [(c, by_id.get(c["parent"])) for c in chain], prices, "Parent")
+        lines += ["", f"Change from {first['id']}, the first kept checkpoint:", ""]
+        lines += _change_table(cps, [(c, first if c is not first else None) for c in chain], prices, "From")
+    vertex = _vertex_lines([c for c in cps if c["kind"] == "letters" and c["id"] not in gone])
+    if vertex:
+        lines += [""] + vertex
+    changes = price_changes([c for c in cps if c["kind"] == "letters"], prices)
+    if changes:
+        lines += ["", "Prices that differ from today's (every $ above is at today's):"]
+        for cid, m, then, now in changes:
+            today = (f"${now[0]:.2f} / ${now[1]:.2f} / ${now[2]:.3f}" if now else "not in today's table (unknown)")
+            lines.append(f"- {cid}, `{m}`: ${then[0]:.2f} / ${then[1]:.2f} / ${then[2]:.3f} then; today {today}.")
+
+    # 2. Trends
+    lines += ["", "## 2. Trends", "",
+              "The kept chain as three line charts (GitHub draws them; VS Code's preview shows the code unless a "
+              "Mermaid extension is installed). The table above has the same numbers.", ""]
+    for m, title, y, top in (("points", "Points per letter", "Points (0-10)", 10),
+                             ("cost_today", "Cost per letter at today's prices", "USD", None),
+                             ("seconds", "Seconds per letter", "Seconds", None)):
+        lines += mermaid_chart(title, y, [(c["id"], sums[c["id"]][m]) for c in chain], top) + [""]
+
+    # 3. Not kept
+    lines += ["## 3. Not kept", "",
+              "Experiments that were tried and not adopted, against their parent (failures stay on record, D4).", ""]
+    dropped = [c for c in cps if c["kind"] == "letters" and not c["kept"] and not c.get("aa_of")
+               and c["id"] not in gone]
+    if not dropped:
+        lines.append("None yet.")
+    else:
+        lines += ["| Checkpoint | Date | Experiment | Verdict | Note | Parent | " +
+                  " | ".join(HISTORY_NAMES[m] for m in HISTORY_MEASURES) + " |",
+                  "|---|---|---|---|---|---|" + "---|" * len(HISTORY_MEASURES)]
+        noises = []
+        for c in dropped:
+            cells = []
+            for m in HISTORY_MEASURES:
+                text, nz = _diff_cell(cps, by_id.get(c["parent"]), c, m, prices)
+                cells.append(text)
+                noises += [nz] if nz else []
+            lines.append(f"| {c['id']} | {c['created'][:10]} | {_esc(c['experiment'])} | {c['verdict']} | "
+                         f"{_esc(c['note']) or DASH} | {c['parent'] or DASH} | " + " | ".join(cells) + " |")
+        lines += footnotes(noises)
+
+    # 4. Measure checkpoints
+    lines += ["", "## 4. Measure checkpoints", "",
+              "Experiments measured without writing letters (E1-style), one table per experiment.", ""]
+    measures = [c for c in cps if c["kind"] == "measure" and c["id"] not in gone]
+    if not measures:
+        lines.append("None yet.")
+    for exp in dict.fromkeys(c["experiment"] for c in measures):
+        group = [c for c in measures if c["experiment"] == exp]
+        names = list(dict.fromkeys(m for c in group for m in c["measures"]))
+        lines += [f"### {_esc(exp)}", "",
+                  "| Checkpoint | Date | Kept | Verdict | Note | " + " | ".join(_esc(n) for n in names) + " |",
+                  "|---|---|---|---|---|" + "---|" * len(names)]
+        for c in group:
+            vals = [f"{c['measures'][n]:g}" if n in c["measures"] else DASH for n in names]
+            lines.append(f"| {c['id']} | {c['created'][:10]} | {_yes(c['kept'])} | {c['verdict']} | "
+                         f"{_esc(c['note']) or DASH} | " + " | ".join(vals) + " |")
+        lines.append("")
+
+    # 5. Noise references
+    lines += ["", "## 5. Noise references", "",
+              "Each repeat check (A/A): how much a letter's number moved between two checkpoints that should match "
+              "(s, the standard deviation of the per-letter differences). `compare` uses the most recent one that "
+              "fits (plan §3.3). *Never moved* = s is 0, which gives no reference.", ""]
+    pairs = aa_pairs(cps)
+    if not pairs:
+        lines.append("No repeat check yet.")
+    else:
+        heads = []
+        cols = []
+        for p in pairs:
+            n = len(pair(p["of"], p["aa"])["pairs"])
+            heads.append(f"{p['aa']['id']} vs {p['of']['id']} ({p['kind']}, {n} letters, "
+                         f"{p['aa']['comparable'].get('judgings')} judging)")
+            cols.append((p, pair(p["of"], p["aa"])["pairs"]))
+        lines += ["| Measure | " + " | ".join(heads) + " |", "|---|" + "---|" * len(heads)]
+        for m, kind in MEASURES:
+            cells = []
+            for p, prs in cols:
+                if kind == WRITER and p["kind"] == JUDGE_ONLY:
+                    cells.append("not a reference (same letters)")
+                    continue
+                sd = diff_stats(prs, m, prices)["sd"]
+                cells.append(DASH if sd is None else "0 (never moved)" if not sd else fmt(m, sd))
+            lines.append(f"| {MEASURE_NAMES[m]} | " + " | ".join(cells) + " |")
+    return "\n".join(lines).rstrip("\n") + "\n"
+
+
+def render_list(cps: list[dict], prices: dict) -> str:
+    """`checkpoints` (plan §2): one row per checkpoint."""
+    replaced_by = {c["replaces"]: c["id"] for c in cps if c.get("replaces")}
+    lines = ["| Checkpoint | Date | Kind | Experiment | Kept | Verdict | Parent | Repeats | Points | $ / letter | "
+             "Seconds / letter | Note |",
+             "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    for c in cps:
+        cid = c["id"] + (f" (replaced by {replaced_by[c['id']]})" if c["id"] in replaced_by else "")
+        note = _esc(c["note"]) or DASH
+        if c["kind"] == "measure":
+            vals = ", ".join(f"{k}={v:g}" for k, v in c["measures"].items())
+            cells = [DASH, DASH, DASH]
+            note = f"{vals}; {note}" if note != DASH else vals
+        else:
+            s = summary(c, prices)
+            cells = [fmt("points", s["points"]), fmt("cost_today", s["cost_today"]), fmt("seconds", s["seconds"])]
+        lines.append(f"| {cid} | {c['created'][:10]} | {c['kind']} | {_esc(c['experiment'])} | {_yes(c['kept'])} | "
+                     f"{c['verdict']} | {c['parent'] or DASH} | {c.get('aa_of') or DASH} | " + " | ".join(cells) +
+                     f" | {note} |")
+    if not cps:
+        return "No checkpoints yet.\n"
     return "\n".join(lines) + "\n"
 
 

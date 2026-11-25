@@ -829,3 +829,112 @@ def test_measure_compare_report_has_no_noise_label():
     md = _report([m1, m2], m1, m2)
     assert "| G | 5 | 3 | -2 |" in md and "carry no noise label" in md
     assert "- Only in A (c0): U" in md and "- Only in B (c1): S" in md
+
+
+# ---------------------------------------------------------------------------
+# The history report and the checkpoints list (plan §5, §2)
+# ---------------------------------------------------------------------------
+H_SECTIONS = ("## 1. Kept chain", "## 2. Trends", "## 3. Not kept", "## 4. Measure checkpoints",
+              "## 5. Noise references")
+M1 = ec.build_measure_checkpoint([A, AA, B], experiment="E1", values={"G": 5, "U": 2}, commit="abc1234",
+                                 kept=True, created="2026-11-25T10:00:00")
+DROP = _cp("c4", _letters([7, 7, 8, 6]), run="r4", parent="c2", kept=False)
+HIST = [A, AA, B, M1, DROP]
+
+
+def _section(md, head, nxt=None):
+    start = md.index(head)
+    return md[start:md.index(nxt, start) if nxt else None]
+
+
+def _mermaid_blocks(md):
+    blocks, cur = [], None
+    for line in md.splitlines():
+        if line == "```mermaid":
+            cur = []
+        elif line == "```" and cur is not None:
+            blocks.append(cur)
+            cur = None
+        elif cur is not None:
+            cur.append(line)
+    return blocks
+
+
+def test_history_has_every_section_and_the_kept_chain_skips_aa_and_dropped():
+    md = ec.render_history(HIST, PRICES)
+    at = [md.index(s) for s in H_SECTIONS]
+    assert at == sorted(at)
+    chain = _section(md, "## 1. Kept chain", "Change from the parent")
+    assert "| c0 | 2026-11-25 | baseline | — | `v1` (claude-cli) | 4 | 7.50 | $0.1062 | 100 | 0.00 | 0.00 |" in chain
+    assert "| c2 |" in chain and "| c1 |" not in chain and "| c4 |" not in chain
+    assert "| c2 | c0 | +0.50, beyond noise (T 0.41)† |" in md
+    dropped = _section(md, "## 3. Not kept", "## 4.")
+    assert "| c4 | 2026-11-25 | baseline | none | — | c2 | -1.00, beyond noise (T 0.41)† |" in dropped
+
+
+def test_history_mermaid_charts_are_well_formed():
+    blocks = _mermaid_blocks(ec.render_history(HIST, PRICES))
+    assert len(blocks) == 3
+    for b in blocks:
+        assert b[0] == "xychart-beta" and b[1].strip().startswith('title "')
+        xs = b[2].strip().removeprefix("x-axis [").removesuffix("]").split(", ")
+        ys = b[4].strip().removeprefix("line [").removesuffix("]").split(", ")
+        assert xs == ['"c0"', '"c2"'] and len(ys) == len(xs)
+        assert all(float(y) >= 0 for y in ys)
+        assert b[3].strip().startswith("y-axis ")
+    assert blocks[0][3].strip() == 'y-axis "Points (0-10)" 0 --> 10' and blocks[0][4].strip() == "line [7.5, 8]"
+    assert ec.mermaid_chart("Points", "P", [("c0", None)]) == ["*Points: no values yet.*"]
+
+
+def test_history_measure_tables_and_noise_references():
+    md = ec.render_history(HIST, PRICES)
+    meas = _section(md, "## 4. Measure checkpoints", "## 5.")
+    assert "### E1" in meas and "| c3 | 2026-11-25 | yes | none | — | 5 | 2 |" in meas
+    ref = _section(md, "## 5. Noise references")
+    assert "c1 vs c0 (judge-only, 4 letters, 1 judging)" in ref
+    assert "| Points (0-10) | 0.41 |" in ref
+    assert "| Seconds / letter | not a reference (same letters) |" in ref
+    assert "| untrue: points lost / letter | 0 (never moved) |" in ref
+    assert "No repeat check yet." in ec.render_history([A, B], PRICES)
+
+
+def test_history_skips_a_replaced_checkpoint_and_the_list_marks_it():
+    fix = _cp("c5", _letters([9, 7, 8, 9]), run="r2b", parent="c0")
+    fix["replaces"] = "c2"
+    cps = HIST + [fix]
+    chain = _section(ec.render_history(cps, PRICES), "## 1. Kept chain", "Change from the parent")
+    assert "| c5 |" in chain and "| c2 |" not in chain
+    assert "| c2 (replaced by c5) |" in ec.render_list(cps, PRICES)
+
+
+def test_history_says_when_a_change_is_not_comparable():
+    b2 = _cp("c3", _letters([9, 7, 8, 8]), judgings=2, run="r3", parent="c0")
+    md = ec.render_history([A, b2], PRICES)
+    assert "| c3 | c0 | not comparable (comparable.judgings is 1 vs 2)" in md
+
+
+def test_history_shows_the_vertex_line_and_price_changes():
+    vb = _cp("c2", _letters([9, 7, 8, 8]), run="r2", parent="c0", judge_backends=["vertex"])
+    md = ec.render_history([A, vb], PRICES)
+    assert "c2: judged on Vertex: Gemini trial credits, ends 2026-12-30." in md and "`v1` (vertex)" in md
+    assert "Vertex" not in ec.render_history(HIST, PRICES)
+    doubled = dict(PRICES, **{"gemini-pro": (4.0, 24.0, 0.4)})
+    assert "- c0, `gemini-pro`: $2.00 / $12.00 / $0.200 then; today $4.00 / $24.00 / $0.400." in \
+        ec.render_history(HIST, doubled)
+
+
+def test_summary_costs_every_letter_and_scores_the_judged_ones():
+    rows = _letters([8, 7, 9, 6])
+    rows[3] = _letter("k4", None, relevant=None, seconds=60.0)  # failed: no points, still cost and time
+    s = ec.summary(_cp("c0", rows), PRICES)
+    assert s["letters"] == 4 and s["judged"] == 3 and s["points"] == pytest.approx(8.0)
+    assert s["seconds"] == pytest.approx(90.0)  # (3 x 100 + 60) / 4
+    assert s["cost_today"] == pytest.approx(rows[0]["cost_usd"])
+    assert ec.summary(_cp("c0", rows), {})["cost_today"] is None
+
+
+def test_checkpoints_list_rows():
+    out = ec.render_list(HIST, PRICES)
+    assert "| c1 | 2026-11-25 | letters | baseline | no | none | c0 | c0 | 7.50 | $0.1062 | 100 | — |" in out
+    assert "| c3 | 2026-11-25 | measure | E1 | yes | none | — | — | — | — | — | G=5, U=2 |" in out
+    assert ec.render_list([], PRICES) == "No checkpoints yet.\n"
