@@ -27,7 +27,16 @@
       "Bash(rtk git push*)",
       "PowerShell(git push*)",
       "Read(./.env)",
-      "Read(./.env.*)"
+      "Read(./.env.*)",
+      "Read(**/private-data.txt)",
+      "Read(//**/private-data.txt)",
+      "Edit(**/private-data.txt)",
+      "Edit(//**/private-data.txt)",
+      "Bash(*private-data.txt*)",
+      "PowerShell(*private-data.txt*)",
+      "Bash(git commit*--no-verify*)",
+      "Bash(rtk git commit*--no-verify*)",
+      "PowerShell(git commit*--no-verify*)"
     ]
   }
 }

@@ -5,6 +5,15 @@ one block per milestone.
 
 ---
 
+## 2026-11-24 — Private-data guard: git hooks block private data — DONE (owner's manual check passed)
+
+- Branch `ai-files-fix`. Plan `docs/private-data-guard-plan.md` (D1–D8). `31cc4de`.
+- pre-commit + commit-msg hooks run `scripts/check_private_data.py` against the owner's list `.git/private-data.txt` (never committed; never read or printed by Claude). They block added lines that match the list, database / image / PDF files and the list itself, on every branch and worktree, whoever commits. Install once per clone: `python scripts/install_hooks.py` (`--check` after a hook or checker change).
+- Backs CLAUDE.md's PUBLIC REPO rule; the `git diff --cached` check still applies, because the list only knows what's on it.
+- Tests: pytest 2143 (baseline 2104, 39 new). Manual check PASSED 2026-11-24: a staged scratch file holding one list entry was blocked without showing the text.
+
+---
+
 ## 2026-11-23 — Second worker for scoring — DONE (manual checks passed 2026-11-24)
 
 - Branch `avaliability-check`. Plan `docs/second-worker-plan.md` (D1–D6, Implementation log, manual checks at its end).
@@ -21,6 +30,34 @@ one block per milestone.
 - `9ce9b1a` one queue: letter jobs (any score) > no-letter 60+ > unscored, recheck after 24 h (`RECHECK_AFTER = FRESH_FOR`). `e7a769d` daily cap 24 → 100 (pin + policy text). `9d85868` backend fast mode (`mode` from `/availability/next`, 10 live or 15 pages, once an hour, run start in preferences). `dafa0e1` panel: 5 s fast / 15 s background, fast on panel ready, D7 counts missing + unknown, 25-page hard limit. `24d777b` e2e.
 - Tests: pytest 2065 (baseline 2041); availability e2e 70/70 (baseline 48).
 - Owner's manual checks PASSED 2026-11-20 on REAL (one fast run, 12 pages, 8 live / 4 missing; details in the plan). A closed ad keeps its URL and title, has no description and shows "This job is no longer advertised"; follow-up logged: recognise that banner so closed ads don't count towards the 6 h pause.
+
+---
+
+## 2026-11-11 — Cover-letter agent optimisation plan — DRAFT, research only
+
+- Branch `cost_perform_analysis`. Plan `docs/agent-optimisation-plan.md` (v0.1, `21c8405`). The owner withdrew the 2026-10-04 "don't iterate on letter wording" decision: the stage now is higher judge-v1 scores and lower cost per letter.
+- Baseline `dev-agent-v1`, measured: $0.317 per letter, 487 s; revisions 31% of the cost, thinking tokens 70%. `match_profile` is the upstream cause of 5 of 12 revisions; implicit caching does hit sometimes (3 of 29 writer calls).
+- Experiments ranked (E1 `match_profile` against the answer key, E2 Flex PayGo, E3 replay and the noise floor, ...). Each paid experiment waits for the owner's go-ahead. No app code, prompt or eval file changed.
+
+---
+
+## 2026-11-05 — Eval set v2, letter metrics and judge v1 — stages 1–8 DONE
+
+- Branch `eval-set-creation` (merged, PR #7). Plans `docs/eval-set-plan.md` and `docs/letter-metrics-plan.md`; their Decision logs hold every step.
+- Stages 1–4: 145 usable real ads; `scripts/eval_pool.py` tags them, `scripts/eval_draw.py` drew 49 (seed 20261020), frozen in `evals/sets/v2/` (`32febcc`; `eval_freeze.py --verify`). All 49 labelled by the owner. Final split dev 17 / test 14, at most one ad per near-duplicate family (`9a26ca8`, `split.json`); runs pick a side with `letter_lab.py ... --set v2 --split dev|test`.
+- Stage 5: metrics plan approved (22 metrics). Built `scripts/eval_reference.py` (the owner-corrected answer key), `evals/grading-standard-v2.md`, `grading_panel.py v2-*`, blind grade sheets (`letter_lab.py grade-sheet`), `scripts/letter_metrics.py` and `report --set v2`.
+- Stages 6–7: run `dev-agent-v1` (agent, 17 dev letters, $4.39, 15/17 clean). Owner grades: relevant send-readiness 2.30, 3 of 10 send-ready, untrue 1/17.
+- Stage 8: judge on the Claude CLI. The 1–4 grade failed calibration, so a points scheme replaced it (0–10, `scripts/letter_points.py`, 2026-11-03); calibration PASS after the owner's review. JUDGE V1 FROZEN 2026-11-05 (`4efe0c9`, `evals/results/v2/judge-v1.json`). All 17 dev letters judged (panel `v1-dev`, `0777eb2`): FAIL on ±1 only (14/17), caused by the judge's own run-to-run noise (up to 1.5 points on one letter); the owner kept v1 (trust split means, never one letter).
+- The test split is untouched. Next stage: the 2026-11-11 optimisation plan.
+
+---
+
+## 2026-10-20 — Rewrite letter + letter date — BUILT, manual checks pending
+
+- Branch `eval-set-creation`. Plan `docs/letter-rewrite-plan.md` (D1–D4; manual checks at its end). `ecf4893`, `b465c67`.
+- `cover_letters.generated_at` (migration `e3a7c1d9f264`, backfilled from `llm_usage`), stamped by both write paths, never by saving edits. `GET /jobs` and `GET /jobs/{id}` say when a letter was written, whether it predates the last profile update, whether it was edited, and the rewrite cost estimate.
+- The Rewrite is `/regenerate` (`worker._rewrite_letter`): claims the job, refuses applied jobs (409), and with `discard_edits=true` clears the edits only once the new letter has landed (the one exception to "generation never clears `edited_content`"). Only an outdated letter offers Rewrite (D4). UI on the Keep Applying card and the Quick Apply panel. The stub LLM now answers `complete_text` too.
+- Tests: pytest 1813; new `tests/e2e/letter_rewrite_e2e.py` 35/35. Not checked in the owner's own Chrome.
 
 ---
 
@@ -49,6 +86,25 @@ one block per milestone.
 - Owner's updates: `78de669` Scan more per suggested search (top 3), the scan reads its own tab by id; band cards in one sideways-scrolling row. `36637f8` estimate from `llm_usage` (one-pass letters, else the pipeline's draft call; ≈12¢ on REAL, the old 3¢ was 4× low; a pipeline letter is 22.5¢) and queued jobs move to Keep Applying as "✍ Writing…" cards. `05f169f` "+ letters" on the highest band it can write. `993a35b` two-click bin on Keep Applying cards.
 - Tests: pytest 1663 -> 1753 (new `tests/test_job_detail.py`, `test_letter_bands.py`, `test_known_ids.py`; scan policy test updated). `dashboard_e2e.py` 92 -> 197 checks, `sidebar_load_e2e.py` 59/59. No paid call in any test (stub LLM; every Seek-touching Chrome call stubbed in the e2e).
 - Owner's manual checks (2026-10-15, own Chrome, TEST and REAL): all passed. The two 64–60 jobs on REAL hold the button back because their ads look closed (one empty availability check each).
+
+---
+
+## 2026-10-14 — Quick Apply evidence: auto-record, screenshot, Centrelink-ready PDFs — part 1 DONE, part 2 manual check pending
+
+- Branch `centrelink-ease-apply`. Plan `docs/centrelink-ease-apply-plan.md` (design, samples, Decision log, live-check steps).
+- The detail page's Apply button text sets `job_listings.apply_type` ("Quick apply" = quick, "Apply" = external; the `/apply` URL is the same for both, so it is never proof). `extension/apply_flow.js` on the "application sent" page: `POST /jobs/{id}/quick-apply-sent` records `applied_at` with `matches.applied_via='auto'`, then screenshots the page into the app. Mark Applied records `'manual'`. Migration `c4e8a2f6b913`; SSE `job_applied`.
+- The manifest gained `<all_urls>` only so `captureVisibleTab` works (owner decision; pinned by `tests/test_extension_permissions.py`). The old screenshot code never had that permission, so it most likely never saved anything.
+- Part 2: the Overview's "Centrelink evidence" card collates every unreported screenshot into one PDF (Centrelink takes one file under 3 MB; Pillow, no LLM), downloaded, two-click Undo. "Reported" is the `evidence_bundle_items` table (migration `d8f3b6a1c527`); screenshots kept 150 days, unreported ones never expire. Later tidy (2026-11-09, PR #8, `3cdbcca`): PDF captions show the date only, no time.
+- Tests: pytest 1655; e2e `apply_sent_e2e.py` 51/51. Live check PASSED 2026-10-14 (a real Quick Apply on REAL recorded and screenshotted). Part 2 not yet checked in the owner's own Chrome.
+
+---
+
+## 2026-10-13 — Availability checks + freshness gate — DONE ✅
+
+- Branch `centrelink-ease-apply` (`b124b86`). No plan doc of its own: the traffic rules are in CLAUDE.md's Seek Access Policy, the columns in `docs/database-schema.md`.
+- Closed Seek ads drop out of the list without a button, and no AI money is spent on them. `app/availability.py` (candidate choice, verdicts, `llm_ready` gate), `app/api/availability.py` (`GET /availability/next`, `POST /availability/{id}`), migration `b7e2d9a4c601` (`job_listings.last_seen_live_at` / `availability_checked_at` / `availability_misses`), `extension/sidebar_availability.js` (paced, capped, a scan cancels it).
+- Rules: a job is flagged only after TWO misses on separate visits, each in a session that also saw a live page, so a blocked browser flags nothing; a capture with a description un-expires; applied jobs are never visited or flagged. Quick screen, extraction, matching and `next_work` skip flagged jobs and, while `availability_checks_enabled` is on, jobs not seen live in 24 h (Regenerate and the Scan's own quick screen are not gated). `background.js` mirrors its scan-tab set into `chrome.storage.session`.
+- Tests: pytest 1600; new `tests/e2e/availability_e2e.py` 48/48. What a closed ad looks like was settled later by the fast-mode manual checks (2026-11-20).
 
 ---
 
@@ -165,6 +221,16 @@ one block per milestone.
 - Eval `screening-v1` ($0.196): sorting 45/45; 3 `user` wordings would reach the model (logged); labels 0 problems over 420 pointers; drafts 7/7 answered passed, planted 4/4 clean; 4 answers talked to the candidate ("my profile...") -> code check + prompt line.
 - Fixed: a test that made a paid Gemini call on every full test run.
 - Live check passed on the TEST backend (job 57, 7 questions; layer 5 live); fixed three defects it found (gap card "wanted" for a form-only skill; duplicate evidence rows; the panel re-fetching and jumping to the top when Seek re-renders the form). 1468 tests; e2e 123/123. Drafts not yet seen on a live page.
+
+---
+
+## 2026-10-04 — Phases 9a + 9b: Quick Apply question bank and assist — DONE ✅
+
+- Plan `docs/cover-letter-loop-plan.md` §10.1 + Decision log; evidence `docs/quick-apply-samples.md` (5 real questionnaires). `99aba39` 9a, `6e16141` 9b, scope `a74c032`.
+- Each question is `user` (work rights, salary, notice, identity, how you heard, motivation: never sent to the model) or `assisted` (relates to the ad). Every captured question goes into a question bank, so repeats need no model call.
+- 9a (no LLM): migration `b4d8e2f6a913` (`screening_questions` + `job_screening_questions`), `app/screening/` (identity, sort layers 2–4, bank), `app/api/screening.py`, capture + overlay in `content_script.js` (apply pages no longer run the detail-page branch, which could mark a job expired), review list in the profile editor, `scripts/export_question_bank.py`. e2e `quick_apply_e2e.py` 56/56.
+- 9b (no DDL): `app/screening/assist.py` (gating full / one_shot / no_letter / letter_pending; strategies in code), `classify.py` (layer 5, small, only for full-pipeline jobs), run-less gap path in `answers.py`, `extension/screening_assist.js`, test-only `LLM_PROVIDER=stub`. pytest 1394; e2e 97/97.
+- Owner's scope: help ONLY for jobs with a full-pipeline letter; choice questions show what the job wants and what the profile has, and never recommend an option. Live check came with 9c (2026-10-05).
 
 ---
 
@@ -313,6 +379,17 @@ grading panel is now repeatable: `scripts/grading_panel.py` and
 
 ---
 
+## 2026-10-01 → 10-03 — Cover-letter Phases 0–5: Gemini tiers, eval harness, analysis, style, tools — DONE ✅
+
+- Plan `docs/cover-letter-loop-plan.md` (Decision log per phase). `14e04a4`, `f899031`, `5cadc17`, `e15a63f`, `3db25fb`, `67806b0`.
+- Phases 0–1: Gemini on Vertex via ADC (trial to 2026-12-30), model IDs verified, small/mid/strong tiers in `app/llm/client.py`, `complete_tools`, `llm_usage` logging, the USD budget guard.
+- Phase 2: `app/llm/letter/state.py` (LetterState + pointer resolver), `rubric.py`, the eval harness `scripts/letter_lab.py` (snapshot → prepare → run → report) on a scratch `evals/eval.db`.
+- Phase 3: `analyze_job` (requirements checklist with `importance` and `letter_role`, cached on `job_listings.requirements_checklist`), `match_profile` (evidence pointers checked in code), `runner.py` (`letter_run_steps`); migration `c7a3e1f5d284`. Hand-check adjudicated by the owner (ANALYSIS_VERSION 2). Company-name bug fixed (`scripts/backfill_company.py`).
+- Phase 4: `profiles.writing_sample` (migration `e8b4f2a61c93`), style skill folder `app/llm/skills/cover_letter_style/`, `style.py`, code-only `style_lint.py`.
+- Phase 5: `guardrails.py` (the one definition of must_cover / may_use / do_not_claim, plus the gates), tools `generate`, `revise`, `check_claims` (code pointer check + a mid-tier judge), `check_requirements`. Run `tools-v1`: $0.165/letter; planted-claim test put `check_claims` on mid (small missed real overclaims).
+
+---
+
 ## 2026-09-21 — Rolling retention + post-profile-update weighting — DONE ✅
 
 **Goal:** hard-deleting low scorers had been fixed with soft deletes, which
@@ -441,6 +518,13 @@ both new PATCH endpoints against the live dev DB, including idempotency of
 `node --check` on all three edited extension JS files. **Not verified:** the
 sidebar/Quick-Apply UI in an actual loaded Chrome extension — no browser
 harness available this session.
+
+---
+
+## 2026-06-23 — Matching validation + keyword normalisation — DONE ✅
+
+- 5 test jobs seeded (`scripts/seed_test_jobs.py`, test-001 to test-005). `normalise_skill()` alias map in `prefilter.py`; `scripts/check_matching.py` diagnostic report against expected bands. Score spread 12 → 90; 4/5 bands verified live.
+- `client.py`: transient 503s retried; 429s classified by the server's retryDelay (over 300 s = daily stop, else back off and retry).
 
 ---
 

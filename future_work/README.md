@@ -16,7 +16,7 @@ not now", plus why it was put off and what doing it would involve.
   start on it.
 - **Add it to the index below** with one line.
 - **When you start an item,** move it into the real plan (e.g.
-  `docs/cover-letter-loop-plan.md`) or CLAUDE.md's CURRENT TASK, then delete the file
+  `docs/cover-letter-loop-plan.md`) or CLAUDE.md's Now section, then delete the file
   here and its index line. If you decide not to do it, delete it and note why in the
   relevant plan's decision log.
 
@@ -36,3 +36,6 @@ not now", plus why it was put off and what doing it would involve.
 | [Grading standard: next version](grading-standard-next-version.md): three rule questions from the owner's review of `pts-check-1` (generic = links target this employer; example rungs for non-software jobs and the absent-stronger-example blind spot; an answer to an ad instruction isn't filler), plus a per-flag untrue check | 2026-11-05 | Fresh letters (test split) and a new judge version |
 | [Faster letters](second-worker-and-faster-letters.md): the measured per-step seconds of an ~8 min letter and the levers for each (the second worker for scoring, once part 1 here, was built 2026-11-23: docs/second-worker-plan.md) | 2026-11-20 | Nothing technical; letter-changing speed levers go through docs/agent-optimisation-plan.md |
 | [Gemini prompt caching](gemini-prompt-caching.md): `cached_tokens` is always 0, so the implicit prefix cache the prompts were ordered for never saves anything | 2026-10-04 | Nothing; do before the trial ends (~2026-12-30) |
+| [Seek capture live checks](seek-capture-live-checks.md): the unverified classification fallback selectors, and search-card `location` / `discovered_query` that were never seen populated | 2026-09-21 / 2026-10-02 | A live Seek session the owner drives |
+| [Prefilter whole-phrase gaps](prefilter-whole-phrase-gaps.md): exact-name matching reports false gaps ("Typescript Programming" vs TypeScript) that go into the match prompt | 2026-10-16 | A measurement first: it changes scores |
+| [style_lint gap-led pattern](style-lint-gap-led-pattern.md): "While my X rather than Y" slips past the gap-led sentence check | 2026-10-04 | Nothing; fits the optimisation work |

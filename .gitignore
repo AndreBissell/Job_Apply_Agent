@@ -51,3 +51,8 @@ evals/work/
 
 # Generated personal reports (the to-work-on list: profile data)
 reports/
+
+# The private-data guard's list of the owner's private strings
+# (docs/private-data-guard-plan.md). It lives in .git/, which git never tracks; this
+# also ignores a copy anywhere in the working tree.
+private-data.txt
