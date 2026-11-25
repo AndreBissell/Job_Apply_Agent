@@ -109,7 +109,8 @@ One JSON object per line. Names are fixed; a test checks the full set of allowed
     "commit": "21c8405", "engine": "agent",
     "models": {"strong": "gemini-3.1-pro-preview", "mid": "…", "small": "…"},
     "thinking": {"strong": "high", "mid": "medium", "small": "low"},
-    "prices_seen": {"gemini-3.1-pro-preview": [2.0, 12.0, 0.2], "…": []}
+    "prices_seen": {"gemini-3.1-pro-preview": [2.0, 12.0, 0.2], "…": []},
+    "given_by_hand": ["commit", "thinking"]               // typed in with --commit / --thinking (D13); [] when run.json saved them
   },
 
   "totals": { "letters": 17, "cost_usd": 4.39, "seconds": 8279, "points_mean": 7.13 },
@@ -207,8 +208,18 @@ the rule in plan §9.0.
 | Only the judge-only A/A (c0 against c1, the re-judging below) | the same, plus **"provisional: judge noise only, writer noise not included"** |
 | None for this measure (cost and time until E3) | `no noise reference yet` |
 
+**Which kind of A/A a pair is** (D14): the A/A checkpoint's `settings.run` is the same as the
+checkpoint it repeats = **judge-only** (the same letters judged again); a different run =
+**writer + judge** (new letters written with the same settings, then judged).
+
+**What a judge-only A/A can be a reference for** (D14): only what the judge produces, i.e. points
+and every problem measure. Its letters are the same, so their cost, time and drafts are the same
+too: every difference is 0, `s` = 0 and T = 0, which would call any cost change "beyond noise".
+Cost, time and drafts therefore show **no noise reference yet** until a writer + judge A/A exists.
+
 `compare` uses the most recent writer + judge A/A pair whose `comparable` matches, else the
-judge-only one. The report says which pair it used. For averaged checkpoints, see §3.5.
+judge-only one (for judge measures only). The report says which pair it used. For averaged
+checkpoints, see §3.5.
 
 The judge-only reference is built on day one from files that already exist:
 `checkpoint dev-agent-v1 --judge pts-cal-2,pts-check-1 --aa-of c0 --experiment baseline`. Its
@@ -323,7 +334,12 @@ Each step ends with the full test suite passing.
 - **Stats.** Mean difference, ads up / same / down, `s`, T = 2s/√n and each label, on hand-worked
   numbers.
 - **Noise reference choice.** Writer + judge pair preferred over judge-only; "provisional" text when
-  only judge-only exists; "no noise reference yet" when none.
+  only judge-only exists; "no noise reference yet" when none. An A/A with the same run is
+  judge-only and one with a different run is writer + judge; a judge-only A/A gives no reference
+  for cost, time or drafts ("no noise reference yet" for those, never T = 0).
+- **Run settings (D13).** `run` saves `models` / `thinking` / `commit` in `run.json` (dirty tree
+  marked); a checkpoint copies them; `--commit` / `--thinking` fill them for an older run and
+  `given_by_hand` names them; neither = unknown, never today's values.
 - **Comparability.** `compare` refuses on a `comparable` mismatch and names the field; differing
   `settings` are listed, not refused.
 - **Prices.** Recomputed cost at a changed `PRICES` fixture; the report notes the change.
@@ -412,6 +428,24 @@ Each step ends with the full test suite passing.
   3. For a run without them (c0), `checkpoint --commit <sha> --thinking tier=level,...` types them
      in, and the checkpoint marks them as given by hand. For `dev-agent-v1`: commit `b423842` (the
      last commit before the run, 16 min earlier; `client.py` unchanged since, so its defaults were
-     low / medium / high), thinking as the owner confirms from `.env`.
+     low / medium / high), and the owner confirmed 2026-11-25 that `.env` has no
+     `GEMINI_THINKING_*` line, so c0's thinking is `small=low, mid=medium, strong=high`.
   4. Neither saved nor given: stored as unknown, and the reports say so. Today's values are never
      recorded as the run's.
+  5. **Per tier, not per step (owner, 2026-11-25).** `client.py` sets one level per tier, so a
+     per-tier record is exact. If an experiment later needs different levels on two steps of one
+     tier (E4 lowers `generate_letter`, and `GEMINI_THINKING_STRONG` also moves `revise_letter`),
+     that experiment adds the per-step override and records the level per call in `llm_usage`;
+     the checkpoint allowlist then gains that field on purpose. Not built now.
+  6. **Hand-given settings are marked** in a new allowlisted field, `settings.given_by_hand`
+     (a list naming `commit` and / or `thinking`; empty when `run.json` saved them). The reports
+     show the mark beside the value. Added to the allowlist on purpose, with its test (step 2).
+- **2026-11-25. The two kinds of A/A (owner, D14), §3.3.** An A/A checkpoint with the same
+  `settings.run` as the one it repeats is judge-only; a different run is writer + judge. A
+  judge-only A/A is a noise reference for judge measures only (points and problems): its letters
+  are identical, so cost, time and drafts would get `s` = 0 and T = 0, calling every change
+  real. Those show "no noise reference yet" until a writer + judge A/A exists (E3's control arm).
+- **2026-11-25. eval.db is read through a read-only connection** (`sqlite3`, `mode=ro`), with the
+  same join as `letter_lab._cost_rows` (`llm_usage.run_id` = `results[].letter_run_id`, using the
+  run's exact ids: `letter_run_id` 62 sits between the run's ids but belongs to another run). The
+  tool cannot write to it.
