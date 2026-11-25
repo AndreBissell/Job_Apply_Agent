@@ -308,3 +308,41 @@ def test_v2_run_needs_split_or_only_and_resume_keeps_its_split(frozen, run):
     code, out = run(frozen, "run", "--set", "v2", "--split", "dev", "--label", "r1", "--resume")
     assert code == 1 and "same --split" in out
     assert len(run.calls()) == 4  # only prepare's calls: no letter was written
+
+
+def test_a_run_saves_its_models_thinking_and_commit(frozen, tmp_path, monkeypatch):
+    """Experiment checkpoints plan D13: run.json records what the run used, so a checkpoint made
+    later never records the wrong day's values. Additive only: the run itself is unchanged. `run`
+    prints its paths relative to the repo, so the work folder sits in the gitignored evals/work/
+    (removed afterwards); everything else stays in tmp_path."""
+    import shutil
+    import uuid
+
+    _write_split(frozen, dev=["seek-9002"], test=["seek-9001"])
+    responses, log = tmp_path / "stub.json", tmp_path / "stub.jsonl"
+    responses.write_text(json.dumps({**STUB, "cover_letter": "Dear Hiring Manager, hello."}), encoding="utf-8")
+    work = ROOT / "evals" / "work" / f"_pytest-{uuid.uuid4().hex[:8]}"
+    env = {**os.environ, "LLM_PROVIDER": "stub", "LLM_STUB_RESPONSES": str(responses), "LLM_STUB_LOG": str(log),
+           "PYTHONIOENCODING": "utf-8", "GEMINI_THINKING_STRONG": "medium"}  # read the way client.py reads it
+    env.pop("DATABASE_URL", None)
+
+    def lab_run(*argv):
+        out = subprocess.run([sys.executable, "-c", DRIVER, str(work), str(frozen), *argv], cwd=ROOT, env=env,
+                             capture_output=True, text=True, encoding="utf-8", timeout=180)
+        return out.returncode, out.stdout + out.stderr
+
+    try:
+        assert lab_run("prepare", "--set", "v2")[0] == 0
+        code, out = lab_run("run", "--set", "v2", "--split", "dev", "--engine", "oneshot", "--label", "r1")
+        assert code == 0, out
+        meta = json.loads((work / "runs" / "r1" / "run.json").read_text(encoding="utf-8"))
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    assert meta["thinking"] == {"small": "low", "mid": "medium", "strong": "medium"}
+    assert meta["models"] == {"small": "stub", "mid": "stub", "strong": "stub"}
+    head = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True,
+                          text=True).stdout.strip()
+    assert meta["commit"] in (head, f"{head}-dirty")
+    assert [r["key"] for r in meta["results"]] == ["seek-9002"]
+    calls = [json.loads(line)["task"] for line in log.read_text(encoding="utf-8").splitlines() if line]
+    assert calls.count("cover_letter") == 1

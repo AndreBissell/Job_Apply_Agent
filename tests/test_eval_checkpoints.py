@@ -938,3 +938,225 @@ def test_checkpoints_list_rows():
     assert "| c1 | 2026-11-25 | letters | baseline | no | none | c0 | c0 | 7.50 | $0.1062 | 100 | — |" in out
     assert "| c3 | 2026-11-25 | measure | E1 | yes | none | — | — | — | — | — | G=5, U=2 |" in out
     assert ec.render_list([], PRICES) == "No checkpoints yet.\n"
+
+
+# ---------------------------------------------------------------------------
+# letter_lab.py's checkpoint / checkpoints / compare / history and run's saved settings (plan §2, D13).
+# Every path points at tmp_path: never the real runs, eval.db or checkpoints.jsonl.
+# ---------------------------------------------------------------------------
+def _load_lab():
+    """Import letter_lab by path, then undo its env and sys.path edits (as test_letter_lab_sets does)."""
+    import importlib.util
+    import os
+    saved_env = {k: os.environ.get(k) for k in ("DATABASE_URL", "APP_ENV")}
+    saved_path = list(sys.path)
+    try:
+        spec = importlib.util.spec_from_file_location("letter_lab_checkpoints_under_test",
+                                                      ROOT / "scripts" / "letter_lab.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+    finally:
+        for k, v in saved_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        sys.path[:] = saved_path
+    return mod
+
+
+lab = _load_lab()
+
+
+def _usage_db(path, rows):
+    import sqlite3
+    con = sqlite3.connect(path)
+    con.execute("CREATE TABLE llm_usage (id INTEGER PRIMARY KEY, created_at TEXT, run_id INTEGER, task TEXT, "
+                "tier TEXT, model TEXT, input_tokens INTEGER, cached_tokens INTEGER, output_tokens INTEGER, "
+                "thinking_tokens INTEGER, cost_usd NUMERIC, duration_ms INTEGER, job_id INTEGER)")
+    for r in rows:
+        con.execute("INSERT INTO llm_usage (run_id, task, tier, model, input_tokens, cached_tokens, output_tokens, "
+                    "thinking_tokens, cost_usd, duration_ms) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    [r[c] for c in ("run_id", "task", "tier", "model", "input_tokens", "cached_tokens",
+                                    "output_tokens", "thinking_tokens", "cost_usd", "duration_ms")])
+    con.commit()
+    con.close()
+
+
+@pytest.fixture()
+def v2(tmp_path, monkeypatch):
+    """letter_lab pointed at a fake v2 set in tmp_path: one run with two judgings, its llm_usage
+    rows in a scratch eval.db, the frozen judge in results/."""
+    runs, results, frozen = tmp_path / "runs", tmp_path / "results", tmp_path / "frozen"
+    for d in (runs / RUN, results, frozen):
+        d.mkdir(parents=True)
+    (runs / RUN / "run.json").write_text(json.dumps(_run()), encoding="utf-8")
+    for tag in ("v1-dev", "v1-again"):
+        (runs / RUN / f"judge-{tag}.json").write_text(json.dumps(_judging()), encoding="utf-8")
+    (results / "judge-v1.json").write_text(json.dumps(FROZEN), encoding="utf-8")
+    _usage_db(tmp_path / "eval.db", _usage())
+    for name, value in (("RUNS_DIR", runs), ("RESULTS_DIR", results), ("FROZEN_DIR", frozen),
+                        ("EVAL_DB", tmp_path / "eval.db")):
+        monkeypatch.setattr(lab, name, value)
+    monkeypatch.setattr(lab, "_v2_ads", lambda: ADS)
+    monkeypatch.setattr(lab, "_prices", lambda: PRICES)
+    return tmp_path
+
+
+def _cmd(*argv):
+    args = lab.build_parser().parse_args([*argv, "--set", "v2"])
+    return args.fn(args)
+
+
+C0 = ("checkpoint", RUN, "--judge", "v1-dev", "--experiment", "baseline", "--kept", "--note", "dev baseline")
+
+
+def test_checkpoint_command_writes_one_clean_line_from_the_run_and_eval_db(v2, capsys):
+    db_before = (v2 / "eval.db").read_bytes()
+    assert _cmd(*C0, "--commit", "b423842", "--thinking", "small=low,mid=medium,strong=high") == 0
+    assert "Appended c0" in capsys.readouterr().out
+    raw = (v2 / "results" / "checkpoints.jsonl").read_text(encoding="utf-8")
+    assert MARKER not in raw and "Acme Pty" not in raw and "Liam" not in raw
+    cp = json.loads(raw)
+    assert cp["settings"]["commit"] == "b423842" and cp["settings"]["given_by_hand"] == ["commit", "thinking"]
+    assert cp["settings"]["thinking"] == THINKING
+    assert cp["settings"]["models"] == {"strong": "gemini-pro", "mid": "gemini-flash"}  # from llm_usage
+    row = _row(cp, "acme-dev")
+    assert row["by_task"]["check_claims"]["calls"] == 2 and row["cost_usd"] == pytest.approx(0.1422)
+    assert cp["totals"]["cost_usd"] == pytest.approx(3 * 0.1422)  # run 999's $9 row is another run's
+    assert (v2 / "eval.db").read_bytes() == db_before  # read through a read-only connection
+
+
+def test_checkpoint_dry_run_writes_nothing(v2, capsys):
+    assert _cmd(*C0, "--dry-run") == 0
+    out = capsys.readouterr().out
+    assert "nothing written" in out and '"id": "c0"' in out
+    assert not (v2 / "results" / "checkpoints.jsonl").exists()
+
+
+def test_settings_saved_by_the_run_are_copied_and_cannot_be_typed_over(v2, capsys):
+    meta = _run(commit="def5678-dirty", thinking={"small": "low", "mid": "low", "strong": "high"},
+                models={"small": "x", "mid": "y", "strong": "z"})
+    (v2 / "runs" / RUN / "run.json").write_text(json.dumps(meta), encoding="utf-8")
+    with pytest.raises(SystemExit, match="saved its commit already"):
+        _cmd(*C0, "--commit", "b423842")
+    assert _cmd(*C0) == 0
+    cp = json.loads((v2 / "results" / "checkpoints.jsonl").read_text(encoding="utf-8"))
+    assert cp["settings"]["commit"] == "def5678-dirty" and cp["settings"]["given_by_hand"] == []
+    assert cp["settings"]["thinking"]["mid"] == "low"
+    assert cp["settings"]["models"]["strong"] == "gemini-pro"  # models always from llm_usage (D13.1)
+
+
+def test_neither_saved_nor_typed_in_stays_unknown(v2, capsys):
+    assert _cmd(*C0) == 0
+    cp = json.loads((v2 / "results" / "checkpoints.jsonl").read_text(encoding="utf-8"))
+    assert cp["settings"]["commit"] is None and cp["settings"]["thinking"] == {}
+    assert cp["settings"]["given_by_hand"] == []
+    assert "commit unknown; thinking unknown" in capsys.readouterr().out
+
+
+def test_repeat_check_then_compare_history_and_list(v2, capsys):
+    assert _cmd(*C0, "--commit", "b423842") == 0
+    assert _cmd("checkpoint", RUN, "--judge", "v1-again", "--experiment", "baseline", "--not-kept",
+                "--aa-of", "c0", "--commit", "b423842") == 0
+    capsys.readouterr()
+    assert _cmd("compare", "c1") == 0  # one id: against its parent, c0
+    out = capsys.readouterr().out
+    assert "## 1. Headline" in out and "Wrote " in out and "compare-c0-c1.md" in out
+    md = (v2 / "results" / "compare-c0-c1.md").read_text(encoding="utf-8")
+    assert "# Compare c0 → c1" in md and "## 7. How to read this" in md and MARKER not in md
+    assert _cmd("history") == 0
+    hist = (v2 / "results" / "history.md").read_text(encoding="utf-8")
+    assert "c1 vs c0 (judge-only, 3 letters, 1 judging)" in hist
+    capsys.readouterr()
+    assert _cmd("checkpoints") == 0
+    listing = capsys.readouterr().out
+    assert "| c0 |" in listing and "| c1 |" in listing
+
+
+@pytest.mark.parametrize("argv, says", [
+    (("checkpoint", "no-such-run", "--judge", "v1-dev", "--experiment", "baseline", "--kept"), "run.json"),
+    (("checkpoint", RUN, "--judge", "v1-missing", "--experiment", "baseline", "--kept"), "judge-v1-missing.json"),
+    (("checkpoint", RUN, "--judge", "v1-dev", "--experiment", "baseline", "--kept", "--frozen-judge", "v9"),
+     "no frozen judge"),
+    (("checkpoint", RUN, "--experiment", "baseline", "--kept"), "needs at least one --judge"),
+    (("compare", "c0", "c5"), "no checkpoint c0"),  # the file is empty: the first missing id is named
+])
+def test_command_refusals_write_nothing(v2, capsys, argv, says):
+    assert _cmd(*argv) == 1
+    out = capsys.readouterr().out
+    assert says in out and "Refused" in out
+    assert not (v2 / "results" / "checkpoints.jsonl").exists()
+
+
+def test_the_test_split_stays_closed_from_the_command(v2, capsys):
+    (v2 / "runs" / RUN / "run.json").write_text(json.dumps(_run(split="test")), encoding="utf-8")
+    assert _cmd(*C0) == 1 and "test split stays closed" in capsys.readouterr().out
+    assert _cmd(*C0, "--allow-test") == 0
+
+
+def test_checkpoints_need_a_frozen_set(v2, monkeypatch):
+    monkeypatch.setattr(lab, "FROZEN_DIR", None)
+    with pytest.raises(SystemExit, match="--set v2"):
+        _cmd("checkpoints")
+
+
+def test_measure_checkpoint_command(v2, capsys):
+    assert _cmd("checkpoint", "--measure", "--experiment", "E1", "--kept", "--value", "G=5", "--value", "U=2",
+                "--commit", "abc1234") == 0
+    cp = json.loads((v2 / "results" / "checkpoints.jsonl").read_text(encoding="utf-8"))
+    assert cp["kind"] == "measure" and cp["measures"] == {"G": 5.0, "U": 2.0}
+    assert _cmd("checkpoint", RUN, "--measure", "--experiment", "E1", "--kept", "--value", "G=1") == 1
+
+
+def test_thinking_must_name_tiers_and_levels():
+    assert lab._parse_thinking("small=low, strong=high") == {"small": "low", "strong": "high"}
+    for bad in ("small:low", "huge=low", "small=extreme"):
+        with pytest.raises(SystemExit, match="tier=level"):
+            lab._parse_thinking(bad)
+
+
+def test_usage_rows_take_the_runs_exact_ids(v2):
+    rows = lab._usage_rows(v2 / "eval.db", [100, 102])
+    assert {r["run_id"] for r in rows} == {100, 102} and len(rows) == 6
+    assert lab._usage_rows(v2 / "eval.db", []) == []
+
+
+def test_git_commit_marks_a_dirty_tree(monkeypatch):
+    import subprocess
+
+    def fake(status):
+        def run(cmd, **kw):
+            out = "abc1234\n" if "rev-parse" in cmd else status
+            return subprocess.CompletedProcess(cmd, 0, stdout=out, stderr="")
+        return run
+    monkeypatch.setattr(subprocess, "run", fake(""))
+    assert lab._git_commit() == "abc1234"
+    monkeypatch.setattr(subprocess, "run", fake(" M scripts/letter_lab.py\n"))
+    assert lab._git_commit() == "abc1234-dirty"
+
+    def broken(cmd, **kw):
+        raise OSError("no git")
+    monkeypatch.setattr(subprocess, "run", broken)
+    assert lab._git_commit() is None
+
+
+def test_run_settings_read_thinking_the_way_client_does(monkeypatch):
+    from app.llm import client
+    monkeypatch.setenv("GEMINI_THINKING_STRONG", "medium")
+    monkeypatch.setattr(lab, "_git_commit", lambda: "abc1234")
+    s = lab._run_settings()
+    assert s["thinking"]["strong"] == "medium" and s["thinking"]["small"] == client._thinking_level("small")
+    assert s["models"] == {t: client.model_for(t) for t in client.TIERS} and s["commit"] == "abc1234"
+
+
+def test_a_resumed_run_keeps_its_first_settings_and_marks_a_change():
+    new = {"commit": "def5678", "models": {"strong": "m"}, "thinking": {"strong": "low", "mid": "medium"}}
+    old = {"commit": "abc1234", "models": {"strong": "m"}, "thinking": {"strong": "high", "mid": "medium"}}
+    meta = copy.deepcopy(new)
+    lab._merge_run_settings(meta, old)
+    assert meta == {"commit": "abc1234+def5678", "models": {"strong": "m"},
+                    "thinking": {"strong": "high+low", "mid": "medium"}}
+    meta = copy.deepcopy(new)
+    lab._merge_run_settings(meta, {"results": []})  # a run started before D13: its first letters are unknown
+    assert meta == {}

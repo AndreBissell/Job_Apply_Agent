@@ -44,6 +44,15 @@ Eval sets (`--set`, on every command; default v1):
         # the scorecard (metrics plan §3) -> evals/results/v2/<run>.md (numbers and ad keys only)
         # + runs/<run>/report-detail.md (gitignored: quotes the letters)
 
+Experiment checkpoints (v2; docs/experiment-checkpoints-plan.md; no LLM, no judge call):
+    python scripts/letter_lab.py checkpoint --set v2 <run> --judge TAG[,TAG] --experiment E3 --kept --note "..."
+        # one line in evals/results/v2/checkpoints.jsonl (append-only; --dry-run writes nothing);
+        # --aa-of cN for a repeat check, --commit / --thinking for a run made before run.json saved them
+    python scripts/letter_lab.py checkpoint --set v2 --measure --experiment E1 --kept --value G=5 --value U=2
+    python scripts/letter_lab.py checkpoints --set v2              # list them
+    python scripts/letter_lab.py compare --set v2 c0 [c2]          # -> evals/results/v2/compare-c0-c2.md
+    python scripts/letter_lab.py history --set v2                  # -> evals/results/v2/history.md
+
 Privacy: evals/jobs/, evals/eval.db, evals/set.json and evals/runs/ hold ad text,
 your profile and letters written as you — all gitignored. Only the summary in
 evals/results/ (titles, pass/fail, cost) is meant to be committed.
@@ -684,6 +693,51 @@ ENGINES = {
 }
 
 
+def _git_commit() -> str | None:
+    """git HEAD's short sha, with "-dirty" when the tree has uncommitted changes (untracked files
+    count: a new module the run imports is part of what ran). None when git can't say."""
+    import subprocess
+
+    try:
+        sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True, text=True,
+                             timeout=20, check=True).stdout.strip()
+        dirty = subprocess.run(["git", "status", "--porcelain"], cwd=ROOT, capture_output=True, text=True,
+                               timeout=60, check=True).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return (sha + ("-dirty" if dirty else "")) if sha else None
+
+
+def _run_settings() -> dict:
+    """What a run used (experiment checkpoints plan D13): the model and thinking level per tier, read
+    the way client.py reads them, and the commit. Saved in run.json so a checkpoint made later never
+    records the wrong day's values."""
+    from app.llm import client
+
+    return {"models": {t: client.model_for(t) for t in client.TIERS},
+            "thinking": {t: client._thinking_level(t) for t in client.TIERS},
+            "commit": _git_commit()}
+
+
+def _merge_run_settings(meta: dict, old: dict) -> None:
+    """A resumed run keeps what it first ran with; a value that changed in between is recorded as
+    both ("high+low", "abc1234+def5678"), never silently replaced. A run first written before these
+    fields existed has unknown settings for its earlier letters, so they stay unsaved (D13: never
+    today's values for an old run; `checkpoint --commit / --thinking` can type them in)."""
+    def both(was, now):
+        if was is None or now is None:
+            return None  # one part unknown: the whole is unknown
+        return now if was == now else f"{was}+{now}"
+
+    for f in ("commit", "models", "thinking"):
+        if f not in old:
+            meta.pop(f, None)
+        elif f == "commit":
+            meta[f] = both(old[f], meta[f])
+        else:
+            meta[f] = {t: both(old[f].get(t), meta[f].get(t)) for t in dict.fromkeys([*old[f], *meta[f]])}
+
+
 def _run_cost(job_id: int, since: datetime.datetime) -> dict:
     """Tokens and cost of the letter-writing calls for one job in this run."""
     from sqlalchemy import func, select
@@ -739,7 +793,9 @@ def cmd_run(args) -> int:
     meta = {
         "run_id": run_id, "engine": args.engine, "strong_model": client.model_for("strong"),
         "side_outputs": list(SIDE_OUTPUTS), "split": args.split,
-        "created_at": datetime.datetime.now().isoformat(timespec="seconds"), "results": [],
+        "created_at": datetime.datetime.now().isoformat(timespec="seconds"),
+        **_run_settings(),  # models / thinking / commit (D13): additive, nothing else here changes
+        "results": [],
     }
     meta_path = run_dir / "run.json"
     if args.resume and meta_path.exists():  # keep finished jobs, redo failed/missing ones
@@ -747,6 +803,7 @@ def cmd_run(args) -> int:
         if old.get("split") != args.split:
             print(f"Run {run_id} was a --split {old.get('split')} run; resume it with the same --split")
             return 1
+        _merge_run_settings(meta, old)
         meta["created_at"] = old.get("created_at", meta["created_at"])
         meta["results"] = [r for r in old["results"] if "error" not in r]
     results = meta["results"]
@@ -2383,6 +2440,204 @@ def cmd_plant(args) -> int:
     return 0
 
 
+# ---------------------------------------------------------------------------
+# 8. checkpoint / checkpoints / compare / history (docs/experiment-checkpoints-plan.md)
+# ---------------------------------------------------------------------------
+# The logic is in scripts/eval_checkpoints.py (pure functions); these commands only read the run's
+# files and llm_usage, and write the committed JSONL and reports. No LLM, no judge call.
+USAGE_COLUMNS = ("run_id", "task", "tier", "model", "input_tokens", "cached_tokens", "output_tokens",
+                 "thinking_tokens", "cost_usd", "duration_ms")
+THINKING_LEVELS = ("minimal", "low", "medium", "high")
+
+
+def _checkpoints_module():
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import eval_checkpoints
+
+    return eval_checkpoints
+
+
+def _prices() -> dict:
+    from app.llm import client
+
+    return client.PRICES
+
+
+def _checkpoints_file() -> Path:
+    if FROZEN_DIR is None:
+        raise SystemExit("Checkpoints are kept for a frozen eval set: add --set v2")
+    return RESULTS_DIR / _checkpoints_module().CHECKPOINTS_FILE
+
+
+def _usage_rows(db_path: Path, run_ids: list[int]) -> list[dict]:
+    """llm_usage rows of exactly these letter runs, through a READ-ONLY connection (mode=ro): the
+    checkpoint can't write to eval.db. The same join as _cost_rows (llm_usage.run_id = the run's
+    letter_run_ids), never an id range: another run's letter can sit between a run's ids."""
+    if not run_ids:
+        return []
+    if not db_path.exists():
+        raise SystemExit(f"No {_rel(db_path)}: the run's cost and tokens live in its llm_usage table")
+    con = sqlite3.connect(db_path.resolve().as_uri() + "?mode=ro", uri=True)
+    try:
+        marks = ", ".join("?" * len(run_ids))
+        rows = con.execute(f"SELECT {', '.join(USAGE_COLUMNS)} FROM llm_usage WHERE run_id IN ({marks}) ORDER BY id",
+                           list(run_ids)).fetchall()
+    finally:
+        con.close()
+    return [dict(zip(USAGE_COLUMNS, r)) for r in rows]
+
+
+def _parse_thinking(text: str) -> dict:
+    """--thinking small=low,mid=medium,strong=high"""
+    out = {}
+    for part in text.split(","):
+        tier, sep, level = (x.strip() for x in part.partition("="))
+        if not sep or tier not in ("small", "mid", "strong") or level not in THINKING_LEVELS:
+            raise SystemExit(f"--thinking {text!r}: expected tier=level pairs, tiers small / mid / strong, "
+                             f"levels {' / '.join(THINKING_LEVELS)}")
+        out[tier] = level
+    return out
+
+
+def _hand_settings(args, run_meta: dict) -> tuple[str | None, dict, list[str]]:
+    """(commit, thinking, given_by_hand) for a run (D13): run.json's own values, else what the owner
+    types in, else unknown. Typing in a value run.json already saved is refused."""
+    hand = []
+    commit, thinking = run_meta.get("commit"), run_meta.get("thinking") or {}
+    for name, given in (("commit", args.commit), ("thinking", args.thinking)):
+        if given is None:
+            continue
+        if name in run_meta:
+            raise SystemExit(f"run.json saved its {name} already; --{name} is only for runs made before D13")
+        hand.append(name)
+        if name == "commit":
+            commit = given
+        else:
+            thinking = _parse_thinking(given)
+    return commit, thinking, hand
+
+
+def cmd_checkpoint(args) -> int:
+    ec = _checkpoints_module()
+    path = _checkpoints_file()
+    existing = ec.load(path)
+    try:
+        if args.measure:
+            if args.run_id or args.judge:
+                print("A --measure checkpoint has no run and no --judge")
+                return 1
+            commit = args.commit or _git_commit()
+            cp = ec.build_measure_checkpoint(
+                existing, experiment=args.experiment, values=ec.parse_values(args.value or []), commit=commit,
+                kept=args.kept, note=args.note, verdict=args.verdict, rule=args.rule, parent=args.parent,
+                replaces=args.replaces)
+        else:
+            if not args.run_id:
+                print("Name the run (or give --measure)")
+                return 1
+            cp = _build_letters_checkpoint(ec, args, existing)
+    except ec.CheckpointError as e:
+        print(f"Refused, nothing written: {e}")
+        return 1
+    _print_checkpoint(ec, cp)
+    if args.dry_run:
+        print("\n--dry-run: nothing written. The line would be:\n" + ec.dumps(cp))
+        return 0
+    ec.append(path, cp)
+    print(f"\nAppended {cp['id']} to {_rel(path)}")
+    return 0
+
+
+def _build_letters_checkpoint(ec, args, existing: list[dict]) -> dict:
+    run_dir = RUNS_DIR / args.run_id
+    meta_path = run_dir / "run.json"
+    if not meta_path.exists():
+        raise ec.CheckpointError(f"no {_rel(meta_path)}")
+    run_meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    if not args.judge:
+        raise ec.CheckpointError("a letters checkpoint needs at least one --judge TAG[,TAG]")
+    judgings = []
+    for spec in args.judge:
+        judging = []
+        for tag in (t.strip() for t in spec.split(",") if t.strip()):
+            f = run_dir / f"judge-{tag}.json"
+            if not f.exists():
+                raise ec.CheckpointError(f"no {_rel(f)}")
+            judging.append((tag, json.loads(f.read_text(encoding="utf-8"))))
+        judgings.append(judging)
+    frozen_path = RESULTS_DIR / f"judge-{args.frozen_judge}.json"
+    if not frozen_path.exists():
+        raise ec.CheckpointError(f"no frozen judge {_rel(frozen_path)}")
+    commit, thinking, hand = _hand_settings(args, run_meta)
+    run_ids = [r["letter_run_id"] for r in run_meta["results"] if r.get("letter_run_id")]
+    return ec.build_letters_checkpoint(
+        existing, run_meta=run_meta, judgings=judgings,
+        frozen_judge=json.loads(frozen_path.read_text(encoding="utf-8")),
+        usage=_usage_rows(EVAL_DB, run_ids), ads=_v2_ads(),
+        scorer_sha256=ec.file_sha256(ROOT / "scripts" / "letter_points.py"), prices=_prices(),
+        thinking=thinking, commit=commit, set_name=args.set, experiment=args.experiment, kept=args.kept,
+        note=args.note, verdict=args.verdict, rule=args.rule, parent=args.parent, aa_of=args.aa_of,
+        replaces=args.replaces, allow_test=args.allow_test, given_by_hand=hand)
+
+
+def _print_checkpoint(ec, cp: dict) -> None:
+    print(f"{cp['id']}: {cp['kind']} checkpoint, experiment {cp['experiment']}, parent {cp['parent'] or 'none'}, "
+          f"kept {'yes' if cp['kept'] else 'no'}, verdict {cp['verdict']}"
+          + (f", repeat of {cp['aa_of']}" if cp.get("aa_of") else ""))
+    if cp["kind"] == "measure":
+        print("  " + ", ".join(f"{k}={v:g}" for k, v in cp["measures"].items()) + f"; commit {cp['settings']['commit']}")
+        return
+    s, t = ec.summary(cp, _prices()), cp["settings"]
+    hand = t.get("given_by_hand", [])
+    print(f"  run {t['run']}, judged {' / '.join('+'.join(g) for g in t['judge_tags'])} on "
+          f"{', '.join(t['judge_backends'])}; {s['letters']} letters, {s['judged']} judged")
+    print(f"  points {ec.fmt('points', s['points'])}, {ec.fmt('cost_usd', s['cost_usd'])} / letter as recorded "
+          f"({ec.fmt('cost_today', s['cost_today'])} at today's prices), {ec.fmt('seconds', s['seconds'])} s / letter")
+    print(f"  commit {t.get('commit') or 'unknown'}{' (typed in)' if 'commit' in hand else ''}; thinking "
+          + (", ".join(f"{k}={v}" for k, v in t.get("thinking", {}).items()) or "unknown")
+          + (" (typed in)" if "thinking" in hand else "") + "; models "
+          + (", ".join(f"{k}={v}" for k, v in t.get("models", {}).items()) or "unknown"))
+
+
+def _utf8_stdout() -> None:
+    if hasattr(sys.stdout, "reconfigure"):  # Windows consoles are cp1252; the reports print → and −
+        sys.stdout.reconfigure(encoding="utf-8")
+
+
+def cmd_checkpoints(args) -> int:
+    ec = _checkpoints_module()
+    _utf8_stdout()
+    print(ec.render_list(ec.load(_checkpoints_file()), _prices()), end="")
+    return 0
+
+
+def cmd_compare(args) -> int:
+    ec = _checkpoints_module()
+    path = _checkpoints_file()
+    cps = ec.load(path)
+    try:
+        a, b = ec.resolve_pair(cps, args.a, args.b)
+        cmp = ec.compare(cps, a, b, _prices())
+    except ec.CheckpointError as e:
+        print(f"Refused: {e}")
+        return 1
+    out = RESULTS_DIR / ec.report_name(a, b)
+    out.write_text(ec.render_compare(cmp, _prices(), args.set), encoding="utf-8")
+    _utf8_stdout()
+    print("\n".join(ec.render_headline(cmp)))
+    print(f"\nWrote {_rel(out)}")
+    return 0
+
+
+def cmd_history(args) -> int:
+    ec = _checkpoints_module()
+    cps = ec.load(_checkpoints_file())
+    out = RESULTS_DIR / "history.md"
+    out.write_text(ec.render_history(cps, _prices(), args.set), encoding="utf-8")
+    print(f"Wrote {_rel(out)} ({len(cps)} checkpoints)")
+    return 0
+
+
 def func_sum(col):
     from sqlalchemy import func
 
@@ -2476,6 +2731,42 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--resume", action="store_true", help="keep letters already in plants.json, do the rest")
     p.add_argument("--report-only", action="store_true", help="re-score plants.json and rewrite the report; no LLM calls")
     p.set_defaults(fn=cmd_plant)
+
+    p = add("checkpoint", help="v2: record a finished experiment once -> evals/results/v2/checkpoints.jsonl")
+    p.add_argument("run_id", nargs="?", help="the run (not with --measure)")
+    p.add_argument("--judge", action="append", metavar="TAG[,TAG]",
+                   help="one judging; halves covering different letters joined with a comma; "
+                        "give it twice to average two judgings")
+    p.add_argument("--experiment", required=True, help="the optimisation map's id (E3), or baseline")
+    p.add_argument("--note", default="", help="what this checkpoint is, in a few words")
+    kept = p.add_mutually_exclusive_group(required=True)
+    kept.add_argument("--kept", dest="kept", action="store_true", help="the change is adopted")
+    kept.add_argument("--not-kept", dest="kept", action="store_false", help="the change is not adopted")
+    p.add_argument("--verdict", choices=["pass", "fail", "none"], default="none",
+                   help="against the rule written before the run (needs --rule)")
+    p.add_argument("--rule", default="", help="the pass / fail rule, pasted from the plan")
+    p.add_argument("--parent", help="default: the last kept checkpoint of the same kind")
+    p.add_argument("--aa-of", help="this repeats checkpoint cN with no change (a noise reference)")
+    p.add_argument("--replaces", help="a correction of checkpoint cN")
+    p.add_argument("--frozen-judge", default="v1", help="the frozen judge every letter's judge block must match")
+    p.add_argument("--commit", help="for a run made before run.json saved it (marked as typed in)")
+    p.add_argument("--thinking", help="for a run made before run.json saved it: small=low,mid=medium,strong=high")
+    p.add_argument("--measure", action="store_true", help="a measure checkpoint (no letters): give --value")
+    p.add_argument("--value", action="append", metavar="NAME=NUMBER", help="a measure, repeated")
+    p.add_argument("--allow-test", action="store_true", help="the final graded test-split run only")
+    p.add_argument("--dry-run", action="store_true", help="print the line, write nothing")
+    p.set_defaults(fn=cmd_checkpoint)
+
+    p = add("checkpoints", help="v2: list every checkpoint")
+    p.set_defaults(fn=cmd_checkpoints)
+
+    p = add("compare", help="v2: compare two checkpoints -> evals/results/v2/compare-<a>-<b>.md")
+    p.add_argument("a", help="checkpoint id (alone: compared with its parent)")
+    p.add_argument("b", nargs="?", help="the second checkpoint id")
+    p.set_defaults(fn=cmd_compare)
+
+    p = add("history", help="v2: the history of every checkpoint -> evals/results/v2/history.md")
+    p.set_defaults(fn=cmd_history)
 
     return parser
 

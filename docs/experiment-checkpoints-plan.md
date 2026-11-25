@@ -1,6 +1,6 @@
 # Experiment checkpoints and comparison: plan (branch `cost_perform_analysis`)
 
-**Status:** v1.0, APPROVED by the owner 2026-11-25. Steps 0–4 built; step 5 (the `letter_lab.py` commands) is next.
+**Status:** v1.0, APPROVED by the owner 2026-11-25. Steps 0–5 built; step 6 (c0 and c1 on the real files) is next.
 
 **Where it fits:** row T1 in [optimisation-map.md](optimisation-map.md) ("Comparison tool… build
 before E3"), plus a history log the map did not have. Every pass/fail rule in
@@ -310,7 +310,7 @@ Each step ends with the full test suite passing.
 | 2 | Pairing and stats: paired differences, ads up / down, A/A `s`, T and the labels, cost at today's prices. **BUILT 2026-11-25**: 22 tests (58 in the file), suite 2099 passed; 2 existing tests changed (Decision log) | none |
 | 3 | `compare` report and its terminal headline. **BUILT 2026-11-25**: 12 tests (70 in the file), suite 2111 passed; no existing test changed | none |
 | 4 | `history` report with the Mermaid charts; `checkpoints` list. **BUILT 2026-11-25**: 8 tests (78 in the file), suite 2119 passed; no existing test changed | none |
-| 5 | `letter_lab.py` subcommands wired to 1–4; `run` saves `models` / `thinking` / `commit` in `run.json`, `checkpoint --commit / --thinking` for older runs (Decision log D13) | none |
+| 5 | `letter_lab.py` subcommands wired to 1–4; `run` saves `models` / `thinking` / `commit` in `run.json`, `checkpoint --commit / --thinking` for older runs (Decision log D13). **BUILT 2026-11-25**: 19 tests (18 in `test_eval_checkpoints.py`, 96 there; 1 in `test_letter_lab_sets.py`), suite 2138 passed; no existing test changed | none |
 | 6 | Real data: write **c0** (`dev-agent-v1`, `v1-dev`) and **c1** (A/A of c0: the same letters re-judged, `pts-cal-2` + `pts-check-1`); `compare c0 c1` must give paired SD ≈ 0.65 and mean move ≈ 0.19; c0's cost must match the cost table ($0.258 a letter); check the JSONL by eye for any text | none |
 | 7 | Docs: T1 row in the map set to done with a link here; one line in CLAUDE.md's current task; this plan's Decision log | none |
 
@@ -518,3 +518,26 @@ Each step ends with the full test suite passing.
     cost / time / drafts read "not a reference (same letters)", an s of 0 "0 (never moved)".
   - **`checkpoints` list:** a measure checkpoint's numbers go in its note column; a replaced
     checkpoint is marked "(replaced by cN)".
+- **2026-11-25. Step 5 built** (`letter_lab.py checkpoint / checkpoints / compare / history`, and
+  `run` saving its settings; 19 tests, suite 2138 passed, no existing test changed). Choices the
+  plan did not spell out:
+  - **`run` (D13, the one approved change):** `run.json` gains `models` and `thinking` per tier
+    (read with `client.model_for` / `client._thinking_level`, exactly as the calls read them) and
+    `commit` (`git rev-parse --short HEAD`, `-dirty` when `git status --porcelain` lists anything,
+    untracked files included: a new module the run imports is part of what ran; unknown if git
+    can't say). Nothing else `run` does or prints changed.
+  - **A resumed run** keeps the values it first ran with; a value that changed in between is
+    recorded as both (`high+low`, `abc1234+def5678`). A run first written before these fields
+    existed stays unsaved on resume (its earlier letters' settings are unknown, D13.4), so
+    `--commit` / `--thinking` can still type them in.
+  - **`checkpoint`:** `--kept` or `--not-kept` is required (D4: every checkpoint is marked);
+    `--frozen-judge` defaults to `v1` (`evals/results/v2/judge-v1.json`); typing `--commit` /
+    `--thinking` for a run whose `run.json` saved them is refused; every refusal prints "Refused,
+    nothing written". The four commands refuse without `--set v2`.
+  - **A measure checkpoint's commit** defaults to today's HEAD (a measure is recorded right after
+    it is measured; no run file holds an older one); `--commit` overrides it. Owner may overrule.
+  - **eval.db** is opened with `mode=ro` and queried for the run's exact `letter_run_id`s; a test
+    checks the file is byte-for-byte unchanged after a checkpoint.
+  - **The end-to-end `run` test** (stub model, no network) puts its working folder in the
+    gitignored `evals/work/_pytest-<id>/` and deletes it afterwards, because `run` prints its paths
+    relative to the repo; changing that print would have changed `run`.
