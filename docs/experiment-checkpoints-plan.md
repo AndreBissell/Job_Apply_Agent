@@ -1,6 +1,6 @@
 # Experiment checkpoints and comparison: plan (branch `cost_perform_analysis`)
 
-**Status:** v1.0, APPROVED by the owner 2026-11-25. Steps 0–5 built; step 6 (c0 and c1 on the real files) is next.
+**Status:** v1.0, APPROVED by the owner 2026-11-25. Steps 0–6 built (c0 and c1 are in `evals/results/v2/checkpoints.jsonl`); step 7 (docs) is next.
 
 **Where it fits:** row T1 in [optimisation-map.md](optimisation-map.md) ("Comparison tool… build
 before E3"), plus a history log the map did not have. Every pass/fail rule in
@@ -311,7 +311,7 @@ Each step ends with the full test suite passing.
 | 3 | `compare` report and its terminal headline. **BUILT 2026-11-25**: 12 tests (70 in the file), suite 2111 passed; no existing test changed | none |
 | 4 | `history` report with the Mermaid charts; `checkpoints` list. **BUILT 2026-11-25**: 8 tests (78 in the file), suite 2119 passed; no existing test changed | none |
 | 5 | `letter_lab.py` subcommands wired to 1–4; `run` saves `models` / `thinking` / `commit` in `run.json`, `checkpoint --commit / --thinking` for older runs (Decision log D13). **BUILT 2026-11-25**: 19 tests (18 in `test_eval_checkpoints.py`, 96 there; 1 in `test_letter_lab_sets.py`), suite 2138 passed; no existing test changed | none |
-| 6 | Real data: write **c0** (`dev-agent-v1`, `v1-dev`) and **c1** (A/A of c0: the same letters re-judged, `pts-cal-2` + `pts-check-1`); `compare c0 c1` must give paired SD ≈ 0.65 and mean move ≈ 0.19; c0's cost must match the cost table ($0.258 a letter); check the JSONL by eye for any text | none |
+| 6 | Real data: write **c0** (`dev-agent-v1`, `v1-dev`) and **c1** (A/A of c0: the same letters re-judged, `pts-cal-2` + `pts-check-1`); `compare c0 c1` must give paired SD ≈ 0.65 and mean move ≈ 0.19; c0's cost must match the cost table ($0.258 a letter); check the JSONL by eye for any text. **BUILT 2026-11-25**: c0 and c1 written; `compare c0 c1`: 17 pairs, paired SD 0.6467, mean move +0.1912 (T 0.31; relevant 10: +0.23, T 0.41); c0 $0.2581 a letter, $4.387 total, as recorded and at today's prices alike; no text in the JSONL or the two reports; suite 2138 passed, no code or test changed (Decision log) | none |
 | 7 | Docs: T1 row in the map set to done with a link here; one line in CLAUDE.md's current task; this plan's Decision log | none |
 
 ## 7. Tests (new file `tests/test_eval_checkpoints.py`, fixtures only, no real data)
@@ -356,7 +356,7 @@ Each step ends with the full test suite passing.
 - [ ] `tests/test_eval_checkpoints.py` covers every bullet in §7.
 - [ ] No existing test is weakened: none deleted, skipped, xfailed or loosened; any changed test is
       listed here with its reason.
-- [ ] c0 and its judge-only A/A checkpoint are in `evals/results/v2/checkpoints.jsonl`, and the
+- [x] c0 and its judge-only A/A checkpoint are in `evals/results/v2/checkpoints.jsonl`, and the
       comparison reproduces plan §9.0's noise numbers and the cost table's $0.258.
 - [ ] `compare-c0-c1.md` and `history.md` are written and read well (manual check 1–2).
 - [ ] `git diff --cached` checked for personal data before the commit: numbers, ad keys, row ids
@@ -541,3 +541,27 @@ Each step ends with the full test suite passing.
   - **The end-to-end `run` test** (stub model, no network) puts its working folder in the
     gitignored `evals/work/_pytest-<id>/` and deletes it afterwards, because `run` prints its paths
     relative to the repo; changing that print would have changed `run`.
+- **2026-11-25. Step 6 built: c0 and c1 on the real files** (no code or test changed; no paid call;
+  eval.db read-only). Commands, both with `--commit b423842 --thinking small=low,mid=medium,strong=high
+  --set v2` (D13.3):
+  - **c0**: `checkpoint dev-agent-v1 --judge v1-dev --experiment baseline --kept --note "dev
+    baseline, agent engine, judge v1"`. 17 letters, all judged; points 7.13 (relevant 10: 7.15).
+  - **c1**: `checkpoint dev-agent-v1 --judge pts-cal-2,pts-check-1 --experiment baseline --not-kept
+    --aa-of c0 --note "repeat check of c0: same letters, judged again"`. Points 7.32. The two halves
+    are joined with a **comma** (one judging, §3.3). The brief for this step wrote them as two
+    `--judge` flags, which means *average two judgings* (D11); the tool refused it, correctly, because
+    each half covers different letters (pts-cal-2 has 8, pts-check-1 the other 9), so no letter is in
+    both. The comma form is the plan's own command.
+  - **`compare c0 c1`** reproduces plan §9.0: 17 pairs, paired SD **0.6467**, mean move **+0.1912**
+    (5 letters up, 11 same, 1 down); T = 2 × 0.6467 ÷ √17 = 0.31, so the move is within noise, as an
+    A/A must be. Relevant 10: +0.23, T 0.41 (the all-17 SD with n = 10). Problem types: missed rows
+    wobble 0.56 a letter, untrue 0.33, mix-up 0.12; the other five never moved (as the earlier entry).
+  - **c0's cost = the cost table**: $0.2581 a letter, $4.387 total. `cost-dev-agent-v1.md` sums
+    `llm_usage.cost_usd`, so its figure is the **as recorded** one; at today's prices it is the same,
+    because every price in c0's `prices_seen` equals today's `client.PRICES`. They will part when the
+    Flash prices double on 2027-01-01.
+  - **Privacy check**: every string value in the JSONL is an id, ad key, row id, checklist Y/N, model,
+    setting, tag, or one of the two typed notes; a search of the JSONL, `compare-c0-c1.md` and
+    `history.md` for every run.json title and company and every judge quote (767 texts, also as
+    40-character windows) found only three problem-type names (`no_personal_reason`,
+    `stock_phrasing`, `weak_example`), which the judge's `issues` list carries as the issue type.
