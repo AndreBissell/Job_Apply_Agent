@@ -294,12 +294,12 @@ Each step ends with the full test suite passing.
 
 | Step | What | Paid calls |
 |---|---|---|
-| 0 | Record the baseline test count (`python -m pytest -q`) here before any code | none |
-| 1 | `scripts/eval_checkpoints.py`: build a checkpoint from a run + judging (allowlist, checks of §3.1), append / load the JSONL, parent rule | none |
+| 0 | Record the baseline test count (`python -m pytest -q`) here before any code. **DONE 2026-11-25: 2041 passed, 0 failed, 0 skipped** (commit `650876c`, `.venv` Python 3.11.9, 82 s; the system Python gives the same 2041) | none |
+| 1 | `scripts/eval_checkpoints.py`: build a checkpoint from a run + judging (allowlist, checks of §3.1), append / load the JSONL, parent rule. **BUILT 2026-11-25**: 36 tests, suite 2077 passed | none |
 | 2 | Pairing and stats: paired differences, ads up / down, A/A `s`, T and the labels, cost at today's prices | none |
 | 3 | `compare` report and its terminal headline | none |
 | 4 | `history` report with the Mermaid charts; `checkpoints` list | none |
-| 5 | `letter_lab.py` subcommands wired to 1–4 | none |
+| 5 | `letter_lab.py` subcommands wired to 1–4; `run` saves `models` / `thinking` / `commit` in `run.json`, `checkpoint --commit / --thinking` for older runs (Decision log D13) | none |
 | 6 | Real data: write **c0** (`dev-agent-v1`, `v1-dev`) and **c1** (A/A of c0: the same letters re-judged, `pts-cal-2` + `pts-check-1`); `compare c0 c1` must give paired SD ≈ 0.65 and mean move ≈ 0.19; c0's cost must match the cost table ($0.258 a letter); check the JSONL by eye for any text | none |
 | 7 | Docs: T1 row in the map set to done with a link here; one line in CLAUDE.md's current task; this plan's Decision log | none |
 
@@ -335,7 +335,7 @@ Each step ends with the full test suite passing.
 
 ## Done when
 
-- [ ] The baseline test count is recorded in this plan before any code (step 0).
+- [x] The baseline test count is recorded in this plan before any code (step 0): 2041 passed.
 - [ ] The **entire** test suite runs and passes after the code is added.
 - [ ] `tests/test_eval_checkpoints.py` covers every bullet in §7.
 - [ ] No existing test is weakened: none deleted, skipped, xfailed or loosened; any changed test is
@@ -373,3 +373,45 @@ Each step ends with the full test suite passing.
   2026-12-30; checkpoints record each judging's backend and the reports flag a Vertex one (§3.6).
   The Vertex backend is not built yet, and would be a new frozen judge, not v1. The same deadline
   is noted in CLAUDE.md's LLM layer.
+- **2026-11-25. Step 1 built** (`scripts/eval_checkpoints.py`, `tests/test_eval_checkpoints.py`, 36
+  tests). Checked against the real files first, read-only: `letter_points.score(issues)` re-adds
+  to the stored `points` (and `by_metric`) for every letter of `v1-dev`, `pts-cal-2` and
+  `pts-check-1`; every judge block equals `judge-v1.json`'s `version`; `llm_usage` summed per
+  `letter_run_id` equals `run.json`'s `cost_usd` per letter ($4.387, $0.2581 a letter); the
+  plan's §9.0 numbers come out of the two judgings (paired SD 0.647, mean move 0.191, 17 pairs).
+  Choices the plan did not spell out:
+  - **"Failed letter" means no draft** (`error` in the result, or 0 drafts), not `status`.
+    `dev-agent-v1`'s one `failed` letter (a 429 in `check_claims`) has 2 drafts and was judged,
+    so it is paired; that is how §9.0 got 17 pairs.
+  - **More refusals than §3.1 lists**, all on the same "don't let a wrong judging in" line: a letter
+    with a draft that no judging covers (also with one judging, so a half can't pass as a whole);
+    a judge record whose `run` is another run, or an ad that is not in the run; the scorer's
+    per-metric levels differing from the stored `by_metric` (D12's check, one level finer); one
+    task using two models in one letter (a row keeps one model per task); and judgings that
+    disagree on the letter's `words` / `stock_hits` (code-set, so they judged different letters).
+  - **The test-split refusal also covers an `--only` run** whose ads are on the test side.
+  - **Privacy guard checks values as well as keys**: every short value (ad key, status, model,
+    tag, row id, checklist id) must be a plain name with no spaces, and checklist answers Y / N /
+    mixed. Free text is allowed only in `note` and `rule`, which the owner types.
+  - **Averaged checklists**: an item's answer when every judging agrees, else `mixed` (a Y/N is
+    not averaged). `missed_row_ids` are sorted by row number (R3 before R10).
+  - **Parent rule**: the default parent is the last kept checkpoint *of the same kind* (a kept
+    measure checkpoint like E1 must not become a letter run's parent), and an A/A checkpoint is
+    never a default parent, even if marked kept (it repeats, it doesn't change anything).
+  - **A pass / fail verdict needs `--rule`** (D10's "rule written first"); `none` doesn't.
+- **2026-11-25. Run settings are saved by the run (owner decision, D13).** A run records only its
+  strong model; the thinking levels and the commit are recorded nowhere, and what ran = the code's
+  defaults at that commit + any `.env` override (`GEMINI_MODEL_*`, `GEMINI_THINKING_*`, gitignored)
+  at that moment. Reading them when the checkpoint is made would record the wrong day's values
+  (c0 is made a month after `dev-agent-v1`). Decided:
+  1. `settings.models` comes from `llm_usage` per tier (logged at call time: a fact for old runs too).
+  2. **The one approved exception to "no change to how `run` behaves"**: `letter_lab.py run` adds
+     `models`, `thinking` (per tier, read the way `client.py` reads them) and `commit` (git HEAD,
+     marked when the tree had uncommitted changes) to `run.json`. Additive fields only; nothing
+     else `run` does changes. Built in step 5, with a test.
+  3. For a run without them (c0), `checkpoint --commit <sha> --thinking tier=level,...` types them
+     in, and the checkpoint marks them as given by hand. For `dev-agent-v1`: commit `b423842` (the
+     last commit before the run, 16 min earlier; `client.py` unchanged since, so its defaults were
+     low / medium / high), thinking as the owner confirms from `.env`.
+  4. Neither saved nor given: stored as unknown, and the reports say so. Today's values are never
+     recorded as the run's.
