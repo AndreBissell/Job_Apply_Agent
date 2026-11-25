@@ -211,7 +211,7 @@ plan's Decision log and a one-line result here.
 | N4 | Request timeout on Gemini calls | I11 | T | $0 | No | — | idea | Folded into E2 in the plan |
 | S3 to S5 | Per-step thinking sweeps (§3) | I9 | C T | cents each | No | E6 for S3 | idea | |
 | D-E | "What I want from my next role" profile field | I5 | S | — | — | E5 R2 measured first | planned | Changes the frozen profile |
-| T1 | Checkpoints + comparison tool: runs side by side, points lost per problem, per-ad differences, against T; history of kept changes ([experiment-checkpoints-plan.md](experiment-checkpoints-plan.md)) | I0 | — | $0 (code) | — | — | planned | Build before E3 |
+| T1 | Checkpoints + comparison tool: runs side by side, points lost per problem, per-ad differences, against T; history of kept changes ([experiment-checkpoints-plan.md](experiment-checkpoints-plan.md)) | I0 | — | $0 (code) | — | — | done | Built 2026-11-25 ([plan](experiment-checkpoints-plan.md)): c0 = baseline (7.13 points, $0.2581 a letter), c1 = its judge-only repeat; judge noise T 0.31 points over 17 letters |
 
 **Suggested order.** T1 and the free analyses, then E1, E2, E6, N1 (cheap, no judge), then E3
 (biggest score bucket, and it makes T), then E4, E5, E7 and the N-rows on top of E3's replay tool.

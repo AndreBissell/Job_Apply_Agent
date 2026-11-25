@@ -687,6 +687,7 @@ docs/ai-recruitment-research.md (AI screeners' biases, rated by strength; lines 
 The real profile is frozen as of 2026-10-20. Strong fit = score 85+ and
 no must-have GAP (`Requirement.needs_user`); partials are allowed (owner, 2026-10-20). Main metric:
 the relevant score (Would apply = Yes ads).
+Experiment checkpoints DONE 2026-11-25 (T1, docs/experiment-checkpoints-plan.md, no paid call): after each finished experiment run `letter_lab.py checkpoint --set v2 <run> --judge <tag> --experiment E# --kept|--not-kept [--verdict pass|fail --rule "..."]` (halves joined with a comma; `--judge` twice = averaged), then `compare --set v2 cN [cM]` and `history --set v2` -> evals/results/v2/; c0 = baseline, c1 = its judge-only repeat (judge noise T 0.31 points over 17 letters).
 
 🔄 BUILT, AWAITING THE USER'S MANUAL CHECKS: Rewrite letter + letter date — 2026-10-20 (branch `eval-set-creation`)
 

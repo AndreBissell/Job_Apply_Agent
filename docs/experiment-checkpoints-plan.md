@@ -1,6 +1,6 @@
 # Experiment checkpoints and comparison: plan (branch `cost_perform_analysis`)
 
-**Status:** v1.0, APPROVED by the owner 2026-11-25. Steps 0–6 built (c0 and c1 are in `evals/results/v2/checkpoints.jsonl`); step 7 (docs) is next.
+**Status:** v1.0, APPROVED by the owner 2026-11-25. **DONE 2026-11-25**: steps 0–7 built (c0 and c1 are in `evals/results/v2/checkpoints.jsonl`); the owner's manual checks below are still open.
 
 **Where it fits:** row T1 in [optimisation-map.md](optimisation-map.md) ("Comparison tool… build
 before E3"), plus a history log the map did not have. Every pass/fail rule in
@@ -312,7 +312,7 @@ Each step ends with the full test suite passing.
 | 4 | `history` report with the Mermaid charts; `checkpoints` list. **BUILT 2026-11-25**: 8 tests (78 in the file), suite 2119 passed; no existing test changed | none |
 | 5 | `letter_lab.py` subcommands wired to 1–4; `run` saves `models` / `thinking` / `commit` in `run.json`, `checkpoint --commit / --thinking` for older runs (Decision log D13). **BUILT 2026-11-25**: 19 tests (18 in `test_eval_checkpoints.py`, 96 there; 1 in `test_letter_lab_sets.py`), suite 2138 passed; no existing test changed | none |
 | 6 | Real data: write **c0** (`dev-agent-v1`, `v1-dev`) and **c1** (A/A of c0: the same letters re-judged, `pts-cal-2` + `pts-check-1`); `compare c0 c1` must give paired SD ≈ 0.65 and mean move ≈ 0.19; c0's cost must match the cost table ($0.258 a letter); check the JSONL by eye for any text. **BUILT 2026-11-25**: c0 and c1 written; `compare c0 c1`: 17 pairs, paired SD 0.6467, mean move +0.1912 (T 0.31; relevant 10: +0.23, T 0.41); c0 $0.2581 a letter, $4.387 total, as recorded and at today's prices alike; no text in the JSONL or the two reports; suite 2138 passed, no code or test changed (Decision log) | none |
-| 7 | Docs: T1 row in the map set to done with a link here; one line in CLAUDE.md's current task; this plan's Decision log | none |
+| 7 | Docs: T1 row in the map set to done with a link here; one line in CLAUDE.md's current task; this plan's Decision log. **DONE 2026-11-25**: suite 2138 passed, no code or test changed | none |
 
 ## 7. Tests (new file `tests/test_eval_checkpoints.py`, fixtures only, no real data)
 
@@ -352,16 +352,17 @@ Each step ends with the full test suite passing.
 ## Done when
 
 - [x] The baseline test count is recorded in this plan before any code (step 0): 2041 passed.
-- [ ] The **entire** test suite runs and passes after the code is added.
-- [ ] `tests/test_eval_checkpoints.py` covers every bullet in §7.
-- [ ] No existing test is weakened: none deleted, skipped, xfailed or loosened; any changed test is
-      listed here with its reason.
+- [x] The **entire** test suite runs and passes after the code is added: 2138 passed.
+- [x] `tests/test_eval_checkpoints.py` covers every bullet in §7 (the run-settings bullet also in
+      `tests/test_letter_lab_sets.py`).
+- [x] No existing test is weakened: none deleted, skipped, xfailed or loosened; any changed test is
+      listed here with its reason (2, step 2's Decision log entry).
 - [x] c0 and its judge-only A/A checkpoint are in `evals/results/v2/checkpoints.jsonl`, and the
       comparison reproduces plan §9.0's noise numbers and the cost table's $0.258.
 - [ ] `compare-c0-c1.md` and `history.md` are written and read well (manual check 1–2).
-- [ ] `git diff --cached` checked for personal data before the commit: numbers, ad keys, row ids
-      and settings only.
-- [ ] The map's T1 row, CLAUDE.md and this plan's Decision log are updated.
+- [x] `git diff --cached` checked for personal data before the commit: numbers, ad keys, row ids
+      and settings only (step 6's and step 7's commits).
+- [x] The map's T1 row, CLAUDE.md and this plan's Decision log are updated.
 
 ## Manual checks (owner, at the end)
 
@@ -565,3 +566,11 @@ Each step ends with the full test suite passing.
     `history.md` for every run.json title and company and every judge quote (767 texts, also as
     40-character windows) found only three problem-type names (`no_personal_reason`,
     `stock_phrasing`, `weak_example`), which the judge's `issues` list carries as the issue type.
+- **2026-11-25. Step 7 done: the plan is finished** (docs only; suite 2138 passed). The map's T1 row
+  is `done` with c0's numbers and the judge noise T; CLAUDE.md's eval-set entry has one line on how
+  to make a checkpoint and the reports (history stays here and in PROGRESS.md, CLAUDE.md stays one
+  file). "Done when" ticked except the reports reading well, which is the owner's manual checks 1–2.
+  **Next ideas, parked (not built):** revisit the "no noise reference yet" label for a measure the
+  repeat check never moved; writer + judge repeat runs (E3's control arm), which give cost, time and
+  drafts a noise reference; pooling several repeat checks into one noise figure instead of using
+  only the latest.
