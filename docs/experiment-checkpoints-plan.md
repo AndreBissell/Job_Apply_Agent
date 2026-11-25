@@ -1,6 +1,6 @@
 # Experiment checkpoints and comparison: plan (branch `cost_perform_analysis`)
 
-**Status:** v1.0, APPROVED by the owner 2026-11-25. Steps 0–2 built; step 3 (the compare report) is next.
+**Status:** v1.0, APPROVED by the owner 2026-11-25. Steps 0–3 built; step 4 (the history report) is next.
 
 **Where it fits:** row T1 in [optimisation-map.md](optimisation-map.md) ("Comparison tool… build
 before E3"), plus a history log the map did not have. Every pass/fail rule in
@@ -308,7 +308,7 @@ Each step ends with the full test suite passing.
 | 0 | Record the baseline test count (`python -m pytest -q`) here before any code. **DONE 2026-11-25: 2041 passed, 0 failed, 0 skipped** (commit `650876c`, `.venv` Python 3.11.9, 82 s; the system Python gives the same 2041) | none |
 | 1 | `scripts/eval_checkpoints.py`: build a checkpoint from a run + judging (allowlist, checks of §3.1), append / load the JSONL, parent rule. **BUILT 2026-11-25**: 36 tests, suite 2077 passed | none |
 | 2 | Pairing and stats: paired differences, ads up / down, A/A `s`, T and the labels, cost at today's prices. **BUILT 2026-11-25**: 22 tests (58 in the file), suite 2099 passed; 2 existing tests changed (Decision log) | none |
-| 3 | `compare` report and its terminal headline | none |
+| 3 | `compare` report and its terminal headline. **BUILT 2026-11-25**: 12 tests (70 in the file), suite 2111 passed; no existing test changed | none |
 | 4 | `history` report with the Mermaid charts; `checkpoints` list | none |
 | 5 | `letter_lab.py` subcommands wired to 1–4; `run` saves `models` / `thinking` / `commit` in `run.json`, `checkpoint --commit / --thinking` for older runs (Decision log D13) | none |
 | 6 | Real data: write **c0** (`dev-agent-v1`, `v1-dev`) and **c1** (A/A of c0: the same letters re-judged, `pts-cal-2` + `pts-check-1`); `compare c0 c1` must give paired SD ≈ 0.65 and mean move ≈ 0.19; c0's cost must match the cost table ($0.258 a letter); check the JSONL by eye for any text | none |
@@ -485,3 +485,20 @@ Each step ends with the full test suite passing.
   repeat runs to learn which measures move (writer + judge repeats, i.e. E3's control arm, on
   Gemini credits, judged by v1 on the Claude CLI; a Vertex judging would be a new judge, §3.6),
   and pooling several repeat checks into one wobble figure instead of using only the latest.
+- **2026-11-25. Step 3 built** (the compare report, `render_compare` / `render_headline` in
+  `scripts/eval_checkpoints.py`; 12 tests, suite 2111 passed, no existing test changed). The
+  terminal headline is the report's section 1, word for word. Choices the plan did not spell out:
+  - **Provisional / conservative as marks.** A label cell reads `within noise (T 0.31)†`; the mark
+    is explained once under the table (with the reference pair), not repeated in every row.
+  - **Headline rows:** points, $ / letter at today's prices, $ / letter as recorded, seconds /
+    letter, each for all ads and relevant ads. Drafts are in the per-letter table.
+  - **Problems table:** the noise label is on points lost (what the score feels); instances are
+    shown beside it. "Better" = fewer points lost on that letter.
+  - **Per letter, "what changed":** problem instances B − A and the missed row ids gained / lost
+    (`missed_row +1; missed rows +R3 -R12`); averaged checkpoints show each judging's points in
+    brackets.
+  - **Left out** also lists letters whose cost at today's prices is unknown (a model today's table
+    doesn't list), so a missing price is never silent.
+  - **Settings table** shows every setting on both sides with a "differs" mark (not only the
+    differing ones), so *unknown* and *(typed in)* values are visible; the per-task table has an
+    all-steps total row. Numbers: $ to 4 places, seconds whole, the rest to 2.

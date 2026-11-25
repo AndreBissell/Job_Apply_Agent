@@ -702,3 +702,130 @@ def test_measure_checkpoints_compare_on_shared_measures_only():
                                      kept=True, created="2026-11-25T10:00:00")
     cmp = ec.compare([m1, m2], m1, m2, PRICES)
     assert cmp["measures"] == [("G", 5.0, 3.0, -2.0)] and cmp["only_a"] == ["U"] and cmp["only_b"] == ["S"]
+
+
+# ---------------------------------------------------------------------------
+# The compare report (plan §4)
+# ---------------------------------------------------------------------------
+SECTIONS = ("## 1. Headline", "## 2. What changed", "## 3. Problems per letter", "## 4. Cost and time by step",
+            "## 5. Per letter", "## 6. Left out", "## 7. How to read this")
+
+
+def _report(cps, a, b, prices=PRICES):
+    return ec.render_compare(ec.compare(cps, a, b, prices), prices)
+
+
+def test_compare_report_has_every_section_in_order_and_the_headline_numbers():
+    md = _report([A, AA, B], A, B)
+    at = [md.index(s) for s in SECTIONS]
+    assert at == sorted(at)
+    assert md.startswith("# Compare c0 → c2")
+    # points: 7.50 -> 8.00, +0.50, T = s = 0.41 (beyond), relevant n 2 within (T 0.58), 2 / 1 / 1
+    assert "| Points (0-10) | all 4 | 7.50 | 8.00 | +0.50 | beyond noise (T 0.41)† | 2 / 1 / 1 |" in md
+    assert "|  | relevant 2 | 7.50 | 8.00 | +0.50 | within noise (T 0.58)† | 1 / 1 / 0 |" in md
+    assert "† provisional: judge noise only, writer noise not included (reference c1 vs c0" in md
+    assert "| Seconds / letter | all 4 | 100 | 120 | +20 | no noise reference yet | 4 / 0 / 0 |" in md
+    assert "$0.1062" in md and "+$0.0240" in md
+
+
+def test_the_terminal_headline_is_the_reports_first_section():
+    cmp = ec.compare([A, AA, B], A, B, PRICES)
+    head = "\n".join(ec.render_headline(cmp))
+    md = ec.render_compare(cmp, PRICES)
+    assert head in md and md.index(head) < md.index("## 2. What changed")
+    assert ec.report_name(A, B) == "compare-c0-c2.md"
+
+
+def test_per_letter_rows_are_worst_first_and_name_what_changed():
+    a_rows = _letters([8, 7, 9, 6])
+    b_rows = _letters([9, 7, 8, 8])
+    b_rows[2] = _letter("k3", 8, relevant=False, missed=1, generic=0)
+    b_rows[2]["missed_row_ids"] = ["R3", "R10"]
+    a_rows[2]["missed_row_ids"] = ["R10", "R12"]
+    a, b = _cp("c0", a_rows), _cp("c1", b_rows, run="r2", parent="c0")
+    md = _report([a, b], a, b)
+    per = md[md.index("## 5. Per letter"):md.index("## 6. Left out")]
+    order = [per.index(f"| `{k}` |") for k in ("k3", "k2", "k1", "k4")]  # deltas -1, 0, +1, +2
+    assert order == sorted(order)
+    assert "`missed_row` +1; missed rows +R3 -R12" in per
+    assert "| `k3` | no | 1 → 1 | 9.00 → 8.00 | -1.00 |" in per
+
+
+def test_problems_section_counts_better_and_worse_letters():
+    b = _cp("c1", [_letter(k, 8, relevant=REL[k], missed=m) for k, m in zip(K, (0, 1, 0, 0))], run="r2")
+    a = _cp("c0", [_letter(k, 8, relevant=REL[k], missed=m) for k, m in zip(K, (1, 1, 1, 0))])
+    md = _report([a, b], a, b)
+    # missed_row lost A 0.75 / letter (3 x 1.5 / 4), B 0.375; better on k1 and k3, same on k2 and k4
+    assert "| `missed_row` | 0.75 | 0.25 | -0.50 | 1.12 | 0.38 | -0.75 | no noise reference yet | 2 / 2 / 0 |" in md
+
+
+def test_unknown_and_typed_in_settings_are_shown_as_such():
+    a = _cp("c0", _letters([8, 7, 9, 6]), commit=None, thinking={})
+    b = _cp("c1", _letters([8, 7, 9, 6]), run="r2", given_by_hand=["commit", "thinking"])
+    md = _report([a, b], a, b)
+    assert "| commit | unknown | `abc1234` (typed in) | yes |" in md
+    assert "| thinking, strong | unknown | `high` (typed in) | yes |" in md
+    assert "| model, mid | unknown | unknown |  |" in md
+
+
+def test_a_vertex_judging_gets_the_trial_deadline_line_and_claude_cli_does_not():
+    b = _cp("c1", _letters([9, 7, 8, 8]), run="r2", judge_backends=["vertex"])
+    assert "c1: judged on Vertex: Gemini trial credits, ends 2026-12-30." in _report([A, b], A, b)
+    assert "Vertex" not in _report([A, B], A, B)
+    assert "`v1`: `tag-c1` on `vertex`" in _report([A, b], A, b)
+
+
+def test_a_price_change_is_noted_in_the_report():
+    doubled = dict(PRICES, **{"gemini-pro": (4.0, 24.0, 0.4)})
+    md = _report([A, B], A, B, doubled)
+    assert "- c0, `gemini-pro`: $2.00 / $12.00 / $0.200 then; today $4.00 / $24.00 / $0.400." in md
+    assert "costs the same today" in _report([A, B], A, B)
+    md = _report([A, B], A, B, {})
+    assert "not in today's table, so its cost at today's prices is unknown" in md
+    assert "left out of that row: `k1`, `k2`, `k3`, `k4`" in md
+
+
+def test_an_averaged_comparison_shows_each_judging_and_the_conservative_mark():
+    def two(points):
+        rows = _letters(points)
+        for r, p in zip(rows, points):
+            r["points_each"] = [p - 0.5, p + 0.5]
+        return rows
+    a2, b2 = _cp("c3", two([8, 7, 9, 6]), judgings=2, run="r5"), _cp("c4", two([9, 7, 8, 8]), judgings=2, run="r6")
+    md = _report([A, AA, B, a2, b2], a2, b2)
+    assert "8.00 (7.5, 8.5) → 9.00 (8.5, 9.5)" in md
+    assert "beyond noise (T 0.41)†‡" in md and "‡ conservative: reference from single judgings" in md
+    assert "`tag-c3` and `tag-c3`, averaged" in md
+
+
+def test_left_out_lists_one_sided_failed_and_relevance_changes():
+    a = _cp("c0", _letters([8, 7, 9, 6]) + [_letter("only-a", 5)])
+    b = _cp("c1", [_letter("k1", 9), _letter("k2", None), _letter("k3", 8, relevant=True), _letter("k4", 7),
+                   _letter("only-b", 6)], run="r2")
+    md = _report([a, b], a, b)
+    assert "- Only in A (c0), not paired: `only-a`" in md and "- Only in B (c1), not paired: `only-b`" in md
+    assert "not paired: `k2`" in md and "(in *all*, not in *relevant*): `k3`, `k4`" in md
+    assert "| `k3` | no → yes |" in md
+
+
+def test_how_to_read_names_the_reference_pairs():
+    md = _report([A, AA, B], A, B)
+    assert "repeat check **c1 vs c0** (judge-only" in md
+    assert "Writer measures (cost, time, drafts): no noise reference yet" in md
+    assert "No conclusion from one letter" in md
+    assert "no repeat check yet" in _report([A, B], A, B)
+
+
+def test_the_owners_note_cannot_break_a_table():
+    b = dict(_cp("c1", _letters([9, 7, 8, 8]), run="r2"), note="arm B | tier\nshould-address")
+    assert r"| Note | — | arm B \| tier should-address |" in _report([A, b], A, b)
+
+
+def test_measure_compare_report_has_no_noise_label():
+    m1 = ec.build_measure_checkpoint([], experiment="E1", values={"G": 5, "U": 2}, commit="abc1234", kept=True,
+                                     created="2026-11-25T10:00:00")
+    m2 = ec.build_measure_checkpoint([m1], experiment="E1", values={"G": 3, "S": 162}, commit="abc1234",
+                                     kept=True, created="2026-11-25T10:00:00")
+    md = _report([m1, m2], m1, m2)
+    assert "| G | 5 | 3 | -2 |" in md and "carry no noise label" in md
+    assert "- Only in A (c0): U" in md and "- Only in B (c1): S" in md

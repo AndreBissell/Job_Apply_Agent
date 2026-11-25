@@ -780,6 +780,318 @@ def compare(checkpoints: list[dict], a: dict, b: dict, prices: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# The compare report (plan §4). Markdown rendered from compare(); the JSONL is the only source,
+# so the report is never edited by hand. It prints numbers, ad keys, row ids, settings and the
+# owner's own note / rule, nothing else (those are all a checkpoint holds).
+# ---------------------------------------------------------------------------
+VERTEX_LINE = "judged on Vertex: Gemini trial credits, ends 2026-12-30"
+UNKNOWN = "unknown"
+DASH = "—"
+PROVISIONAL_MARK, CONSERVATIVE_MARK = "†", "‡"
+MEASURE_NAMES = {"points": "Points (0-10)", "cost_today": "$ / letter, today's prices",
+                 "cost_usd": "$ / letter, as recorded", "seconds": "Seconds / letter", "drafts": "Drafts / letter",
+                 **{f"{m}.n": f"{m}: instances / letter" for m in lp.METRICS},
+                 **{f"{m}.lost": f"{m}: points lost / letter" for m in lp.METRICS}}
+HEADLINE = ("points", "cost_today", "cost_usd", "seconds")
+GROUP_NAMES = {"all": "all", "relevant": "relevant"}
+
+
+def fmt(measure: str, v: float | None, signed: bool = False) -> str:
+    """One number the way the reports print it: $ to 4 places, seconds whole, the rest to 2."""
+    if v is None:
+        return DASH
+    if measure in ("cost_today", "cost_usd"):
+        body = f"${abs(v):.4f}"
+        return ("+" if v >= 0 else "-") + body if signed else body
+    spec = ".0f" if measure == "seconds" else ".2f"
+    return f"{v:+{spec}}" if signed else f"{v:{spec}}"
+
+
+def _esc(text) -> str:
+    """Safe inside a markdown table cell (the owner's note / rule may hold a | or a line break)."""
+    return str(text).replace("|", "\\|").replace("\r", " ").replace("\n", " ").strip()
+
+
+def noise_cell(nz: dict, measure: str) -> str:
+    """A noise label for a table cell. The provisional / conservative texts are footnote marks
+    (PROVISIONAL_MARK, CONSERVATIVE_MARK) explained under the table, so they aren't repeated per row."""
+    if nz["label"] == NO_REF:
+        return NO_REF + (f" ({nz['ref']} never moved)" if nz["ref"] else "")
+    marks = (PROVISIONAL_MARK if nz["provisional"] else "") + (CONSERVATIVE_MARK if nz["conservative"] else "")
+    return f"{nz['label']} (T {fmt(measure, nz['T'])}){marks}"
+
+
+def footnotes(noises: list[dict]) -> list[str]:
+    """The lines explaining the marks noise_cell used in one table (none = no lines)."""
+    out = []
+    prov = next((nz for nz in noises if nz["provisional"]), None)
+    cons = next((nz for nz in noises if nz["conservative"]), None)
+    if prov:
+        out.append(f"{PROVISIONAL_MARK} provisional: judge noise only, writer noise not included "
+                   f"(reference {prov['ref']}, the same letters judged again).")
+    if cons:
+        out.append(f"{CONSERVATIVE_MARK} conservative: reference from single judgings (reference {cons['ref']}; "
+                   "its T is larger, so it can only under-claim).")
+    return [""] + out if out else []
+
+
+def _tags(cp: dict) -> str:
+    judgings = [" + ".join(f"`{t}`" for t in g) for g in cp["settings"].get("judge_tags", [])]
+    if not judgings:
+        return UNKNOWN
+    return judgings[0] if len(judgings) == 1 else " and ".join(judgings) + ", averaged"
+
+
+def who(cp: dict) -> str:
+    """One line naming a checkpoint: id, experiment, run, judging."""
+    if cp["kind"] == "measure":
+        return f"**{cp['id']}** ({cp['experiment']}, measure checkpoint)"
+    aa = f", repeat of {cp['aa_of']}" if cp.get("aa_of") else ""
+    return (f"**{cp['id']}** ({cp['experiment']}{aa}): run `{cp['settings'].get('run')}`, judged {_tags(cp)}")
+
+
+def _yes(v) -> str:
+    return {True: "yes", False: "no"}.get(v, DASH)
+
+
+def _vertex_lines(cps: list[dict]) -> list[str]:
+    return [f"- {c['id']}: {VERTEX_LINE}." for c in cps if "vertex" in c["settings"].get("judge_backends", [])]
+
+
+def render_headline(cmp: dict) -> list[str]:
+    """§4.1, also what the terminal prints."""
+    a, b = cmp["a"], cmp["b"]
+    if cmp["kind"] == "measure":
+        lines = ["## 1. Headline", "", f"A = {who(a)}. B = {who(b)}.", "",
+                 f"| Measure | A ({a['id']}) | B ({b['id']}) | B − A |", "|---|---|---|---|"]
+        lines += [f"| {_esc(m)} | {x:g} | {y:g} | {d:+g} |" for m, x, y, d in cmp["measures"]]
+        if not cmp["measures"]:
+            lines.append(f"| (no measure on both sides) | {DASH} | {DASH} | {DASH} |")
+        return lines + ["", "Measure checkpoints have no repeat check, so these differences carry no noise label."]
+    lines = ["## 1. Headline", "", f"A = {who(a)}.  ", f"B = {who(b)}.", "",
+             f"| Measure | Ads | A ({a['id']}) | B ({b['id']}) | B − A | Noise | Ads up / same / down |",
+             "|---|---|---|---|---|---|---|"]
+    noises = []
+    for m in HEADLINE:
+        for g in ("all", "relevant"):
+            st = cmp["groups"][g][m]
+            noises.append(st["noise"])
+            lines.append(f"| {MEASURE_NAMES[m] if g == 'all' else ''} | {GROUP_NAMES[g]} {st['n']} | "
+                         f"{fmt(m, st['a'])} | {fmt(m, st['b'])} | {fmt(m, st['diff'], True)} | "
+                         f"{noise_cell(st['noise'], m)} | {st['up']} / {st['same']} / {st['down']} |")
+    return lines + footnotes(noises)
+
+
+def _setting_cells(cp: dict) -> dict[str, str]:
+    """Every setting as the report prints it: unknown when the run did not save it and nobody typed
+    it in (D13), "(typed in)" when the owner did."""
+    s = cp["settings"]
+    hand = s.get("given_by_hand", [])
+
+    def show(v, field=None):
+        if v is None or v == "":
+            return UNKNOWN
+        return f"`{v}`" + (" (typed in)" if field in hand else "")
+
+    backends = s.get("judge_backends", [])
+    out = {"run": show(s.get("run")), "engine": show(s.get("engine")), "commit": show(s.get("commit"), "commit"),
+           "judge": f"`{cp['comparable'].get('judge')}`: {_tags(cp)} on " + (
+               " / ".join(f"`{x}`" for x in backends) if backends else UNKNOWN)}
+    for tier in TIERS:
+        out[f"model, {tier}"] = show(s.get("models", {}).get(tier))
+    for tier in TIERS:
+        out[f"thinking, {tier}"] = show(s.get("thinking", {}).get(tier), "thinking")
+    for m, p in sorted(s.get("prices_seen", {}).items()):
+        out[f"price `{m}`"] = f"${p[0]:.2f} / ${p[1]:.2f} / ${p[2]:.3f}"
+    return out
+
+
+def _what_changed(cmp: dict) -> list[str]:
+    a, b = cmp["a"], cmp["b"]
+    lines = ["## 2. What changed", "",
+             f"| | A ({a['id']}) | B ({b['id']}) |", "|---|---|---|"]
+    for label, f in (("Experiment", "experiment"), ("Created", "created"), ("Note", "note"),
+                     ("Kept", "kept"), ("Verdict", "verdict"), ("Rule (written before the run)", "rule"),
+                     ("Parent", "parent"), ("Repeats (A/A of)", "aa_of"), ("Replaces", "replaces")):
+        cell = [(_yes(c[f]) if f == "kept" else _esc(c[f]) if c[f] not in (None, "") else DASH) for c in (a, b)]
+        lines.append(f"| {label} | {cell[0]} | {cell[1]} |")
+    if cmp["kind"] == "measure":
+        sa, sb = (_esc(c["settings"].get("commit") or UNKNOWN) for c in (a, b))
+        return lines + ["", "| Setting | A | B | Differs |", "|---|---|---|---|",
+                        f"| commit | {sa} | {sb} | {'yes' if sa != sb else ''} |"]
+    ca, cb = _setting_cells(a), _setting_cells(b)
+    lines += ["", "Settings (prices are $ per 1M tokens: input / output / cached input; *unknown* = the run "
+              "did not save it and it was not typed in):", "",
+              "| Setting | A | B | Differs |", "|---|---|---|---|"]
+    for f in [*ca, *(f for f in cb if f not in ca)]:
+        x, y = ca.get(f, "not used"), cb.get(f, "not used")
+        lines.append(f"| {f} | {x} | {y} | {'yes' if x != y else ''} |")
+    c = a["comparable"]
+    lines += ["", f"Comparable (must match, and does): set `{c.get('set')}`, split `{c.get('split')}`, judge "
+              f"`{c.get('judge')}`, scorer `{(c.get('scorer_sha256') or '')[:12]}`, {c.get('judgings')} judging(s) "
+              "per letter."]
+    vertex = _vertex_lines([a, b])
+    if vertex:
+        lines += [""] + vertex
+    lines.append("")
+    if cmp["price_changes"]:
+        lines.append("Prices that differ from today's (costs \"at today's prices\" use today's):")
+        for cid, m, then, now in cmp["price_changes"]:
+            today = (f"${now[0]:.2f} / ${now[1]:.2f} / ${now[2]:.3f}" if now else
+                     "not in today's table, so its cost at today's prices is unknown")
+            lines.append(f"- {cid}, `{m}`: ${then[0]:.2f} / ${then[1]:.2f} / ${then[2]:.3f} then; today {today}.")
+    else:
+        lines.append("Prices: every model both runs used costs the same today as when it ran.")
+    return lines
+
+
+def _problems_section(cmp: dict) -> list[str]:
+    lines = ["## 3. Problems per letter", "",
+             "Each problem type the judge charges (`scripts/letter_points.py`): instances and points lost per "
+             "letter. Better = fewer points lost on that letter.", ""]
+    for g in ("all", "relevant"):
+        n = cmp["groups"][g]["points"]["n"]
+        lines += [f"### {'All paired ads' if g == 'all' else 'Relevant ads'} ({n})", "",
+                  "| Problem | Instances A | B | B − A | Points lost A | B | B − A | Noise (points lost) | "
+                  "Letters better / same / worse |", "|---|---|---|---|---|---|---|---|---|"]
+        noises = []
+        for m in lp.METRICS:
+            sn, sl = cmp["groups"][g][f"{m}.n"], cmp["groups"][g][f"{m}.lost"]
+            noises.append(sl["noise"])
+            lines.append(f"| `{m}` | {fmt('n', sn['a'])} | {fmt('n', sn['b'])} | {fmt('n', sn['diff'], True)} | "
+                         f"{fmt('lost', sl['a'])} | {fmt('lost', sl['b'])} | {fmt('lost', sl['diff'], True)} | "
+                         f"{noise_cell(sl['noise'], f'{m}.lost')} | {sl['down']} / {sl['same']} / {sl['up']} |")
+        lines += footnotes(noises) + [""]
+    return lines
+
+
+def _tasks_section(cmp: dict) -> list[str]:
+    n = len(cmp["pairing"]["pairs"])
+    lines = ["## 4. Cost and time by step", "",
+             f"Per `llm_usage` task, per letter over the {n} paired letters, at today's prices. Seconds are the "
+             "time inside that step's model calls; a letter's wall-clock time (headline) also counts code and "
+             "waits.", "",
+             "| Step | Calls / letter A → B | $ A | $ B | $ B − A | Seconds A | Seconds B | Seconds B − A |",
+             "|---|---|---|---|---|---|---|---|"]
+    tot = {"a_cost": 0.0, "b_cost": 0.0, "a_s": 0.0, "b_s": 0.0}
+    for r in cmp["tasks"]:
+        d = None if r["a_cost"] is None or r["b_cost"] is None else r["b_cost"] - r["a_cost"]
+        lines.append(f"| `{r['task']}` | {r['a_calls']:.1f} → {r['b_calls']:.1f} | {fmt('cost_today', r['a_cost'])} | "
+                     f"{fmt('cost_today', r['b_cost'])} | {fmt('cost_today', d, True)} | {r['a_s']:.0f} | "
+                     f"{r['b_s']:.0f} | {r['b_s'] - r['a_s']:+.0f} |")
+        for f in tot:
+            tot[f] = None if tot[f] is None or r[f] is None else tot[f] + r[f]
+    if not cmp["tasks"]:
+        lines.append(f"| (no model calls recorded) | {DASH} | {DASH} | {DASH} | {DASH} | {DASH} | {DASH} | {DASH} |")
+    else:
+        d = None if tot["a_cost"] is None or tot["b_cost"] is None else tot["b_cost"] - tot["a_cost"]
+        lines.append(f"| **all steps** | | {fmt('cost_today', tot['a_cost'])} | {fmt('cost_today', tot['b_cost'])} | "
+                     f"{fmt('cost_today', d, True)} | {tot['a_s']:.0f} | {tot['b_s']:.0f} | "
+                     f"{tot['b_s'] - tot['a_s']:+.0f} |")
+    return lines
+
+
+def _pts(row: dict) -> str:
+    each = row["points_each"]
+    return f"{row['points']:.2f}" + (f" ({', '.join(f'{p:g}' for p in each)})" if len(each) > 1 else "")
+
+
+def letter_changes(x: dict, y: dict) -> str:
+    """What moved on one letter: problem instances (B − A) and the missed row ids gained / lost."""
+    parts = []
+    for m in lp.METRICS:
+        d = round(y["problems"].get(m, {}).get("n", 0) - x["problems"].get(m, {}).get("n", 0), 2)
+        if d:
+            parts.append(f"`{m}` {d:+g}")
+    rows_a, rows_b = set(x["missed_row_ids"]), set(y["missed_row_ids"])
+    moved = [f"+{r}" for r in sorted(rows_b - rows_a, key=_row_num)] + \
+            [f"-{r}" for r in sorted(rows_a - rows_b, key=_row_num)]
+    text = ", ".join(parts)
+    if moved:
+        text += ("; " if text else "") + "missed rows " + " ".join(moved)
+    return text or DASH
+
+
+def _per_letter_section(cmp: dict, prices: dict) -> list[str]:
+    lines = ["## 5. Per letter", "",
+             "One row per paired ad, the letter that fell most first. Points in brackets are each judging's "
+             "score when a checkpoint averages several. $ at today's prices.", "",
+             "| Ad | Relevant | Drafts A → B | Points A → B | Δ | $ A → B | Seconds A → B | What changed |",
+             "|---|---|---|---|---|---|---|---|"]
+    rows = sorted(cmp["pairing"]["pairs"], key=lambda p: (p[2]["points"] - p[1]["points"], p[0]))
+    for key, x, y in rows:
+        rel = _yes(x["relevant"]) if x["relevant"] == y["relevant"] else f"{_yes(x['relevant'])} → {_yes(y['relevant'])}"
+        drafts = f"{x['drafts'] if x['drafts'] is not None else DASH} → {y['drafts'] if y['drafts'] is not None else DASH}"
+        lines.append(f"| `{key}` | {rel} | {drafts} | {_pts(x)} → {_pts(y)} | {y['points'] - x['points']:+.2f} | "
+                     f"{fmt('cost_today', cost_at(x, prices))} → {fmt('cost_today', cost_at(y, prices))} | "
+                     f"{fmt('seconds', x['seconds'])} → {fmt('seconds', y['seconds'])} | {letter_changes(x, y)} |")
+    if not rows:
+        lines.append("| (no paired ads) | | | | | | | |")
+    return lines
+
+
+def _left_out_section(cmp: dict, prices: dict) -> list[str]:
+    a, b, pg = cmp["a"], cmp["b"], cmp["pairing"]
+    unpriced = [k for k, x, y in pg["pairs"] if cost_at(x, prices) is None or cost_at(y, prices) is None]
+
+    def keys(ks):
+        return ", ".join(f"`{k}`" for k in ks) if ks else "none"
+
+    return ["## 6. Left out", "",
+            f"- Only in A ({a['id']}), not paired: {keys(pg['only_a'])}",
+            f"- Only in B ({b['id']}), not paired: {keys(pg['only_b'])}",
+            f"- No draft on one side (a failed letter), not paired: {keys(pg['failed'])}",
+            f"- Relevant on one side only (in *all*, not in *relevant*): {keys(pg['relevant_disagree'])}",
+            f"- Cost at today's prices unknown (a model today's table doesn't list), left out of that row: "
+            f"{keys(unpriced)}"]
+
+
+def _ref_line(ref: dict | None, what: str, missing: str) -> str:
+    if ref is None:
+        return f"- {what}: {missing}"
+    kind = ("judge-only: the same letters judged again, so writer noise is not in it" if ref["kind"] == JUDGE_ONLY
+            else "writer + judge: new letters written with the same settings, then judged")
+    cons = "; conservative: a single-judging reference for averaged checkpoints" if ref["conservative"] else ""
+    return f"- {what}: repeat check **{ref['aa']} vs {ref['of']}** ({kind}; {ref['n']} paired letters{cons})."
+
+
+def _how_to_read(cmp: dict) -> list[str]:
+    refs = cmp["refs"]
+    return ["## 7. How to read this", "",
+            "- **Noise threshold T = 2 × s ÷ √n.** s is how much each letter's number moved between two "
+            "checkpoints that should match (a repeat check, A/A); n is the number of paired ads in the row. "
+            "A difference bigger than T is *beyond noise*; otherwise *within noise*.",
+            _ref_line(refs[JUDGE], "Judge measures (points, problems)", "no repeat check yet, so no noise label."),
+            _ref_line(refs[WRITER], "Writer measures (cost, time, drafts)",
+                      "no noise reference yet: that needs a writer + judge repeat (new letters written with the "
+                      "same settings), such as E3's control arm."),
+            "- A measure the repeat check never moved (s = 0) shows *no noise reference yet*, never T = 0.",
+            "- **No conclusion from one letter.** The per-letter table says where to look; the means decide.",
+            "- Cost at today's prices is recomputed from each letter's tokens with `client.PRICES` (thinking "
+            "billed as output, cached input at the cached price); *as recorded* is what was logged at the time."]
+
+
+def report_name(a: dict, b: dict) -> str:
+    return f"compare-{a['id']}-{b['id']}.md"
+
+
+def render_compare(cmp: dict, prices: dict, set_name: str = "v2") -> str:
+    """The whole compare report (§4), sections in the plan's order."""
+    a, b = cmp["a"], cmp["b"]
+    lines = [f"# Compare {a['id']} → {b['id']}", "",
+             f"Written by `letter_lab.py compare --set {set_name} {a['id']} {b['id']}` from "
+             f"`evals/results/{set_name}/checkpoints.jsonl`. Don't edit it by hand: run the command again.", ""]
+    lines += render_headline(cmp) + [""] + _what_changed(cmp)
+    if cmp["kind"] == "measure":
+        only = [f"- Only in A ({a['id']}): {', '.join(cmp['only_a']) or 'none'}",
+                f"- Only in B ({b['id']}): {', '.join(cmp['only_b']) or 'none'}"]
+        return "\n".join(lines + ["", "## Left out", ""] + only) + "\n"
+    lines += [""] + _problems_section(cmp) + _tasks_section(cmp) + [""] + _per_letter_section(cmp, prices)
+    lines += [""] + _left_out_section(cmp, prices) + [""] + _how_to_read(cmp)
+    return "\n".join(lines) + "\n"
+
+
+# ---------------------------------------------------------------------------
 # The JSONL file: append-only (plan D1)
 # ---------------------------------------------------------------------------
 def dumps(cp: dict) -> str:
