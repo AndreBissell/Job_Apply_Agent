@@ -2607,7 +2607,8 @@ def _utf8_stdout() -> None:
 def cmd_checkpoints(args) -> int:
     ec = _checkpoints_module()
     _utf8_stdout()
-    print(ec.render_list(ec.load(_checkpoints_file()), _prices()), end="")
+    render = ec.render_list if args.markdown else ec.render_list_text
+    print(render(ec.load(_checkpoints_file()), _prices()), end="")
     return 0
 
 
@@ -2624,7 +2625,7 @@ def cmd_compare(args) -> int:
     out = RESULTS_DIR / ec.report_name(a, b)
     out.write_text(ec.render_compare(cmp, _prices(), args.set), encoding="utf-8")
     _utf8_stdout()
-    print("\n".join(ec.render_headline(cmp)))
+    print(ec.terminal_text(ec.render_headline(cmp)), end="")  # the report's section 1, as terminal text
     print(f"\nWrote {_rel(out)}")
     return 0
 
@@ -2758,6 +2759,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(fn=cmd_checkpoint)
 
     p = add("checkpoints", help="v2: list every checkpoint")
+    p.add_argument("--markdown", action="store_true", help="print a markdown table (for pasting into a doc)")
     p.set_defaults(fn=cmd_checkpoints)
 
     p = add("compare", help="v2: compare two checkpoints -> evals/results/v2/compare-<a>-<b>.md")

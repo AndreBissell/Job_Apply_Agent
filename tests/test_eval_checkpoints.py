@@ -940,6 +940,59 @@ def test_checkpoints_list_rows():
     assert ec.render_list([], PRICES) == "No checkpoints yet.\n"
 
 
+def test_checkpoints_list_text_is_aligned_and_shows_the_same_cells():
+    out = ec.render_list_text(HIST, PRICES)
+    lines = out.splitlines()
+    assert len(lines) == 1 + len(HIST) and "|" not in out
+    assert lines[0].startswith("Checkpoint  Date") and lines[0].endswith("Seconds  Note")
+    # Every column starts at the same place on every line, the header included.
+    for name in ("Date", "Kind", "Points", "$ / letter", "Seconds", "Note"):
+        col = lines[0].index(name)
+        assert all(line[col - 2:col] == "  " and line[col] != " " for line in lines[1:]), name
+    assert all(line == line.rstrip() for line in lines)
+    # The same cells as the markdown table, only laid out differently.
+    for row in ec.list_rows(HIST, PRICES):
+        assert any(line.split() == " ".join(row).split() for line in lines[1:])
+    assert ec.render_list_text([], PRICES) == "No checkpoints yet.\n"
+
+
+def test_terminal_text_aligns_tables_and_drops_markdown_marks():
+    md = ["## 1. Headline", "", "A = **c0**: run `r1`.  ", "",
+          "| Measure | Ads | B − A |", "|---|---|---|",
+          "| Points | all 4 | +0.50 |", "|  | relevant 2 | a \\| b |", "", "† a footnote."]
+    assert ec.terminal_text(md) == (
+        "1. Headline\n\nA = c0: run r1.\n\n"
+        "Measure  Ads         B − A\n"
+        "Points   all 4       +0.50\n"
+        "         relevant 2  a | b\n\n"
+        "† a footnote.\n")
+
+
+def test_the_terminal_headline_has_the_same_numbers_in_aligned_columns():
+    cmp = ec.compare([A, AA, B], A, B, PRICES)
+    md = ec.render_headline(cmp)
+    text = ec.terminal_text(md)
+    assert "|" not in text and "**" not in text and "`" not in text and "#" not in text
+    lines = text.splitlines()
+    head = next(i for i, line in enumerate(lines) if line.startswith("Measure  "))
+    rows = lines[head:head + 1 + 2 * len(ec.HEADLINE)]
+    for name in ("Ads", "Noise"):
+        col = rows[0].index(name)
+        assert all(r[col - 2:col] == "  " and r[col] != " " for r in rows[1:]), name
+    # Every cell of the markdown table is still there, word for word.
+    for line in md:
+        if line.startswith("| ") and not line.startswith("|---"):
+            for cell in (c.strip() for c in line.strip("|").split(" | ")):
+                assert cell.replace("**", "") in text
+
+
+def test_checkpoints_list_text_keeps_a_note_on_one_line_unescaped():
+    cps = [{**A, "note": "two | parts\nsecond line"}]
+    text = ec.render_list_text(cps, PRICES)
+    assert text.splitlines()[1].endswith("two | parts second line") and len(text.splitlines()) == 2
+    assert "two \\| parts second line |" in ec.render_list(cps, PRICES)
+
+
 # ---------------------------------------------------------------------------
 # letter_lab.py's checkpoint / checkpoints / compare / history and run's saved settings (plan §2, D13).
 # Every path points at tmp_path: never the real runs, eval.db or checkpoints.jsonl.
@@ -1062,14 +1115,19 @@ def test_repeat_check_then_compare_history_and_list(v2, capsys):
     capsys.readouterr()
     assert _cmd("compare", "c1") == 0  # one id: against its parent, c0
     out = capsys.readouterr().out
-    assert "## 1. Headline" in out and "Wrote " in out and "compare-c0-c1.md" in out
+    assert "1. Headline" in out and "Wrote " in out and "compare-c0-c1.md" in out
+    assert "##" not in out and "|" not in out and "**" not in out  # terminal text, not markdown
     md = (v2 / "results" / "compare-c0-c1.md").read_text(encoding="utf-8")
     assert "# Compare c0 → c1" in md and "## 7. How to read this" in md and MARKER not in md
     assert _cmd("history") == 0
     hist = (v2 / "results" / "history.md").read_text(encoding="utf-8")
     assert "c1 vs c0 (judge-only, 3 letters, 1 judging)" in hist
     capsys.readouterr()
-    assert _cmd("checkpoints") == 0
+    assert _cmd("checkpoints") == 0  # the terminal default: aligned columns
+    listing = capsys.readouterr().out.splitlines()
+    assert listing[0].startswith("Checkpoint  Date") and listing[1].startswith("c0  ")
+    assert listing[2].startswith("c1  ") and len(listing) == 3
+    assert _cmd("checkpoints", "--markdown") == 0
     listing = capsys.readouterr().out
     assert "| c0 |" in listing and "| c1 |" in listing
 

@@ -369,7 +369,15 @@ Each step ends with the full test suite passing.
 1. Open `evals/results/v2/compare-c0-c1.md` on GitHub: is the headline clear, and does the
    per-letter table answer "which letters moved and why"?
 2. Open `evals/results/v2/history.md` on GitHub: do the Mermaid charts render?
-3. Run `letter_lab.py checkpoints --set v2` and `compare --set v2 c0` yourself.
+3. Run `letter_lab.py checkpoints --set v2`, `compare --set v2 c1` (one id: against its parent),
+   `compare --set v2 c0 c1`, and the refusal `compare --set v2 c0` (c0 has no parent) yourself.
+   Then `git status --short evals/results/v2` must print **nothing**: every file the tool writes
+   is in that folder, so empty = `compare` rebuilt its report with identical content and no
+   checkpoint was added. Any line = don't commit; a changed `checkpoints.jsonl` means a checkpoint
+   was recorded by mistake (restore it with git). Never run `checkpoint` (singular) without
+   `--dry-run` here: it appends a permanent line. (Changed 2026-11-25, owner: the first wording,
+   `compare --set v2 c0`, is a refusal, and a whole-tree "clean" fails on any unrelated
+   uncommitted work.)
 
 ---
 
@@ -574,3 +582,30 @@ Each step ends with the full test suite passing.
   repeat check never moved; writer + judge repeat runs (E3's control arm), which give cost, time and
   drafts a noise reference; pooling several repeat checks into one noise figure instead of using
   only the latest.
+- **2026-11-25. Manual checks, first findings (owner).** Check 2: the history charts draw, but with
+  one kept checkpoint (c0) they show nothing, because a Mermaid line chart has no dot per point and
+  one point makes no line. Left as it is (owner): the second kept checkpoint gives a line. If the
+  next one is not kept and it still bothers, bars (alone or with the line) fix it. Check 3:
+  `compare --set v2 c0` is refused ("c0 has no parent"), correctly; the one-id form to try is
+  `compare --set v2 c1`.
+- **2026-11-25. `checkpoints` prints aligned columns in the terminal (owner).** The raw markdown
+  table was hard to read in a terminal. The owner chose aligned columns with every column kept
+  (over fewer columns, or a card per checkpoint); "Seconds / letter" is headed "Seconds" there, and
+  Note stays last so only a long note wraps. `--markdown` prints the old table, byte-for-byte the
+  same (checked against the previous code on the real file and the fixtures). Both come from one
+  `list_rows`, so they always show the same cells. 2 new tests; suite 2140 passed. **Changed test**
+  (not loosened): `test_repeat_check_then_compare_history_and_list` checked the command's markdown
+  (`| c0 |`); it now checks the aligned default and the same markdown check on `--markdown`.
+- **2026-11-25. `compare`'s terminal headline in aligned columns too (owner: "fix all these
+  terminal tables").** The checkpoint tool's only other table printed to a terminal (`checkpoint`
+  prints plain lines, `history` only "Wrote"; no other `letter_lab` command prints a table, and
+  `report` / `cost-report` are not touched). `terminal_text` turns markdown lines into terminal
+  text: each table in aligned columns (its `|---|` line dropped, `\|` back to `|`), headings without
+  `#`, no `**` or backticks; it changes the layout only, never a word or a number. `render_headline`
+  and the report file are unchanged (`compare-c0-c1.md` regenerates byte-for-byte), so the step 3
+  rule "the terminal headline is the report's section 1" now reads "the same lines, as terminal
+  text"; the test pinning it is unchanged. `checkpoints` shares the column padding (`align`).
+  2 new tests; suite 2142 passed. **Changed test** (not loosened):
+  `test_repeat_check_then_compare_history_and_list` checked the printed `## 1. Headline`; it now
+  checks `1. Headline` and that no `##`, `|` or `**` is printed (the report file's `## 1. Headline`
+  is still checked).

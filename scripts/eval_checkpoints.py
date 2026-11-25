@@ -1299,15 +1299,25 @@ def render_history(cps: list[dict], prices: dict, set_name: str = "v2") -> str:
     return "\n".join(lines).rstrip("\n") + "\n"
 
 
-def render_list(cps: list[dict], prices: dict) -> str:
-    """`checkpoints` (plan §2): one row per checkpoint."""
+LIST_HEADERS = ("Checkpoint", "Date", "Kind", "Experiment", "Kept", "Verdict", "Parent", "Repeats", "Points",
+                "$ / letter", "Seconds / letter", "Note")
+LIST_TEXT_HEADERS = LIST_HEADERS[:10] + ("Seconds",) + LIST_HEADERS[11:]  # shorter in a terminal
+NO_CHECKPOINTS = "No checkpoints yet.\n"
+
+
+def _one_line(text) -> str:
+    """The owner's note / experiment on one line (it may hold a line break)."""
+    return str(text).replace("\r", " ").replace("\n", " ").strip()
+
+
+def list_rows(cps: list[dict], prices: dict) -> list[list[str]]:
+    """The `checkpoints` cells (plan §2), one list per checkpoint, as plain text; render_list adds the
+    markdown escaping and render_list_text the padding, so both show the same cells."""
     replaced_by = {c["replaces"]: c["id"] for c in cps if c.get("replaces")}
-    lines = ["| Checkpoint | Date | Kind | Experiment | Kept | Verdict | Parent | Repeats | Points | $ / letter | "
-             "Seconds / letter | Note |",
-             "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    rows = []
     for c in cps:
         cid = c["id"] + (f" (replaced by {replaced_by[c['id']]})" if c["id"] in replaced_by else "")
-        note = _esc(c["note"]) or DASH
+        note = _one_line(c["note"]) or DASH
         if c["kind"] == "measure":
             vals = ", ".join(f"{k}={v:g}" for k, v in c["measures"].items())
             cells = [DASH, DASH, DASH]
@@ -1315,12 +1325,63 @@ def render_list(cps: list[dict], prices: dict) -> str:
         else:
             s = summary(c, prices)
             cells = [fmt("points", s["points"]), fmt("cost_today", s["cost_today"]), fmt("seconds", s["seconds"])]
-        lines.append(f"| {cid} | {c['created'][:10]} | {c['kind']} | {_esc(c['experiment'])} | {_yes(c['kept'])} | "
-                     f"{c['verdict']} | {c['parent'] or DASH} | {c.get('aa_of') or DASH} | " + " | ".join(cells) +
-                     f" | {note} |")
+        rows.append([cid, c["created"][:10], c["kind"], _one_line(c["experiment"]), _yes(c["kept"]), c["verdict"],
+                     c["parent"] or DASH, c.get("aa_of") or DASH, *cells, note])
+    return rows
+
+
+def render_list(cps: list[dict], prices: dict) -> str:
+    """`checkpoints --markdown`: the list as a markdown table (for pasting into a doc)."""
     if not cps:
-        return "No checkpoints yet.\n"
+        return NO_CHECKPOINTS
+    lines = ["| " + " | ".join(LIST_HEADERS) + " |", "|" + "---|" * len(LIST_HEADERS)]
+    lines += ["| " + " | ".join(_esc(cell) for cell in row) + " |" for row in list_rows(cps, prices)]
     return "\n".join(lines) + "\n"
+
+
+def render_list_text(cps: list[dict], prices: dict) -> str:
+    """`checkpoints` in a terminal: the same cells in padded columns, Note last so a long note is the
+    only thing that wraps."""
+    if not cps:
+        return NO_CHECKPOINTS
+    return "\n".join(align([list(LIST_TEXT_HEADERS)] + list_rows(cps, prices))) + "\n"
+
+
+# ---------------------------------------------------------------------------
+# Markdown -> terminal text. The reports stay markdown (GitHub draws them); what a command prints in
+# a terminal goes through terminal_text, which only changes the layout, never a number or a word.
+# ---------------------------------------------------------------------------
+_PIPE = re.compile(r"(?<!\\)\|")  # a cell border, not an escaped \| inside a cell
+_RULE = re.compile(r"\|(\s*:?-+:?\s*\|)+")  # a table's |---|---| line
+
+
+def align(rows: list[list[str]]) -> list[str]:
+    """Rows of cells in padded columns, two spaces apart, no trailing spaces."""
+    n = max(len(r) for r in rows)
+    rows = [r + [""] * (n - len(r)) for r in rows]
+    widths = [max(len(r[i]) for r in rows) for i in range(n)]
+    return ["  ".join(cell.ljust(w) for cell, w in zip(r, widths)).rstrip() for r in rows]
+
+
+def _plain(text: str) -> str:
+    return text.replace("**", "").replace("`", "")
+
+
+def terminal_text(lines: list[str]) -> str:
+    """Markdown lines as terminal text: each table in aligned columns (its |---| line dropped, \\| back
+    to |), headings without their #, and no ** or backticks."""
+    out, table = [], []
+    for line in lines + [""]:
+        if line.lstrip().startswith("|"):
+            if not _RULE.fullmatch(line.strip()):
+                cells = _PIPE.split(line.strip())[1:-1]
+                table.append([_plain(c.strip().replace("\\|", "|")) for c in cells])
+            continue
+        if table:
+            out += align(table)
+            table = []
+        out.append(_plain(line).lstrip("#").strip() if line.startswith("#") else _plain(line).rstrip())
+    return "\n".join(out[:-1]) + "\n"
 
 
 # ---------------------------------------------------------------------------
