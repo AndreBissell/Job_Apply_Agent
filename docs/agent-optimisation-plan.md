@@ -7,6 +7,9 @@ owner's go-ahead.
 **Goal:** letters that score higher with judge v1, and a lower cost per letter. Second goal: the
 owner is learning agent-harness optimisation, so each lever says in plain words why it works.
 
+**Map:** [optimisation-map.md](optimisation-map.md) links each goal, issue and experiment, with a
+status for each experiment. Start there; this file holds the evidence and the full recipes.
+
 **This replaces** the 2026-10-04 decision not to iterate on letter wording (CLAUDE.md, Writer v3).
 
 **How to read the numbers.** Each number carries a label and a source:
@@ -17,17 +20,20 @@ owner is learning agent-harness optimisation, so each lever says in plain words 
 
 Sources, by short name:
 
-| Short name | What it is |
-|---|---|
-| cost table | `evals/results/v2/cost-dev-agent-v1.md`, rebuilt 2026-11-11 with `letter_lab.py cost-report --set v2 dev-agent-v1` |
-| usage | `llm_usage` rows of the run's 17 letter runs, in `evals/work/v2/eval.db` (read-only queries) |
-| states | `evals/work/v2/runs/dev-agent-v1/states/*.json` (each run's plan, drafts and check results) |
-| run.json | `evals/work/v2/runs/dev-agent-v1/run.json` |
-| judge | `evals/work/v2/runs/dev-agent-v1/judge-v1-dev.json` (panel `v1-dev`), scored by `scripts/letter_points.py` |
-| labels | `evals/work/v2/points-draft/labels.json` (the owner's points labels) |
-| key | `evals/work/v2/reference/ads/*.json`, the owner-corrected answer key (17 dev ads only; test never opened) |
-| loop report | `letter_lab.py loop-report --set v2 dev-agent-v1`, run 2026-11-11. Its output prints ad titles, so it was kept out of the repo; re-run the command to see it |
-| Google | Google's pricing and model pages, read through web search on 2026-11-11 (see §5) |
+| Short name | What it is | In plain words | Used here for |
+|---|---|---|---|
+| cost table | `evals/results/v2/cost-dev-agent-v1.md`, rebuilt 2026-11-11 with `letter_lab.py cost-report --set v2 dev-agent-v1` | The summary: cost and time per step, averaged per letter | §2.1, where the money goes |
+| usage | `llm_usage` rows of the run's 17 letter runs, in `evals/work/v2/eval.db` (read-only queries) | The raw rows the cost table is built from, one per Gemini call | Details the table hides: thinking share per step, the 3 cache hits, the 926 s call |
+| states | `evals/work/v2/runs/dev-agent-v1/states/*.json` (each run's plan, drafts and check results) | One file per letter holding everything the run knew: the job analysis, the evidence map, the plan (`must_cover` / `may_use`), every draft, every check result | The "why" questions: what caused each revision, which rows the plan made optional |
+| run.json | `evals/work/v2/runs/dev-agent-v1/run.json` | The run's summary: how each letter ended (clean / failed / budget_stopped), its drafts, time and cost | §2.2, the drafts table |
+| judge | `evals/work/v2/runs/dev-agent-v1/judge-v1-dev.json` (panel `v1-dev`), scored by `scripts/letter_points.py` | The Opus judge's verdict on each letter: the problems it found and how serious each is, turned into a 0-10 score by code | §3, where the points go |
+| labels | `evals/work/v2/points-draft/labels.json` (the owner's points labels) | The owner's own points labels for the same 17 letters | Checking that the judge ranks the problems the same way the owner does |
+| key | `evals/work/v2/reference/ads/*.json`, the owner-corrected answer key (17 dev ads only; test never opened) | For each dev ad, every requirement row with its correct status (supported / partial / gap) | Grading `match_profile`, and telling whether a revision chased a real row |
+| loop report | `letter_lab.py loop-report --set v2 dev-agent-v1`, run 2026-11-11. Its output prints ad titles, so it was kept out of the repo; re-run the command to see it | A command, not a file: per letter, the agent's path and how much each revision changed | §2.1 and §4, how many words a revision changes |
+| Google | Google's pricing and model pages, read through web search on 2026-11-11 (see §5) | Search summaries of the pages, not the live price tables, so the weakest source here | §5, the Gemini facts |
+
+Only the cost table is in the repo. Everything else sits under `evals/work/`, which is
+gitignored because it holds real ads, letters and the profile.
 
 Letters and the profile are never quoted here. Ads are named by key only.
 

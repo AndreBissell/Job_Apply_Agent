@@ -150,7 +150,10 @@ everything portable so a Postgres DATABASE_URL works with no code changes.
 Active provider: **Gemini on Vertex AI**, authenticating with Application Default
 Credentials (no API key — the $300 trial project's org disallows keys). Trial
 window 2026-10-01 → 2026-12-30; Flash intro prices double 2027-01-01, so re-check
-prices (and the plan's cost tables) before running past the trial. OpenAI
+prices (and the plan's cost tables) before running past the trial. DEADLINE: any
+eval judging with Claude through Vertex AI (grading_panel's planned `vertex` backend,
+not built) spends trial credits, so it must finish before 2026-12-30; the Claude CLI
+judge (v1) has no deadline (docs/experiment-checkpoints-plan.md §3.6). OpenAI
 (gpt-5-nano / gpt-5-mini, mini shuts down 2026-12-11) and Groq remain as dormant
 fallbacks in client.py. Switched 2026-10-01 (Phase 1 of
 docs/cover-letter-loop-plan.md); see that file for the model-choice reasoning.
