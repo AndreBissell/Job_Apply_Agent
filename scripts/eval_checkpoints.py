@@ -43,7 +43,10 @@ class CheckpointError(Exception):
 TOP_KEYS = ("id", "created", "kind", "experiment", "note", "parent", "kept", "verdict", "rule", "aa_of",
             "replaces", "comparable", "settings", "totals", "letters", "measures")
 COMPARABLE_KEYS = ("set", "split", "judge", "scorer_sha256", "judgings")
-SETTINGS_KEYS = ("run", "judge_tags", "judge_backends", "commit", "engine", "models", "thinking", "prices_seen")
+SETTINGS_KEYS = ("run", "judge_tags", "judge_backends", "commit", "engine", "models", "thinking", "prices_seen",
+                 "given_by_hand")
+# Settings the owner may type in for a run that did not save them (D13); `given_by_hand` names them.
+HAND_SETTINGS = ("commit", "thinking")
 TOTALS_KEYS = ("letters", "cost_usd", "seconds", "points_mean")
 LETTER_KEYS = ("key", "relevant", "status", "clean", "drafts", "seconds", "cost_usd", "by_task", "words",
                "stock_hits", "points", "points_each", "problems", "missed_row_ids", "checklist")
@@ -148,6 +151,9 @@ def check_allowlist(cp: dict) -> None:
             _fail(f"settings.prices_seen.{model}", "must be [input, output, cached]")
         for p in price:
             _number(p, f"settings.prices_seen.{model}")
+    hand = s.get("given_by_hand", [])
+    if not isinstance(hand, list) or any(h not in HAND_SETTINGS for h in hand):
+        _fail("settings.given_by_hand", f"{hand!r} must be a list of {HAND_SETTINGS}")
 
     _keys(cp["totals"], TOTALS_KEYS, "totals")
     for f, v in cp["totals"].items():
@@ -339,13 +345,19 @@ def build_letters_checkpoint(existing: list[dict], *, run_meta: dict, judgings: 
                              prices: dict, thinking: dict, commit: str, set_name: str, experiment: str,
                              kept: bool, note: str = "", verdict: str = "none", rule: str = "",
                              parent: str | None = None, aa_of: str | None = None, replaces: str | None = None,
-                             allow_test: bool = False, created: str | None = None) -> dict:
+                             allow_test: bool = False, created: str | None = None,
+                             given_by_hand: tuple | list = ()) -> dict:
     """A `letters` checkpoint from a run's run.json, its judging(s) and its llm_usage rows.
 
     judgings: one list per judging (D11), each a list of (tag, judge-<tag>.json) halves.
     usage: llm_usage rows of the run's letter runs (run_id, task, tier, model, tokens, cost, ms).
     ads: letter_lab._v2_ads(), key -> {"side", "relevant", ...}.
+    commit / thinking: what the run used; None / {} = unknown (D13: never today's values).
+    given_by_hand: which of them the owner typed in (D13), not read from run.json.
     Raises CheckpointError on every refusal of plan §3.1; builds every row from the allowlist."""
+    bad = [h for h in given_by_hand if h not in HAND_SETTINGS]
+    if bad:
+        raise CheckpointError(f"given_by_hand: {bad} are not settings that can be typed in {HAND_SETTINGS}")
     run_id = run_meta["run_id"]
     results = run_meta["results"]
     if not judgings:
@@ -431,6 +443,7 @@ def build_letters_checkpoint(existing: list[dict], *, run_meta: dict, judgings: 
             "models": {t: "+".join(sorted(models[t])) for t in TIERS if t in models},
             "thinking": {t: thinking[t] for t in TIERS if t in thinking},
             "prices_seen": {m: list(prices[m]) for m in used if m in prices},
+            "given_by_hand": [h for h in HAND_SETTINGS if h in given_by_hand],
         },
         "totals": {"letters": len(letters), "cost_usd": round(sum(x["cost_usd"] for x in letters), 6),
                    "seconds": round(sum(x["seconds"] for x in letters), 1),
@@ -438,8 +451,25 @@ def build_letters_checkpoint(existing: list[dict], *, run_meta: dict, judgings: 
         "letters": letters,
         "measures": {},
     }
+    if aa_of is not None:
+        _check_aa(cp, next(c for c in existing if c["id"] == aa_of))
     check_allowlist(cp)
     return cp
+
+
+def _check_aa(cp: dict, orig: dict) -> None:
+    """An A/A repeats `orig` with no change, so it must be comparable with it; and a judge-only A/A
+    (the same run) must be a fresh judging, or every judge difference is 0 and the noise looks nil."""
+    for f in COMPARABLE_KEYS:
+        if cp["comparable"].get(f) != orig["comparable"].get(f):
+            raise CheckpointError(f"an A/A must match the checkpoint it repeats: comparable.{f} is "
+                                  f"{cp['comparable'].get(f)!r}, {orig['id']} has {orig['comparable'].get(f)!r}")
+    s, o = cp["settings"], orig["settings"]
+    if s["run"] == o.get("run"):
+        shared = {t for g in s["judge_tags"] for t in g} & {t for g in o.get("judge_tags", []) for t in g}
+        if shared:
+            raise CheckpointError(f"a judge-only A/A (same run as {orig['id']}) needs a fresh judging; "
+                                  f"{sorted(shared)} judged {orig['id']} already")
 
 
 def build_measure_checkpoint(existing: list[dict], *, experiment: str, values: dict[str, float], commit: str,
@@ -469,6 +499,284 @@ def parse_values(pairs: list[str]) -> dict[str, float]:
         except ValueError as e:
             raise CheckpointError(f"--value {p!r}: {num!r} is not a number") from e
     return out
+
+
+# ---------------------------------------------------------------------------
+# Pairing and stats (plan §3.2 - §3.5). Pure: checkpoints and a price table in, numbers out.
+# ---------------------------------------------------------------------------
+# Who produces a measure decides which A/A can be its noise reference (D14): the judge's measures
+# (points, problems) move when the same letters are judged again; the writer's (cost, time, drafts)
+# only move when new letters are written.
+JUDGE, WRITER = "judge", "writer"
+MEASURES: tuple[tuple[str, str], ...] = (
+    ("points", JUDGE), ("cost_today", WRITER), ("cost_usd", WRITER), ("seconds", WRITER), ("drafts", WRITER),
+    *((f"{m}.{f}", JUDGE) for m in lp.METRICS for f in ("n", "lost")),
+)
+MEASURE_KIND = dict(MEASURES)
+WITHIN, BEYOND, NO_REF = "within noise", "beyond noise", "no noise reference yet"
+JUDGE_ONLY, WRITER_JUDGE = "judge-only", "writer+judge"
+_EPS = 1e-9
+
+
+def task_cost_at(task: dict, prices: dict) -> float | None:
+    """One task's cost at a price table (USD per 1M tokens: input, output, cached input). Input
+    tokens include the cached ones; thinking bills as output (client.estimate_cost_usd's rule).
+    None when the table has no price for the model: a cost is never guessed."""
+    price = prices.get(task["model"])
+    if price is None:
+        return None
+    p_in, p_out, p_cached = price
+    fresh = max(0, task["in"] - task["cached"])
+    return (fresh * p_in + task["cached"] * p_cached + (task["out"] + task["think"]) * p_out) / 1_000_000
+
+
+def cost_at(row: dict, prices: dict) -> float | None:
+    """A letter's cost recomputed from its by_task tokens at `prices` (plan §3.4)."""
+    costs = [task_cost_at(t, prices) for t in row["by_task"].values()]
+    return None if any(c is None for c in costs) else round(sum(costs), 6)
+
+
+def value(row: dict, measure: str, prices: dict) -> float | None:
+    if measure == "cost_today":
+        return cost_at(row, prices)
+    if "." in measure:
+        metric, field = measure.split(".")
+        p = row["problems"].get(metric)
+        return None if p is None else p[field]
+    return row.get(measure)
+
+
+def _sd(values: list[float]) -> float | None:
+    """Sample standard deviation (n - 1), as plan §9.0's 0.65 was measured."""
+    if len(values) < 2:
+        return None
+    m = sum(values) / len(values)
+    return (sum((v - m) ** 2 for v in values) / (len(values) - 1)) ** 0.5
+
+
+def check_comparable(a: dict, b: dict) -> None:
+    """§3.2: `comparable` must match exactly, else refuse and name the field."""
+    if a["kind"] != b["kind"]:
+        raise CheckpointError(f"{a['id']} is a {a['kind']} checkpoint and {b['id']} a {b['kind']} one; "
+                              "they can't be compared")
+    for f in COMPARABLE_KEYS:
+        x, y = a["comparable"].get(f), b["comparable"].get(f)
+        if x != y:
+            hint = (" (an average and a single judging mix two noise levels: judge the other side again and "
+                    "average it, plan §3.5)") if f == "judgings" else ""
+            raise CheckpointError(f"{a['id']} and {b['id']} are not comparable: comparable.{f} is {x!r} vs {y!r}"
+                                  + hint)
+
+
+def pair(a: dict, b: dict) -> dict:
+    """Letters paired by ad key (§3.2). A letter with no draft (no points) on either side is not
+    paired; ads on one side only are listed and left out. `relevant` = relevant on both sides."""
+    ra, rb = {r["key"]: r for r in a["letters"]}, {r["key"]: r for r in b["letters"]}
+    pairs, failed = [], []
+    for key, x in ra.items():
+        if key in rb:
+            y = rb[key]
+            if x["points"] is None or y["points"] is None:
+                failed.append(key)
+            else:
+                pairs.append((key, x, y))
+    return {
+        "pairs": pairs,
+        "relevant": [p for p in pairs if p[1]["relevant"] is True and p[2]["relevant"] is True],
+        "relevant_disagree": [k for k, x, y in pairs if x["relevant"] != y["relevant"]],
+        "only_a": [k for k in ra if k not in rb], "only_b": [k for k in rb if k not in ra],
+        "failed": failed,
+    }
+
+
+def diff_stats(pairs: list[tuple], measure: str, prices: dict) -> dict:
+    """Mean of A and B, the mean paired difference (B - A), its SD, and ads up / same / down,
+    over the pairs where both sides have the measure."""
+    vals = [(value(x, measure, prices), value(y, measure, prices)) for _, x, y in pairs]
+    vals = [(p, q) for p, q in vals if p is not None and q is not None]
+    d = [q - p for p, q in vals]
+    n = len(vals)
+    return {
+        "n": n,
+        "a": sum(p for p, _ in vals) / n if n else None,
+        "b": sum(q for _, q in vals) / n if n else None,
+        "diff": sum(d) / n if n else None,
+        "sd": _sd(d),
+        "up": sum(1 for x in d if x > _EPS), "same": sum(1 for x in d if abs(x) <= _EPS),
+        "down": sum(1 for x in d if x < -_EPS),
+    }
+
+
+def _replaced(checkpoints: list[dict]) -> set[str]:
+    return {c["replaces"] for c in checkpoints if c.get("replaces")}
+
+
+def aa_kind(aa: dict, orig: dict) -> str:
+    """D14: the same run judged again = judge-only; new letters with the same settings = writer + judge."""
+    return JUDGE_ONLY if aa["settings"].get("run") == orig["settings"].get("run") else WRITER_JUDGE
+
+
+def aa_pairs(checkpoints: list[dict]) -> list[dict]:
+    """Every A/A pair, oldest first, with its kind. A checkpoint a later one replaces is skipped."""
+    by_id, gone = {c["id"]: c for c in checkpoints}, _replaced(checkpoints)
+    return [{"aa": c, "of": by_id[c["aa_of"]], "kind": aa_kind(c, by_id[c["aa_of"]])}
+            for c in checkpoints if c.get("aa_of") and c["id"] not in gone and c["aa_of"] in by_id]
+
+
+def noise_refs(checkpoints: list[dict], comparable: dict, prices: dict) -> dict:
+    """§3.3 / §3.5: the A/A pair each kind of measure is labelled against.
+
+    Judge measures: the most recent writer + judge A/A, else the most recent judge-only one; each
+    preferring the same `judgings` and falling back to a single-judging one ("conservative").
+    Writer measures: a writer + judge A/A only (a judge-only A/A's letters are the same, so its
+    cost / time / drafts differences are all 0). Returns {JUDGE: ref | None, WRITER: ref | None},
+    a ref = {"aa", "of", "kind", "conservative", "n", "sd": {measure: s}}."""
+    def match(c: dict) -> str | None:
+        rest = [f for f in COMPARABLE_KEYS if f != "judgings"]
+        if any(c["comparable"].get(f) != comparable.get(f) for f in rest):
+            return None
+        if c["comparable"].get("judgings") == comparable.get("judgings"):
+            return "exact"
+        if c["comparable"].get("judgings") == 1:
+            return "conservative"  # a single-judging reference for an average: its T is larger
+        return None  # a reference less noisy than the comparison would over-claim
+
+    found = {}
+    for p in reversed(aa_pairs(checkpoints)):
+        how = match(p["aa"])
+        if how is not None:
+            found.setdefault((p["kind"], how), p)
+
+    def ref(p: dict | None, conservative: bool) -> dict | None:
+        if p is None:
+            return None
+        pairs = pair(p["of"], p["aa"])["pairs"]
+        return {"aa": p["aa"]["id"], "of": p["of"]["id"], "kind": p["kind"], "conservative": conservative,
+                "n": len(pairs), "sd": {m: diff_stats(pairs, m, prices)["sd"] for m, _ in MEASURES}}
+
+    judge = next(((found[k], k[1] == "conservative") for k in
+                  ((WRITER_JUDGE, "exact"), (WRITER_JUDGE, "conservative"), (JUDGE_ONLY, "exact"),
+                   (JUDGE_ONLY, "conservative")) if k in found), (None, False))
+    # The writer's measures don't depend on how often the letters were judged: no conservative mark.
+    writer = found.get((WRITER_JUDGE, "exact")) or found.get((WRITER_JUDGE, "conservative"))
+    return {JUDGE: ref(*judge), WRITER: ref(writer, False)}
+
+
+def noise(stats: dict, measure: str, refs: dict) -> dict:
+    """The noise label of one mean difference: T = 2 s / sqrt(n), n = this comparison's pairs.
+    s = 0 (the A/A never moved on this measure) gives no reference, never T = 0: 17 letters that
+    did not move say little about what a new letter would do (Decision log, step 2)."""
+    ref = refs[MEASURE_KIND[measure]]
+    out = {"label": NO_REF, "T": None, "s": None, "ref": None, "kind": None, "provisional": False,
+           "conservative": False}
+    if ref is None or not stats["n"]:
+        return out
+    s = ref["sd"].get(measure)
+    out |= {"ref": f"{ref['aa']} vs {ref['of']}", "kind": ref["kind"], "s": s}
+    if not s:
+        return out
+    t = 2 * s / stats["n"] ** 0.5
+    return out | {"label": BEYOND if abs(stats["diff"]) > t else WITHIN, "T": t,
+                  "provisional": ref["kind"] == JUDGE_ONLY, "conservative": ref["conservative"]}
+
+
+def label_text(nz: dict) -> str:
+    """The label as the reports print it (§3.3, §3.5)."""
+    text = nz["label"]
+    if nz["label"] == NO_REF and nz["ref"] is not None:
+        text += f" ({nz['ref']} never moved on this measure)"
+    if nz["provisional"]:
+        text += "; provisional: judge noise only, writer noise not included"
+    if nz["conservative"]:
+        text += "; conservative: reference from single judgings"
+    return text
+
+
+def task_table(pairs: list[tuple], prices: dict) -> list[dict]:
+    """§4.4: per llm_usage task, $ / letter at today's prices and s / letter, A and B, over the
+    paired letters (a task a letter didn't run counts 0 for it)."""
+    n = len(pairs) or 1
+    tasks = sorted({t for _, x, y in pairs for r in (x, y) for t in r["by_task"]})
+    out = []
+    for task in tasks:
+        row = {"task": task}
+        for side, i in (("a", 1), ("b", 2)):
+            ts = [p[i]["by_task"].get(task) for p in pairs]
+            costs = [task_cost_at(t, prices) if t else 0.0 for t in ts]
+            row[f"{side}_cost"] = None if any(c is None for c in costs) else sum(costs) / n
+            row[f"{side}_s"] = sum(t["ms"] for t in ts if t) / 1000 / n
+            row[f"{side}_calls"] = sum(t["calls"] for t in ts if t) / n
+        out.append(row)
+    return sorted(out, key=lambda r: -(r["b_cost"] or 0))
+
+
+def settings_diff(a: dict, b: dict) -> list[tuple[str, object, object]]:
+    """§4.2: every `settings` field that differs, one tier / model at a time. Listed, never refused."""
+    sa, sb = a["settings"], b["settings"]
+    out = []
+    for f in ("run", "engine", "commit", "judge_tags", "judge_backends", "given_by_hand"):
+        if sa.get(f) != sb.get(f):
+            out.append((f, sa.get(f), sb.get(f)))
+    for f in ("models", "thinking"):
+        for tier in TIERS:
+            x, y = sa.get(f, {}).get(tier), sb.get(f, {}).get(tier)
+            if x != y:
+                out.append((f"{f}.{tier}", x, y))
+    pa, pb = sa.get("prices_seen", {}), sb.get("prices_seen", {})
+    for m in sorted(set(pa) & set(pb)):
+        if pa[m] != pb[m]:
+            out.append((f"prices_seen.{m}", pa[m], pb[m]))
+    return out
+
+
+def price_changes(cps: list[dict], prices: dict) -> list[tuple[str, str, list, list | None]]:
+    """(checkpoint, model, price then, price today) for every model whose price differs from today's
+    table: a price change must never look like an optimisation (D7)."""
+    out = []
+    for c in cps:
+        for m, p in sorted(c["settings"].get("prices_seen", {}).items()):
+            now = list(prices[m]) if m in prices else None
+            if now != list(p):
+                out.append((c["id"], m, list(p), now))
+    return out
+
+
+def resolve_pair(checkpoints: list[dict], a_id: str, b_id: str | None = None) -> tuple[dict, dict]:
+    """D8: two ids = A and B; one id = that checkpoint (B) against its parent (A)."""
+    by_id = {c["id"]: c for c in checkpoints}
+    for i in (a_id, b_id):
+        if i is not None and i not in by_id:
+            raise CheckpointError(f"no checkpoint {i}")
+    if b_id is not None:
+        return by_id[a_id], by_id[b_id]
+    b = by_id[a_id]
+    if b["parent"] is None:
+        raise CheckpointError(f"{a_id} has no parent; name the checkpoint to compare it with")
+    return by_id[b["parent"]], b
+
+
+def compare(checkpoints: list[dict], a: dict, b: dict, prices: dict) -> dict:
+    """Everything the compare report shows (§4), as numbers. Refuses on a `comparable` mismatch."""
+    check_comparable(a, b)
+    if a["kind"] == "measure":
+        shared = [m for m in a["measures"] if m in b["measures"]]
+        return {"kind": "measure", "a": a, "b": b,
+                "measures": [(m, a["measures"][m], b["measures"][m], b["measures"][m] - a["measures"][m])
+                             for m in shared],
+                "only_a": [m for m in a["measures"] if m not in b["measures"]],
+                "only_b": [m for m in b["measures"] if m not in a["measures"]],
+                "settings_diff": settings_diff(a, b)}
+    pg = pair(a, b)
+    refs = noise_refs(checkpoints, a["comparable"], prices)
+    groups = {}
+    for name, pairs in (("all", pg["pairs"]), ("relevant", pg["relevant"])):
+        groups[name] = {}
+        for m, _ in MEASURES:
+            st = diff_stats(pairs, m, prices)
+            groups[name][m] = st | {"noise": noise(st, m, refs)}
+    return {"kind": "letters", "a": a, "b": b, "pairing": pg, "refs": refs, "groups": groups,
+            "tasks": task_table(pg["pairs"], prices), "settings_diff": settings_diff(a, b),
+            "price_changes": price_changes([a, b], prices)}
 
 
 # ---------------------------------------------------------------------------

@@ -141,7 +141,7 @@ def test_allowlist_is_pinned():
                               "checklist")
     assert ec.COMPARABLE_KEYS == ("set", "split", "judge", "scorer_sha256", "judgings")
     assert ec.SETTINGS_KEYS == ("run", "judge_tags", "judge_backends", "commit", "engine", "models", "thinking",
-                                "prices_seen")
+                                "prices_seen", "given_by_hand")  # given_by_hand: D13, added on purpose in step 2
     assert ec.TASK_KEYS == ("model", "calls", "in", "cached", "out", "think", "cost_usd", "ms")
     assert ec.PROBLEM_KEYS == ("n", "low", "high", "lost")
 
@@ -386,12 +386,13 @@ def test_an_explicit_parent_that_is_not_kept_is_refused():
 def test_an_aa_checkpoints_parent_is_the_one_it_repeats():
     c0 = _build()
     c1 = _build([c0], experiment="E1", kept=True)
-    aa = _build([c0, c1], aa_of="c0", kept=False)
+    again = [[("v1-dev-again", _judging())]]  # a fresh judging: the same tag again is refused (step 2)
+    aa = _build([c0, c1], aa_of="c0", kept=False, judgings=again)
     assert aa["parent"] == "c0" and aa["aa_of"] == "c0"
     with pytest.raises(ec.CheckpointError, match="parent is the one it repeats"):
-        _build([c0, c1], aa_of="c0", parent="c1", kept=False)
+        _build([c0, c1], aa_of="c0", parent="c1", kept=False, judgings=again)
     # an A/A is never a default parent, even when marked kept
-    aa_kept = _build([c0], aa_of="c0", kept=True)
+    aa_kept = _build([c0], aa_of="c0", kept=True, judgings=again)
     assert _build([c0, aa_kept], experiment="E2")["parent"] == "c0"
 
 
@@ -428,3 +429,276 @@ def test_build_does_not_touch_its_inputs():
     before = copy.deepcopy((judgings, run_meta))
     _build(judgings=judgings, run_meta=run_meta)
     assert (judgings, run_meta) == before
+
+
+# ---------------------------------------------------------------------------
+# Run settings given by hand (plan D13)
+# ---------------------------------------------------------------------------
+def test_given_by_hand_is_recorded_and_checked():
+    cp = _build(given_by_hand=["thinking", "commit"])
+    assert cp["settings"]["given_by_hand"] == ["commit", "thinking"]  # fixed order
+    assert _build()["settings"]["given_by_hand"] == []
+    with pytest.raises(ec.CheckpointError, match="not settings that can be typed in"):
+        _build(given_by_hand=["models"])
+    cp["settings"]["given_by_hand"] = ["typed by Liam"]
+    with pytest.raises(ec.CheckpointError, match="privacy guard: settings.given_by_hand"):
+        ec.check_allowlist(cp)
+
+
+def test_unknown_commit_and_thinking_stay_unknown():
+    cp = _build(commit=None, thinking={})
+    assert cp["settings"]["commit"] is None and cp["settings"]["thinking"] == {}
+
+
+# ---------------------------------------------------------------------------
+# A/A checkpoints (plan §3.3, D14)
+# ---------------------------------------------------------------------------
+def test_an_aa_must_be_comparable_with_what_it_repeats():
+    c0 = _build()
+    with pytest.raises(ec.CheckpointError, match="comparable.scorer_sha256"):
+        _build([c0], aa_of="c0", kept=False, scorer_sha256="e" * 64, judgings=[[("again", _judging())]])
+
+
+def test_a_judge_only_aa_needs_a_fresh_judging():
+    c0 = _build()
+    with pytest.raises(ec.CheckpointError, match=r"needs a fresh judging; \['v1-dev'\]"):
+        _build([c0], aa_of="c0", kept=False)
+    # a writer + judge A/A (another run) may reuse a tag name: its letters are new
+    other = _run(run_id="dev-fake-v2")
+    j = _judging(run="dev-fake-v2")
+    assert _build([c0], aa_of="c0", kept=False, run_meta=other, judgings=[[("v1-dev", j)]])["aa_of"] == "c0"
+
+
+# ---------------------------------------------------------------------------
+# Hand-made checkpoints for pairing and stats: allowlisted rows with chosen numbers
+# ---------------------------------------------------------------------------
+def _problems_row(missed=0.0, generic=0.0):
+    out = {m: {"n": 0, "low": 0, "high": 0, "lost": 0.0} for m in lp.METRICS}
+    out["missed_row"] = {"n": missed, "low": 0, "high": missed, "lost": missed * lp.VALUES["missed_row"][1]}
+    out["generic"] = {"n": generic, "low": generic, "high": 0, "lost": generic * lp.VALUES["generic"][0]}
+    return out
+
+
+def _letter(key, points, *, relevant=True, seconds=100.0, drafts=1, think=7000, missed=0, generic=0,
+            model="gemini-pro"):
+    task = {"model": model, "calls": 1, "in": 6000, "cached": 1000, "out": 1000, "think": think, "cost_usd": 0.0,
+            "ms": int(seconds * 500)}
+    task["cost_usd"] = round(ec.task_cost_at(task, PRICES), 6)
+    return {"key": key, "relevant": relevant, "status": "done", "clean": True, "drafts": drafts, "seconds": seconds,
+            "cost_usd": task["cost_usd"], "by_task": {"generate_letter": task}, "words": 300, "stock_hits": 5,
+            "points": points, "points_each": [] if points is None else [points],
+            "problems": {} if points is None else _problems_row(missed, generic), "missed_row_ids": [],
+            "checklist": {}}
+
+
+def _cp(cid, letters, *, run="r1", aa_of=None, parent=None, kept=True, judgings=1, tags=None, split="dev",
+        prices=None, **settings):
+    cp = {"id": cid, "created": "2026-11-25T10:00:00", "kind": "letters", "experiment": "baseline", "note": "",
+          "parent": parent, "kept": kept, "verdict": "none", "rule": "", "aa_of": aa_of, "replaces": None,
+          "comparable": {"set": "v2", "split": split, "judge": "v1", "scorer_sha256": SHA, "judgings": judgings},
+          "settings": {"run": run, "judge_tags": tags or [[f"tag-{cid}"]] * judgings,
+                       "judge_backends": ["claude-cli"] * judgings, "commit": "abc1234", "engine": "agent",
+                       "models": {"strong": "gemini-pro"}, "thinking": dict(THINKING),
+                       "prices_seen": {"gemini-pro": list(prices or PRICES["gemini-pro"])}, "given_by_hand": [],
+                       **settings},
+          "totals": {}, "letters": letters, "measures": {}}
+    ec.check_allowlist(cp)  # the fixtures are real checkpoints, not shapes the guard would refuse
+    return cp
+
+
+K = ("k1", "k2", "k3", "k4")
+REL = {"k1": True, "k2": True, "k3": False, "k4": None}
+
+
+def _letters(points, **kw):
+    return [_letter(k, p, relevant=REL[k], **kw) for k, p in zip(K, points)]
+
+
+A = _cp("c0", _letters([8, 7, 9, 6]))
+AA = _cp("c1", _letters([8.5, 7, 9, 5.5]), aa_of="c0", parent="c0", kept=False)  # same run: judge-only
+B = _cp("c2", _letters([9, 7, 8, 8], seconds=120.0, think=9000), run="r2", parent="c0")
+
+
+# ---------------------------------------------------------------------------
+# Pairing (plan §3.2)
+# ---------------------------------------------------------------------------
+def test_pairing_lists_one_sided_ads_and_skips_failed_letters():
+    a = _cp("c0", _letters([8, 7, 9, 6]) + [_letter("only-a", 5)])
+    b = _cp("c1", [_letter("k1", 9), _letter("k2", None), _letter("k3", 8, relevant=True), _letter("k4", 7),
+                   _letter("only-b", 6)], run="r2")
+    pg = ec.pair(a, b)
+    assert [k for k, _, _ in pg["pairs"]] == ["k1", "k3", "k4"]
+    assert pg["failed"] == ["k2"] and pg["only_a"] == ["only-a"] and pg["only_b"] == ["only-b"]
+    assert [k for k, _, _ in pg["relevant"]] == ["k1"]  # relevant on both sides only
+    assert pg["relevant_disagree"] == ["k3", "k4"]
+
+
+def test_comparable_mismatch_is_refused_and_names_the_field():
+    with pytest.raises(ec.CheckpointError, match="comparable.split is 'dev' vs 'test'"):
+        ec.check_comparable(A, _cp("c3", _letters([1, 2, 3, 4]), split="test"))
+    with pytest.raises(ec.CheckpointError, match="comparable.judgings is 1 vs 2.*judge the other side again"):
+        ec.check_comparable(A, _cp("c3", _letters([1, 2, 3, 4]), judgings=2))
+    m = ec.build_measure_checkpoint([], experiment="E1", values={"G": 5}, commit="abc1234", kept=True,
+                                    created="2026-11-25T10:00:00")
+    with pytest.raises(ec.CheckpointError, match="can't be compared"):
+        ec.check_comparable(A, m)
+
+
+def test_differing_settings_are_listed_not_refused():
+    b = _cp("c3", _letters([8, 7, 9, 6]), run="r3", engine="workflow",
+            thinking={"strong": "low", "mid": "medium", "small": "low"}, given_by_hand=["thinking"])
+    diff = {f: (x, y) for f, x, y in ec.settings_diff(A, b)}
+    assert diff["engine"] == ("agent", "workflow") and diff["thinking.strong"] == ("high", "low")
+    assert diff["run"] == ("r1", "r3") and diff["given_by_hand"] == ([], ["thinking"])
+    assert "thinking.mid" not in diff and "models.strong" not in diff
+    assert ec.compare([A, b], A, b, PRICES)["settings_diff"] == ec.settings_diff(A, b)
+
+
+# ---------------------------------------------------------------------------
+# Stats (plan §3.3): hand-worked numbers
+# ---------------------------------------------------------------------------
+def test_paired_difference_sd_and_up_same_down():
+    st = ec.diff_stats(ec.pair(A, B)["pairs"], "points", PRICES)
+    # A 8 7 9 6, B 9 7 8 8: differences +1 0 -1 +2
+    assert st["n"] == 4 and st["a"] == 7.5 and st["b"] == 8.0 and st["diff"] == 0.5
+    assert st["sd"] == pytest.approx((5 / 3) ** 0.5)  # deviations .5 -.5 -1.5 1.5, squares sum 5, n - 1 = 3
+    assert (st["up"], st["same"], st["down"]) == (2, 1, 1)
+    assert ec._sd([1.0]) is None
+
+
+def test_t_and_the_labels_on_hand_worked_numbers():
+    cmp = ec.compare([A, AA, B], A, B, PRICES)
+    pts = cmp["groups"]["all"]["points"]
+    # A/A differences +0.5 0 0 -0.5: s = sqrt(0.5 / 3); T = 2 s / sqrt(4) = s
+    s = (0.5 / 3) ** 0.5
+    assert pts["noise"]["s"] == pytest.approx(s) and pts["noise"]["T"] == pytest.approx(s)
+    assert pts["noise"]["label"] == ec.BEYOND  # 0.5 > 0.408
+    rel = cmp["groups"]["relevant"]["points"]
+    assert rel["n"] == 2 and rel["diff"] == 0.5  # k1 +1, k2 0
+    assert rel["noise"]["T"] == pytest.approx(2 * s / 2 ** 0.5)
+    assert rel["noise"]["label"] == ec.WITHIN  # 0.5 < 0.577
+    assert pts["noise"]["ref"] == "c1 vs c0"
+
+
+# ---------------------------------------------------------------------------
+# Which A/A is the noise reference (plan §3.3, §3.5, D14)
+# ---------------------------------------------------------------------------
+def test_aa_kind_same_run_is_judge_only_other_run_is_writer_and_judge():
+    wj = _cp("c3", _letters([8, 7, 9, 6]), run="r9", aa_of="c0", parent="c0", kept=False)
+    assert ec.aa_kind(AA, A) == ec.JUDGE_ONLY and ec.aa_kind(wj, A) == ec.WRITER_JUDGE
+
+
+def test_a_judge_only_reference_is_provisional_and_gives_nothing_for_cost_time_or_drafts():
+    g = ec.compare([A, AA, B], A, B, PRICES)["groups"]["all"]
+    assert g["points"]["noise"]["provisional"] is True
+    assert "provisional: judge noise only, writer noise not included" in ec.label_text(g["points"]["noise"])
+    for m in ("cost_today", "cost_usd", "seconds", "drafts"):
+        assert g[m]["noise"]["label"] == ec.NO_REF and g[m]["noise"]["T"] is None, m  # never T = 0
+        assert ec.label_text(g[m]["noise"]) == ec.NO_REF
+
+
+def test_no_aa_gives_no_reference():
+    g = ec.compare([A, B], A, B, PRICES)["groups"]["all"]
+    assert all(g[m]["noise"]["label"] == ec.NO_REF for m, _ in ec.MEASURES)
+
+
+def test_a_writer_and_judge_reference_is_preferred_and_covers_cost_and_time():
+    wj = _cp("c3", _letters([7.5, 7, 9.5, 6], seconds=110.0), run="r9", aa_of="c0", parent="c0", kept=False)
+    cps = [A, AA, B, wj]
+    refs = ec.noise_refs(cps, A["comparable"], PRICES)
+    assert refs[ec.JUDGE]["aa"] == "c3" and refs[ec.WRITER]["aa"] == "c3"
+    g = ec.compare(cps, A, B, PRICES)["groups"]["all"]
+    assert g["points"]["noise"]["provisional"] is False and g["points"]["noise"]["ref"] == "c3 vs c0"
+    # the writer + judge A/A's seconds: all +10, so s = 0: still no reference, never T = 0
+    assert g["seconds"]["noise"]["label"] == ec.NO_REF and g["seconds"]["noise"]["ref"] == "c3 vs c0"
+    assert "c3 vs c0 never moved on this measure" in ec.label_text(g["seconds"]["noise"])
+
+
+def test_a_writer_and_judge_reference_labels_cost():
+    wj = _cp("c3", [_letter(k, 8, relevant=REL[k], think=t) for k, t in zip(K, (6000, 8000, 7000, 7500))],
+             run="r9", aa_of="c0", parent="c0", kept=False)
+    g = ec.compare([A, wj, B], A, B, PRICES)["groups"]["all"]
+    cost = g["cost_today"]
+    # B's letters think 2000 more tokens each: +$0.024 a letter at $12 / 1M
+    assert cost["diff"] == pytest.approx(0.024) and cost["noise"]["label"] == ec.BEYOND
+    # A/A think differences -1000 +1000 0 +500 -> cost differences x $12 / 1M
+    s = ec._sd([-0.012, 0.012, 0.0, 0.006])
+    assert cost["noise"]["s"] == pytest.approx(s) and cost["noise"]["T"] == pytest.approx(s)
+
+
+def test_a_judge_measure_whose_aa_never_moved_has_no_reference():
+    g = ec.compare([A, AA, B], A, B, PRICES)["groups"]["all"]
+    assert g["untrue.n"]["noise"]["label"] == ec.NO_REF and g["untrue.n"]["noise"]["ref"] == "c1 vs c0"
+
+
+def test_an_averaged_comparison_falls_back_to_a_single_judging_reference_as_conservative():
+    a2 = _cp("c3", _letters([8, 7, 9, 6]), judgings=2, run="r5")
+    b2 = _cp("c4", _letters([9, 7, 8, 8]), judgings=2, run="r6")
+    g = ec.compare([A, AA, B, a2, b2], a2, b2, PRICES)["groups"]["all"]
+    assert g["points"]["noise"]["conservative"] is True and g["points"]["noise"]["ref"] == "c1 vs c0"
+    assert "conservative: reference from single judgings" in ec.label_text(g["points"]["noise"])
+    # a 2-judging A/A, once it exists, is used instead and is not marked
+    aa2 = _cp("c5", _letters([8.5, 7, 9, 6]), judgings=2, run="r5", aa_of="c3", parent="c3", kept=False)
+    g = ec.compare([A, AA, B, a2, b2, aa2], a2, b2, PRICES)["groups"]["all"]
+    assert g["points"]["noise"]["conservative"] is False and g["points"]["noise"]["ref"] == "c5 vs c3"
+    # a single-judging comparison never borrows a less noisy averaged reference
+    assert ec.noise_refs([a2, aa2], A["comparable"], PRICES)[ec.JUDGE] is None
+
+
+def test_a_replaced_aa_is_not_a_reference():
+    fix = dict(_cp("c3", _letters([8, 7, 9, 6]), run="r1"), replaces="c1")
+    assert ec.noise_refs([A, AA, B, fix], A["comparable"], PRICES)[ec.JUDGE] is None
+
+
+# ---------------------------------------------------------------------------
+# Cost at one price table (plan §3.4, D7)
+# ---------------------------------------------------------------------------
+def test_cost_is_recomputed_at_todays_prices_and_a_change_is_noted():
+    row = A["letters"][0]
+    assert ec.cost_at(row, PRICES) == pytest.approx(row["cost_usd"])  # 5000 x 2 + 1000 x 0.2 + 8000 x 12
+    doubled = dict(PRICES, **{"gemini-pro": (4.0, 24.0, 0.4)})
+    assert ec.cost_at(row, doubled) == pytest.approx(2 * row["cost_usd"])
+    cmp = ec.compare([A, B], A, B, doubled)
+    st = cmp["groups"]["all"]
+    assert st["cost_today"]["a"] == pytest.approx(2 * st["cost_usd"]["a"])
+    assert cmp["price_changes"] == [("c0", "gemini-pro", [2.0, 12.0, 0.2], [4.0, 24.0, 0.4]),
+                                    ("c2", "gemini-pro", [2.0, 12.0, 0.2], [4.0, 24.0, 0.4])]
+    assert ec.compare([A, B], A, B, PRICES)["price_changes"] == []
+    assert ec.cost_at(row, {}) is None  # no price today: unknown, never guessed
+
+
+def test_a_price_change_between_two_checkpoints_is_listed():
+    b = _cp("c3", _letters([9, 7, 8, 8]), run="r3", prices=(4.0, 24.0, 0.4))
+    assert ("prices_seen.gemini-pro", [2.0, 12.0, 0.2], [4.0, 24.0, 0.4]) in ec.settings_diff(A, b)
+
+
+def test_task_table_per_letter_at_todays_prices():
+    rows = ec.task_table(ec.pair(A, B)["pairs"], PRICES)
+    assert [r["task"] for r in rows] == ["generate_letter"]
+    r = rows[0]
+    assert r["a_cost"] == pytest.approx(A["letters"][0]["cost_usd"])
+    assert r["b_cost"] == pytest.approx(B["letters"][0]["cost_usd"])
+    assert r["a_s"] == pytest.approx(50.0) and r["b_s"] == pytest.approx(60.0) and r["a_calls"] == 1
+
+
+# ---------------------------------------------------------------------------
+# compare with one or two ids (D8) and measure checkpoints
+# ---------------------------------------------------------------------------
+def test_one_id_compares_with_its_parent():
+    a, b = ec.resolve_pair([A, AA, B], "c2")
+    assert (a["id"], b["id"]) == ("c0", "c2")
+    a, b = ec.resolve_pair([A, AA, B], "c1", "c2")
+    assert (a["id"], b["id"]) == ("c1", "c2")
+    with pytest.raises(ec.CheckpointError, match="c0 has no parent"):
+        ec.resolve_pair([A], "c0")
+    with pytest.raises(ec.CheckpointError, match="no checkpoint c9"):
+        ec.resolve_pair([A], "c0", "c9")
+
+
+def test_measure_checkpoints_compare_on_shared_measures_only():
+    m1 = ec.build_measure_checkpoint([], experiment="E1", values={"G": 5, "U": 2}, commit="abc1234", kept=True,
+                                     created="2026-11-25T10:00:00")
+    m2 = ec.build_measure_checkpoint([m1], experiment="E1", values={"G": 3, "S": 162}, commit="abc1234",
+                                     kept=True, created="2026-11-25T10:00:00")
+    cmp = ec.compare([m1, m2], m1, m2, PRICES)
+    assert cmp["measures"] == [("G", 5.0, 3.0, -2.0)] and cmp["only_a"] == ["U"] and cmp["only_b"] == ["S"]

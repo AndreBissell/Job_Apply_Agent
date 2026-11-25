@@ -1,6 +1,6 @@
 # Experiment checkpoints and comparison: plan (branch `cost_perform_analysis`)
 
-**Status:** v1.0, APPROVED by the owner 2026-11-25. Not built yet; step 0 is next.
+**Status:** v1.0, APPROVED by the owner 2026-11-25. Steps 0–2 built; step 3 (the compare report) is next.
 
 **Where it fits:** row T1 in [optimisation-map.md](optimisation-map.md) ("Comparison tool… build
 before E3"), plus a history log the map did not have. Every pass/fail rule in
@@ -307,7 +307,7 @@ Each step ends with the full test suite passing.
 |---|---|---|
 | 0 | Record the baseline test count (`python -m pytest -q`) here before any code. **DONE 2026-11-25: 2041 passed, 0 failed, 0 skipped** (commit `650876c`, `.venv` Python 3.11.9, 82 s; the system Python gives the same 2041) | none |
 | 1 | `scripts/eval_checkpoints.py`: build a checkpoint from a run + judging (allowlist, checks of §3.1), append / load the JSONL, parent rule. **BUILT 2026-11-25**: 36 tests, suite 2077 passed | none |
-| 2 | Pairing and stats: paired differences, ads up / down, A/A `s`, T and the labels, cost at today's prices | none |
+| 2 | Pairing and stats: paired differences, ads up / down, A/A `s`, T and the labels, cost at today's prices. **BUILT 2026-11-25**: 22 tests (58 in the file), suite 2099 passed; 2 existing tests changed (Decision log) | none |
 | 3 | `compare` report and its terminal headline | none |
 | 4 | `history` report with the Mermaid charts; `checkpoints` list | none |
 | 5 | `letter_lab.py` subcommands wired to 1–4; `run` saves `models` / `thinking` / `commit` in `run.json`, `checkpoint --commit / --thinking` for older runs (Decision log D13) | none |
@@ -449,3 +449,39 @@ Each step ends with the full test suite passing.
   same join as `letter_lab._cost_rows` (`llm_usage.run_id` = `results[].letter_run_id`, using the
   run's exact ids: `letter_run_id` 62 sits between the run's ids but belongs to another run). The
   tool cannot write to it.
+- **2026-11-25. Step 2 built** (pairing and stats in `scripts/eval_checkpoints.py`; 22 tests, suite
+  2099 passed). `compare()` returns the numbers the report needs (step 3 only renders them).
+  **Changed tests** (none deleted, skipped or loosened):
+  - `test_allowlist_is_pinned`: `SETTINGS_KEYS` gains `given_by_hand` (D13, added on purpose here).
+  - `test_an_aa_checkpoints_parent_is_the_one_it_repeats`: its A/A reused c0's judge tag, which the
+    new refusal below blocks; it now uses a fresh tag and checks the same parent rule.
+  Choices the plan did not spell out:
+  - **Two more A/A refusals at checkpoint time.** An A/A must have the same `comparable` as the
+    checkpoint it repeats; and a judge-only A/A (same run) must use judge tags the original did not,
+    else every judge difference is 0 and the noise looks nil.
+  - **An A/A that never moved on a measure (s = 0) gives no reference** for it, shown as "no noise
+    reference yet (c1 vs c0 never moved on this measure)", never T = 0. The plan says this for cost
+    and time under a judge-only A/A (D14); the same trap exists for a judge measure that happened
+    not to move in 17 letters (most problem types in c1 vs c0), and for a writer measure that moved
+    by the same amount on every letter. Owner may overrule.
+  - **The relevant-10 label** uses the A/A's `s` over all its pairs and the comparison's relevant n
+    (T = 2s/√10): the A/A's own relevant subset is too small to give a steady `s`.
+  - **Relevant** = relevant on both sides; ads whose label differs between the two are listed.
+  - **Which reference.** Judge measures: writer + judge before judge-only, and within each the same
+    `judgings` before a single-judging one ("conservative"). A reference with more judgings than
+    the comparison is never used (it would under-state the noise and over-claim). Writer measures:
+    a writer + judge A/A with any `judgings`, never marked conservative (cost does not depend on how
+    often the letters were judged). The most recent matching pair wins. An A/A that a later
+    checkpoint `replaces` is skipped.
+  - **Cost at today's prices** for a model today's `PRICES` doesn't list is unknown (left out of
+    that measure's pairs), never guessed. The per-task table (§4.4) is at today's prices.
+  - **Measures compared:** points; cost at today's prices and as recorded; seconds; drafts; and for
+    every `letter_points` metric, instances (`n`) and points lost (`lost`) per letter.
+- **2026-11-25. "No noise reference yet" for a measure that never moved: confirmed (owner).** In
+  the real repeat check (`v1-dev` against `pts-cal-2` + `pts-check-1`, 17 letters), points lost
+  moved for missed rows (3 letters, wobble 0.561 a letter), untrue (2, 0.332) and mix-up (1, 0.121);
+  weak example, no personal reason, generic, stock phrasing and too long never moved (wobble 0);
+  total points 0.647; all problem types pooled 0.231. Parked until the whole plan is built: more
+  repeat runs to learn which measures move (writer + judge repeats, i.e. E3's control arm, on
+  Gemini credits, judged by v1 on the Claude CLI; a Vertex judging would be a new judge, §3.6),
+  and pooling several repeat checks into one wobble figure instead of using only the latest.
